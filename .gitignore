@@ -1,0 +1,22 @@
+# Environment
+.env
+.venv/
+venv/
+__pycache__/
+
+# Engines (downloaded binaries)
+engines/*
+!engines/.gitkeep
+
+# Results (PGN files)
+results/competitions/*
+!results/.gitkeep
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
