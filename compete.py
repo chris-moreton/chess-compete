@@ -68,7 +68,7 @@ from itertools import combinations
 from dotenv import load_dotenv
 
 # Load environment variables
-load_dotenv(Path(__file__).parent.parent / '.env')
+load_dotenv(Path(__file__).parent / '.env')
 
 # Check if database is configured
 DB_ENABLED = os.getenv('DATABASE_URL') is not None
