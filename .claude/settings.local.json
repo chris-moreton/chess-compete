@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile:*)",
+      "Bash(cargo test:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh issue view:*)",
+      "Bash(cargo build:*)",
+      "Bash(RUST_MIN_STACK=16777216 cargo test:*)",
+      "Bash(./target/release/rusty-rival.exe:*)",
+      "Bash(./engines/v1.0.17/rusty-rival-v1.0.17-windows-x86_64.exe:*)",
+      "Bash(cargo fmt:*)"
+    ]
+  }
+}

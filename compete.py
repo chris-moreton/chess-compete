@@ -85,13 +85,14 @@ K_FACTOR_ESTABLISHED = 20
 PROVISIONAL_GAMES = 30
 DEFAULT_ELO = 1500
 
-# Database retry settings
-DB_MAX_RETRIES = 3
-DB_RETRY_DELAY = 2  # seconds
+# Database retry settings - exponential backoff for handling extended outages
+DB_MAX_RETRIES = 12
+DB_RETRY_BASE_DELAY = 5  # seconds (initial delay)
+DB_RETRY_MAX_DELAY = 60  # seconds (cap on delay between retries)
 
 
 def db_retry(func):
-    """Decorator to retry database operations on connection errors."""
+    """Decorator to retry database operations on connection errors with exponential backoff."""
     @wraps(func)
     def wrapper(*args, **kwargs):
         last_error = None
@@ -104,7 +105,8 @@ def db_retry(func):
                 # Check if it's a connection error worth retrying
                 if any(msg in error_str for msg in ['connection', 'closed', 'terminated', 'timeout', 'operationalerror']):
                     if attempt < DB_MAX_RETRIES - 1:
-                        wait_time = DB_RETRY_DELAY * (attempt + 1)
+                        # Exponential backoff: 5, 10, 20, 40, 60, 60, 60... (capped at max)
+                        wait_time = min(DB_RETRY_BASE_DELAY * (2 ** attempt), DB_RETRY_MAX_DELAY)
                         print(f"Database connection error, retrying in {wait_time}s... (attempt {attempt + 1}/{DB_MAX_RETRIES})")
                         time.sleep(wait_time)
                         # Reset the app instance to force new connection
@@ -224,58 +226,70 @@ def get_current_elo_from_db(engine_name: str) -> tuple[float, int] | None:
 
 
 @db_retry
+def _save_game_to_db_impl(white: str, black: str, result: str, time_control: str,
+                          white_score: float, black_score: float,
+                          opening_name: str = None, opening_fen: str = None,
+                          pgn: str = None):
+    """Internal implementation with retry decorator."""
+    from web.database import db
+    from web.models import Engine, Game
+
+    app = _get_app()
+    with app.app_context():
+        white_engine = Engine.query.filter_by(name=white).first()
+        if not white_engine:
+            white_engine = Engine(name=white, active=True)
+            db.session.add(white_engine)
+            db.session.flush()
+
+        black_engine = Engine.query.filter_by(name=black).first()
+        if not black_engine:
+            black_engine = Engine(name=black, active=True)
+            db.session.add(black_engine)
+            db.session.flush()
+
+        game = Game(
+            white_engine_id=white_engine.id,
+            black_engine_id=black_engine.id,
+            result=result,
+            white_score=white_score,
+            black_score=black_score,
+            date_played=datetime.now().date(),
+            time_control=time_control,
+            opening_name=opening_name,
+            opening_fen=opening_fen,
+            pgn=pgn
+        )
+        db.session.add(game)
+        db.session.commit()
+
+
 def save_game_to_db(white: str, black: str, result: str, time_control: str,
                     opening_name: str = None, opening_fen: str = None,
                     pgn: str = None):
     """
     Save a game result to the database.
+    Uses automatic retry with exponential backoff on connection errors.
+    If all retries fail, logs the error but doesn't crash the competition.
     """
+    # Calculate scores first - incomplete games should return early without DB interaction
+    if result == "1-0":
+        white_score, black_score = 1.0, 0.0
+    elif result == "0-1":
+        white_score, black_score = 0.0, 1.0
+    elif result == "1/2-1/2":
+        white_score, black_score = 0.5, 0.5
+    else:
+        return  # Incomplete game, don't record
+
     try:
-        from web.database import db
-        from web.models import Engine, Game
-
-        app = _get_app()
-        with app.app_context():
-            white_engine = Engine.query.filter_by(name=white).first()
-            if not white_engine:
-                white_engine = Engine(name=white, active=True)
-                db.session.add(white_engine)
-                db.session.flush()
-
-            black_engine = Engine.query.filter_by(name=black).first()
-            if not black_engine:
-                black_engine = Engine(name=black, active=True)
-                db.session.add(black_engine)
-                db.session.flush()
-
-            # Calculate scores
-            if result == "1-0":
-                white_score, black_score = 1.0, 0.0
-            elif result == "0-1":
-                white_score, black_score = 0.0, 1.0
-            elif result == "1/2-1/2":
-                white_score, black_score = 0.5, 0.5
-            else:
-                return  # Incomplete game, don't record
-
-            game = Game(
-                white_engine_id=white_engine.id,
-                black_engine_id=black_engine.id,
-                result=result,
-                white_score=white_score,
-                black_score=black_score,
-                date_played=datetime.now().date(),
-                time_control=time_control,
-                opening_name=opening_name,
-                opening_fen=opening_fen,
-                pgn=pgn
-            )
-            db.session.add(game)
-            db.session.commit()
+        _save_game_to_db_impl(white, black, result, time_control,
+                              white_score, black_score,
+                              opening_name, opening_fen, pgn)
     except Exception as e:
-        print(f"Error: Failed to save game to database: {e}")
+        print(f"Error: Failed to save game to database after {DB_MAX_RETRIES} retries: {e}")
         traceback.print_exc()
-        sys.exit(1)
+        print("Warning: Game result not saved, but competition will continue.")
 
 
 @db_retry
@@ -710,7 +724,7 @@ def discover_engines(engine_dir: Path) -> dict:
 
     # Add virtual Stockfish engines at different Elo levels
     if stockfish_binary:
-        for elo in [1400, 1600, 1800, 2000, 2200, 2400, 2600, 2800, 3000]:
+        for elo in [1400, 1600, 1800, 2000, 2200, 2400, 2500, 2600, 2700, 2800, 3000]:
             name = f"sf-{elo}"
             engines[name] = {
                 "binary": stockfish_binary,
@@ -2446,7 +2460,7 @@ def main():
         if engine_type.lower() == "stockfish":
             if init_stockfish():
                 # Enable all stockfish variants
-                for elo in [1400, 1600, 1800, 2000, 2200, 2400, 2600, 2800, 3000]:
+                for elo in [1400, 1600, 1800, 2000, 2200, 2400, 2500, 2600, 2700, 2800, 3000]:
                     set_engine_active(f"sf-{elo}", True)
                 set_engine_active("sf-full", True)
                 print("Enabled all Stockfish engines")
