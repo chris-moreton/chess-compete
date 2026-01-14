@@ -19,15 +19,48 @@
                     <span class="legend-item"><span class="color-box red-light"></span><span class="color-box red-dark"></span> Underperforming</span>
                 </span>
             </p>
-            <p class="filter">
-                {% if active_only %}
-                    Showing active engines only. <a href="?all=1">Show all engines</a>
-                {% else %}
-                    Showing all engines. <a href="/">Show active only</a>
-                {% endif %}
-                | {{ total_engines }} engines
-                | Auto-refresh: 30s
-            </p>
+
+            <div class="filter-panel">
+                <div class="filter-row">
+                    <div class="filter-group">
+                        <label>Time per move:</label>
+                        <div class="range-inputs">
+                            <input type="number" id="min-time" value="{{ min_time }}" min="{{ db_min_time }}" max="{{ db_max_time }}" step="100">
+                            <span>to</span>
+                            <input type="number" id="max-time" value="{{ max_time }}" min="{{ db_min_time }}" max="{{ db_max_time }}" step="100">
+                            <span>ms</span>
+                        </div>
+                    </div>
+
+                    <div class="filter-group">
+                        <label>Hostname:</label>
+                        <select id="hostname">
+                            <option value="">Any</option>
+                            {% for h in hostnames %}
+                            <option value="{{ h }}" {% if h == hostname %}selected{% endif %}>{{ h }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
+                        <button onclick="applyFilters()" class="apply-btn">Apply Filters</button>
+                        <button onclick="resetFilters()" class="reset-btn">Reset</button>
+                    </div>
+                </div>
+
+                <div class="filter-status">
+                    {% if active_only %}
+                        Showing active engines only. <a href="?all=1{% if min_time != db_min_time %}&min_time={{ min_time }}{% endif %}{% if max_time != db_max_time %}&max_time={{ max_time }}{% endif %}{% if hostname %}&hostname={{ hostname }}{% endif %}">Show all engines</a>
+                    {% else %}
+                        Showing all engines. <a href="/?{% if min_time != db_min_time %}min_time={{ min_time }}&{% endif %}{% if max_time != db_max_time %}max_time={{ max_time }}&{% endif %}{% if hostname %}hostname={{ hostname }}{% endif %}">Show active only</a>
+                    {% endif %}
+                    | {{ total_engines }} engines
+                    | Auto-refresh: 30s
+                    {% if hostname or min_time != db_min_time or max_time != db_max_time %}
+                    | <span class="filter-active">Filters active</span>
+                    {% endif %}
+                </div>
+            </div>
         </div>
 
         {% if grid %}
@@ -80,6 +113,49 @@
 
     <script>
     (function() {
+        // Filter functions
+        window.applyFilters = function() {
+            const minTime = document.getElementById('min-time').value;
+            const maxTime = document.getElementById('max-time').value;
+            const hostname = document.getElementById('hostname').value;
+            const params = new URLSearchParams(window.location.search);
+
+            // Preserve 'all' parameter
+            const showAll = params.get('all');
+
+            // Build new params
+            params.delete('min_time');
+            params.delete('max_time');
+            params.delete('hostname');
+
+            if (minTime && minTime !== '{{ db_min_time }}') {
+                params.set('min_time', minTime);
+            }
+            if (maxTime && maxTime !== '{{ db_max_time }}') {
+                params.set('max_time', maxTime);
+            }
+            if (hostname) {
+                params.set('hostname', hostname);
+            }
+            if (showAll) {
+                params.set('all', showAll);
+            }
+
+            const queryString = params.toString();
+            window.location.href = queryString ? '?' + queryString : '/';
+        };
+
+        window.resetFilters = function() {
+            const params = new URLSearchParams();
+            const showAll = new URLSearchParams(window.location.search).get('all');
+            if (showAll) {
+                params.set('all', showAll);
+            }
+            const queryString = params.toString();
+            window.location.href = queryString ? '?' + queryString : '/';
+        };
+
+        // Table sorting
         const table = document.getElementById('h2h-table');
         if (!table) return;
 
@@ -143,6 +219,14 @@
             // Set active arrow
             activeHeader.classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
         }
+
+        // Allow Enter key to apply filters
+        document.getElementById('min-time').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') applyFilters();
+        });
+        document.getElementById('max-time').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') applyFilters();
+        });
     })();
     </script>
 </body>

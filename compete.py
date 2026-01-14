@@ -139,7 +139,8 @@ def _get_app():
 @db_retry
 def load_elo_ratings() -> dict:
     """
-    Load Elo ratings from database.
+    Load Elo ratings calculated from games.
+    Uses the filter cache system with default (unfiltered) parameters.
     Returns dict: {engine_name: {"elo": float, "games": int}}
     """
     if not DB_ENABLED:
@@ -147,18 +148,23 @@ def load_elo_ratings() -> dict:
         sys.exit(1)
 
     try:
-        from web.database import db
-        from web.models import Engine, EloRating
+        from web.queries import recalculate_elos_incremental
+        from web.models import Engine
+        from web.app import create_app
 
-        app = _get_app()
+        app = create_app()
         with app.app_context():
-            results = db.session.query(Engine.name, EloRating.elo, EloRating.games_played).join(
-                EloRating, Engine.id == EloRating.engine_id
-            ).all()
+            # Use unfiltered calculation (min=0, max=huge, hostname=None)
+            elo_dict = recalculate_elos_incremental(0, 999999999, None)
+
+            # Build engine name -> id mapping
+            engines = {e.id: e.name for e in Engine.query.all()}
 
             ratings = {}
-            for name, elo, games in results:
-                ratings[name] = {"elo": float(elo), "games": games}
+            for engine_id, (elo, games) in elo_dict.items():
+                name = engines.get(engine_id)
+                if name:
+                    ratings[name] = {"elo": float(elo), "games": games}
             return ratings
     except Exception as e:
         print(f"Error: Failed to load ratings from database: {e}")
@@ -167,72 +173,11 @@ def load_elo_ratings() -> dict:
 
 
 @db_retry
-def update_engine_elo_in_db(engine_name: str, new_elo: float, games_played: int):
-    """
-    Update a single engine's Elo in the database.
-    This is concurrent-safe as it only touches one engine.
-    """
-    try:
-        from web.database import db
-        from web.models import Engine, EloRating
-
-        app = _get_app()
-        with app.app_context():
-            engine = Engine.query.filter_by(name=engine_name).first()
-            if not engine:
-                engine = Engine(name=engine_name, active=True)
-                db.session.add(engine)
-                db.session.flush()
-
-            elo_rating = EloRating.query.filter_by(engine_id=engine.id).first()
-            if elo_rating:
-                elo_rating.elo = new_elo
-                elo_rating.games_played = games_played
-            else:
-                elo_rating = EloRating(
-                    engine_id=engine.id,
-                    elo=new_elo,
-                    games_played=games_played
-                )
-                db.session.add(elo_rating)
-
-            db.session.commit()
-    except Exception as e:
-        print(f"Error: Failed to update {engine_name} rating in database: {e}")
-        traceback.print_exc()
-        sys.exit(1)
-
-
-@db_retry
-def get_current_elo_from_db(engine_name: str) -> tuple[float, int] | None:
-    """
-    Get the current Elo and games count for an engine from the database.
-    Returns (elo, games) or None if not found.
-    """
-    try:
-        from web.database import db
-        from web.models import Engine, EloRating
-
-        app = _get_app()
-        with app.app_context():
-            result = db.session.query(EloRating.elo, EloRating.games_played).join(
-                Engine, Engine.id == EloRating.engine_id
-            ).filter(Engine.name == engine_name).first()
-
-            if result:
-                return (float(result.elo), result.games_played)
-            return None
-    except Exception as e:
-        print(f"Error: Failed to get {engine_name} rating from database: {e}")
-        traceback.print_exc()
-        sys.exit(1)
-
-
-@db_retry
 def _save_game_to_db_impl(white: str, black: str, result: str, time_control: str,
                           white_score: float, black_score: float,
                           opening_name: str = None, opening_fen: str = None,
-                          pgn: str = None, is_rated: bool = True):
+                          pgn: str = None, is_rated: bool = True,
+                          time_per_move_ms: int = None, hostname: str = None):
     """Internal implementation with retry decorator."""
     from web.database import db
     from web.models import Engine, Game
@@ -259,6 +204,8 @@ def _save_game_to_db_impl(white: str, black: str, result: str, time_control: str
             black_score=black_score,
             date_played=datetime.now().date(),
             time_control=time_control,
+            time_per_move_ms=time_per_move_ms,
+            hostname=hostname,
             opening_name=opening_name,
             opening_fen=opening_fen,
             pgn=pgn,
@@ -270,7 +217,8 @@ def _save_game_to_db_impl(white: str, black: str, result: str, time_control: str
 
 def save_game_to_db(white: str, black: str, result: str, time_control: str,
                     opening_name: str = None, opening_fen: str = None,
-                    pgn: str = None, is_rated: bool = True):
+                    pgn: str = None, is_rated: bool = True,
+                    time_per_move_ms: int = None, hostname: str = None):
     """
     Save a game result to the database.
     Uses automatic retry with exponential backoff on connection errors.
@@ -278,6 +226,8 @@ def save_game_to_db(white: str, black: str, result: str, time_control: str,
 
     Args:
         is_rated: If False, game won't appear in H2H grid (used for EPD test games)
+        time_per_move_ms: Time per move in milliseconds
+        hostname: Machine that played the game
     """
     # Calculate scores first - incomplete games should return early without DB interaction
     if result == "1-0":
@@ -292,7 +242,8 @@ def save_game_to_db(white: str, black: str, result: str, time_control: str,
     try:
         _save_game_to_db_impl(white, black, result, time_control,
                               white_score, black_score,
-                              opening_name, opening_fen, pgn, is_rated)
+                              opening_name, opening_fen, pgn, is_rated,
+                              time_per_move_ms, hostname)
     except Exception as e:
         print(f"Error: Failed to save game to database after {DB_MAX_RETRIES} retries: {e}")
         traceback.print_exc()
@@ -833,7 +784,7 @@ def set_engine_active(engine_name: str, active: bool, initial_elo: float | None 
     """
     try:
         from web.database import db
-        from web.models import Engine, EloRating
+        from web.models import Engine
 
         app = _get_app()
         with app.app_context():
@@ -846,16 +797,8 @@ def set_engine_active(engine_name: str, active: bool, initial_elo: float | None 
                     return False
                 # Create engine in database
                 elo = initial_elo if initial_elo is not None else get_initial_elo(engine_name)
-                engine = Engine(name=engine_name, active=active)
+                engine = Engine(name=engine_name, active=active, initial_elo=int(elo))
                 db.session.add(engine)
-                db.session.flush()
-                # Create initial Elo rating
-                elo_rating = EloRating(
-                    engine_id=engine.id,
-                    elo=elo,
-                    games_played=0
-                )
-                db.session.add(elo_rating)
                 db.session.commit()
                 return True
             engine.active = active
@@ -875,16 +818,18 @@ def list_engines_status() -> list[tuple[str, bool, float, int]]:
     """
     try:
         from web.database import db
-        from web.models import Engine, EloRating
+        from web.models import Engine
+
+        # Load calculated ELOs
+        elo_ratings = load_elo_ratings()
 
         app = _get_app()
         with app.app_context():
             engines = Engine.query.all()
             result = []
             for e in engines:
-                elo = e.rating.elo if e.rating else 1500.0
-                games = e.rating.games_played if e.rating else 0
-                result.append((e.name, e.active, float(elo), games))
+                rating_data = elo_ratings.get(e.name, {"elo": float(e.initial_elo or 1500), "games": 0})
+                result.append((e.name, e.active, rating_data["elo"], rating_data["games"]))
             return sorted(result, key=lambda x: -x[2])  # Sort by Elo descending
     except Exception as e:
         print(f"Error: Failed to list engines: {e}")
@@ -919,79 +864,6 @@ def get_engine_info(name: str, engine_dir: Path) -> tuple[Path | list, dict]:
     # Return command list if present (for Java engines), otherwise return path
     command = engine_config.get("command", binary_path)
     return command, uci_options
-
-
-def get_k_factor(games_played: int) -> float:
-    """Get K-factor based on number of games played."""
-    if games_played < PROVISIONAL_GAMES:
-        return K_FACTOR_PROVISIONAL
-    return K_FACTOR_ESTABLISHED
-
-
-def update_elo_after_game(white: str, black: str, result: str) -> tuple[float, float]:
-    """
-    Update Elo ratings after a single game using the standard Elo formula.
-
-    Formula:
-        Expected = 1 / (1 + 10^((opponent_elo - self_elo) / 400))
-        New_elo = old_elo + K * (actual_score - expected)
-
-    Reads current Elo from database at update time for concurrent safety.
-    This allows multiple machines to run tournaments simultaneously.
-
-    Returns:
-        Tuple of (white_change, black_change) - the Elo points gained/lost by each player.
-    """
-    # Get CURRENT Elo from database (for concurrent safety)
-    white_db = get_current_elo_from_db(white)
-    black_db = get_current_elo_from_db(black)
-
-    if white_db:
-        white_elo, white_games = white_db
-    else:
-        white_elo = get_initial_elo(white)
-        white_games = 0
-
-    if black_db:
-        black_elo, black_games = black_db
-    else:
-        black_elo = get_initial_elo(black)
-        black_games = 0
-
-    # Calculate expected scores
-    white_expected = 1 / (1 + 10 ** ((black_elo - white_elo) / 400))
-    black_expected = 1 - white_expected
-
-    # Actual scores
-    if result == "1-0":
-        white_actual, black_actual = 1.0, 0.0
-    elif result == "0-1":
-        white_actual, black_actual = 0.0, 1.0
-    elif result == "1/2-1/2":
-        white_actual, black_actual = 0.5, 0.5
-    else:
-        # Unknown result, don't update
-        return (0.0, 0.0)
-
-    # Get K-factors
-    white_k = get_k_factor(white_games)
-    black_k = get_k_factor(black_games)
-
-    # Calculate changes
-    white_change = white_k * (white_actual - white_expected)
-    black_change = black_k * (black_actual - black_expected)
-
-    # Calculate new values
-    new_white_elo = white_elo + white_change
-    new_black_elo = black_elo + black_change
-    new_white_games = white_games + 1
-    new_black_games = black_games + 1
-
-    # Update database (concurrent-safe, per-engine updates)
-    update_engine_elo_in_db(white, new_white_elo, new_white_games)
-    update_engine_elo_in_db(black, new_black_elo, new_black_games)
-
-    return (white_change, black_change)
 
 
 # Opening positions (FEN) - balanced positions after 4-8 moves from various openings
@@ -1568,11 +1440,11 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
         results[result] += 1
 
         # Save to database with full PGN
+        hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
         save_game_to_db(white, black, result, f"{time_per_move}s/move",
-                        opening_name, opening_fen, str(game))
-
-        # Update persistent Elo ratings
-        white_change, black_change = update_elo_after_game(white, black, result)
+                        opening_name, opening_fen, str(game),
+                        time_per_move_ms=int(time_per_move * 1000),
+                        hostname=hostname)
 
         # Calculate points
         if result == "1-0":
@@ -1822,11 +1694,11 @@ def run_epd(engine_names: list[str], engine_dir: Path, epd_file: Path,
             )
 
             # Save to database with full PGN (not rated - EPD test games)
+            hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
             save_game_to_db(engine1_name, engine2_name, result, f"{time_per_move}s/move",
-                            pos_id, fen, str(game), is_rated=False)
-
-            # Note: We don't update global Elo in EPD mode since these are
-            # specialized positions that would skew ratings
+                            pos_id, fen, str(game), is_rated=False,
+                            time_per_move_ms=int(time_per_move * 1000),
+                            hostname=hostname)
 
             # Update session stats
             session_games[engine1_name] += 1
@@ -1851,8 +1723,11 @@ def run_epd(engine_names: list[str], engine_dir: Path, epd_file: Path,
             )
 
             # Save to database with full PGN (not rated - EPD test games)
+            hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
             save_game_to_db(engine2_name, engine1_name, result, f"{time_per_move}s/move",
-                            pos_id, fen, str(game), is_rated=False)
+                            pos_id, fen, str(game), is_rated=False,
+                            time_per_move_ms=int(time_per_move * 1000),
+                            hostname=hostname)
 
             # Update session stats
             session_games[engine1_name] += 1
@@ -1990,11 +1865,11 @@ def run_league(engine_names: list[str], engine_dir: Path,
                                          white_uci, black_uci)
 
                 # Save to database with full PGN
+                hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
                 save_game_to_db(white, black, result, f"{time_per_move}s/move",
-                                opening_name, opening_fen, str(game))
-
-                # Update persistent Elo ratings
-                white_change, black_change = update_elo_after_game(white, black, result)
+                                opening_name, opening_fen, str(game),
+                                time_per_move_ms=int(time_per_move * 1000),
+                                hostname=hostname)
 
                 # Update games and points for this competition
                 games_this_comp[white] += 1
@@ -2132,10 +2007,11 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
                                       challenger_uci, opponent_uci)
 
             # Save to database with full PGN
+            hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
             save_game_to_db(challenger_name, opponent, result, f"{time_per_move}s/move",
-                            opening_name, opening_fen, str(game))
-
-            challenger_change, opponent_change = update_elo_after_game(challenger_name, opponent, result)
+                            opening_name, opening_fen, str(game),
+                            time_per_move_ms=int(time_per_move * 1000),
+                            hostname=hostname)
 
             if result == "1-0":
                 results_per_opponent[opponent]["wins"] += 1
@@ -2144,8 +2020,7 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
             elif result == "1/2-1/2":
                 results_per_opponent[opponent]["draws"] += 1
 
-            print(f"Game {game_num:3d}/{total_games}: {challenger_name} (W) vs {opponent} -> {result}  [{opening_name}]  "
-                  f"Elo: {challenger_name} {challenger_change:+.1f}, {opponent} {opponent_change:+.1f}")
+            print(f"Game {game_num:3d}/{total_games}: {challenger_name} (W) vs {opponent} -> {result}  [{opening_name}]")
 
             # Game 2: Challenger as black
             game_num += 1
@@ -2157,10 +2032,11 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
                                       opponent_uci, challenger_uci)
 
             # Save to database with full PGN
+            hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
             save_game_to_db(opponent, challenger_name, result, f"{time_per_move}s/move",
-                            opening_name, opening_fen, str(game))
-
-            opponent_change, challenger_change = update_elo_after_game(opponent, challenger_name, result)
+                            opening_name, opening_fen, str(game),
+                            time_per_move_ms=int(time_per_move * 1000),
+                            hostname=hostname)
 
             if result == "0-1":
                 results_per_opponent[opponent]["wins"] += 1
@@ -2169,8 +2045,7 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
             elif result == "1/2-1/2":
                 results_per_opponent[opponent]["draws"] += 1
 
-            print(f"Game {game_num:3d}/{total_games}: {opponent} vs {challenger_name} (B) -> {result}  [{opening_name}]  "
-                  f"Elo: {opponent} {opponent_change:+.1f}, {challenger_name} {challenger_change:+.1f}")
+            print(f"Game {game_num:3d}/{total_games}: {opponent} vs {challenger_name} (B) -> {result}  [{opening_name}]")
 
         # Show standings after each round
         print(f"\n--- Standings after round {round_idx + 1} ---")
@@ -2331,25 +2206,30 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
         game_num += 1
         opening_fen, opening_name = random.choice(OPENING_BOOK)
 
+        # Capture starting ELO before first game for each engine
+        for eng in [engine1, engine2]:
+            if eng not in session_start_elo:
+                ratings = load_elo_ratings()
+                session_start_elo[eng] = ratings.get(eng, {"elo": get_initial_elo(eng)})["elo"]
+
         result, game = play_game(engine1_path, engine2_path,
                                   engine1, engine2,
                                   match_time, opening_fen, opening_name,
                                   engine1_uci, engine2_uci)
 
         # Save to database with full PGN
+        hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
         save_game_to_db(engine1, engine2, result, f"{match_time:.2f}s/move",
-                        opening_name, opening_fen, str(game))
+                        opening_name, opening_fen, str(game),
+                        time_per_move_ms=int(match_time * 1000),
+                        hostname=hostname)
 
-        # Track session stats - capture starting Elo before first game
+        # Track session stats
         for eng in [engine1, engine2]:
-            if eng not in session_start_elo:
-                session_start_elo[eng] = elo_ratings[eng]["elo"]
             session_engines.add(eng)
             session_games[eng] = session_games.get(eng, 0) + 1
             if eng not in session_points:
                 session_points[eng] = 0.0
-
-        e1_change, e2_change = update_elo_after_game(engine1, engine2, result)
 
         if result == "1-0":
             session_points[engine1] += 1.0
@@ -2359,8 +2239,7 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
             session_points[engine1] += 0.5
             session_points[engine2] += 0.5
 
-        print(f"Game {game_num:3d}/{total_games}: {engine1} (W) vs {engine2} -> {result}  [{opening_name}]  "
-              f"Elo: {engine1} {e1_change:+.1f}, {engine2} {e2_change:+.1f}")
+        print(f"Game {game_num:3d}/{total_games}: {engine1} (W) vs {engine2} -> {result}  [{opening_name}]")
         print_league_table(session_engines, session_games, session_points,
                            0, competitors_only=True, game_num=game_num, total_games=total_games,
                            session_start_elo=session_start_elo)
@@ -2375,10 +2254,11 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
                                   engine2_uci, engine1_uci)
 
         # Save to database with full PGN
+        hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
         save_game_to_db(engine2, engine1, result, f"{match_time:.2f}s/move",
-                        opening_name, opening_fen, str(game))
-
-        e2_change, e1_change = update_elo_after_game(engine2, engine1, result)
+                        opening_name, opening_fen, str(game),
+                        time_per_move_ms=int(match_time * 1000),
+                        hostname=hostname)
 
         # Track session stats
         for eng in [engine1, engine2]:
@@ -2391,8 +2271,7 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
             session_points[engine1] += 0.5
             session_points[engine2] += 0.5
 
-        print(f"Game {game_num:3d}/{total_games}: {engine2} (W) vs {engine1} -> {result}  [{opening_name}]  "
-              f"Elo: {engine2} {e2_change:+.1f}, {engine1} {e1_change:+.1f}")
+        print(f"Game {game_num:3d}/{total_games}: {engine2} (W) vs {engine1} -> {result}  [{opening_name}]")
         print_league_table(session_engines, session_games, session_points,
                            0, competitors_only=True, game_num=game_num, total_games=total_games,
                            session_start_elo=session_start_elo)

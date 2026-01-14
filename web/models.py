@@ -34,6 +34,8 @@ class Game(db.Model):
     black_score = db.Column(db.Numeric(2, 1), nullable=False)
     date_played = db.Column(db.Date, nullable=False)
     time_control = db.Column(db.String(50))
+    time_per_move_ms = db.Column(db.Integer)  # Time per move in milliseconds
+    hostname = db.Column(db.String(100))  # Machine that played the game
     opening_name = db.Column(db.String(100))
     opening_fen = db.Column(db.Text)
     pgn = db.Column(db.Text)  # Full PGN content of the game
@@ -48,18 +50,42 @@ class Game(db.Model):
         return f'<Game {self.id}: {self.result}>'
 
 
-class EloRating(db.Model):
-    """Current Elo rating for an engine."""
-    __tablename__ = 'elo_ratings'
+class EloFilterCache(db.Model):
+    """Cache entry for a specific filter combination."""
+    __tablename__ = 'elo_filter_cache'
 
     id = db.Column(db.Integer, primary_key=True)
-    engine_id = db.Column(db.Integer, db.ForeignKey('engines.id'), nullable=False, unique=True)
-    elo = db.Column(db.Numeric(7, 2), nullable=False)
-    games_played = db.Column(db.Integer, default=0)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    min_time_ms = db.Column(db.Integer, nullable=False, default=0)
+    max_time_ms = db.Column(db.Integer, nullable=False, default=999999999)
+    hostname = db.Column(db.String(100))  # NULL = any host
+    last_game_id = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    # Relationship
-    engine = db.relationship('Engine', backref=db.backref('rating', uselist=False))
+    __table_args__ = (
+        db.UniqueConstraint('min_time_ms', 'max_time_ms', 'hostname'),
+    )
 
     def __repr__(self):
-        return f'<EloRating {self.engine.name if self.engine else "?"}: {self.elo}>'
+        return f'<EloFilterCache {self.min_time_ms}-{self.max_time_ms}ms, host={self.hostname}>'
+
+
+class EloFilterRating(db.Model):
+    """Cached ELO rating for an engine under a specific filter."""
+    __tablename__ = 'elo_filter_ratings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    filter_id = db.Column(db.Integer, db.ForeignKey('elo_filter_cache.id', ondelete='CASCADE'), nullable=False)
+    engine_id = db.Column(db.Integer, db.ForeignKey('engines.id', ondelete='CASCADE'), nullable=False)
+    elo = db.Column(db.Numeric(7, 2), nullable=False)
+    games_played = db.Column(db.Integer, nullable=False, default=0)
+
+    # Relationships
+    filter_cache = db.relationship('EloFilterCache', backref='ratings')
+    engine = db.relationship('Engine', backref='filter_ratings')
+
+    __table_args__ = (
+        db.UniqueConstraint('filter_id', 'engine_id'),
+    )
+
+    def __repr__(self):
+        return f'<EloFilterRating engine={self.engine_id}, elo={self.elo}>'

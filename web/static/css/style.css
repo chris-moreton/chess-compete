@@ -45,6 +45,110 @@ h1 {
     text-decoration: underline;
 }
 
+/* Filter panel */
+.filter-panel {
+    background-color: white;
+    padding: 15px;
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    margin-bottom: 15px;
+}
+
+.filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.filter-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.filter-group label {
+    font-weight: 600;
+    color: #555;
+    font-size: 13px;
+}
+
+.range-inputs {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.range-inputs input[type="number"] {
+    width: 80px;
+    padding: 6px 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+.range-inputs span {
+    color: #666;
+    font-size: 13px;
+}
+
+.filter-group select {
+    padding: 6px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 13px;
+    min-width: 120px;
+}
+
+.apply-btn {
+    padding: 6px 16px;
+    background-color: #3498db;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.apply-btn:hover {
+    background-color: #2980b9;
+}
+
+.reset-btn {
+    padding: 6px 12px;
+    background-color: #95a5a6;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.reset-btn:hover {
+    background-color: #7f8c8d;
+}
+
+.filter-status {
+    color: #888;
+    font-size: 0.9em;
+}
+
+.filter-status a {
+    color: #3498db;
+    text-decoration: none;
+}
+
+.filter-status a:hover {
+    text-decoration: underline;
+}
+
+.filter-active {
+    color: #e67e22;
+    font-weight: 600;
+}
+
 .legend {
     margin-left: 20px;
 }
