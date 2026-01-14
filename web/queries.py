@@ -61,6 +61,7 @@ def get_engines_ranked_by_elo(active_only=True):
 def get_h2h_raw_data():
     """
     Get raw head-to-head data from games table.
+    Only includes rated games (excludes EPD test games).
     Returns dict: {(white_id, black_id): {'white_points': float, 'black_points': float, 'games': int}}
     """
     db = get_db()
@@ -72,6 +73,8 @@ def get_h2h_raw_data():
         func.sum(Game.white_score).label('white_points'),
         func.sum(Game.black_score).label('black_points'),
         func.count(Game.id).label('total_games')
+    ).filter(
+        Game.is_rated == True
     ).group_by(
         Game.white_engine_id,
         Game.black_engine_id

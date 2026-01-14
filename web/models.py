@@ -37,6 +37,7 @@ class Game(db.Model):
     opening_name = db.Column(db.String(100))
     opening_fen = db.Column(db.Text)
     pgn = db.Column(db.Text)  # Full PGN content of the game
+    is_rated = db.Column(db.Boolean, default=True)  # False for EPD test games
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # Relationships

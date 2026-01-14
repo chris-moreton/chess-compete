@@ -43,6 +43,9 @@ Usage:
 
     # For java-rival (downloads JAR file)
     ./scripts/compete.py --init java 38
+
+    # Initialize with a custom starting Elo
+    ./scripts/compete.py --init java 38 2400
 """
 
 import argparse
@@ -229,7 +232,7 @@ def get_current_elo_from_db(engine_name: str) -> tuple[float, int] | None:
 def _save_game_to_db_impl(white: str, black: str, result: str, time_control: str,
                           white_score: float, black_score: float,
                           opening_name: str = None, opening_fen: str = None,
-                          pgn: str = None):
+                          pgn: str = None, is_rated: bool = True):
     """Internal implementation with retry decorator."""
     from web.database import db
     from web.models import Engine, Game
@@ -258,7 +261,8 @@ def _save_game_to_db_impl(white: str, black: str, result: str, time_control: str
             time_control=time_control,
             opening_name=opening_name,
             opening_fen=opening_fen,
-            pgn=pgn
+            pgn=pgn,
+            is_rated=is_rated
         )
         db.session.add(game)
         db.session.commit()
@@ -266,11 +270,14 @@ def _save_game_to_db_impl(white: str, black: str, result: str, time_control: str
 
 def save_game_to_db(white: str, black: str, result: str, time_control: str,
                     opening_name: str = None, opening_fen: str = None,
-                    pgn: str = None):
+                    pgn: str = None, is_rated: bool = True):
     """
     Save a game result to the database.
     Uses automatic retry with exponential backoff on connection errors.
     If all retries fail, logs the error but doesn't crash the competition.
+
+    Args:
+        is_rated: If False, game won't appear in H2H grid (used for EPD test games)
     """
     # Calculate scores first - incomplete games should return early without DB interaction
     if result == "1-0":
@@ -285,7 +292,7 @@ def save_game_to_db(white: str, black: str, result: str, time_control: str,
     try:
         _save_game_to_db_impl(white, black, result, time_control,
                               white_score, black_score,
-                              opening_name, opening_fen, pgn)
+                              opening_name, opening_fen, pgn, is_rated)
     except Exception as e:
         print(f"Error: Failed to save game to database after {DB_MAX_RETRIES} retries: {e}")
         traceback.print_exc()
@@ -813,11 +820,16 @@ def get_active_engines(engine_dir: Path) -> list[str]:
 
 
 @db_retry
-def set_engine_active(engine_name: str, active: bool) -> bool:
+def set_engine_active(engine_name: str, active: bool, initial_elo: float | None = None) -> bool:
     """
     Enable or disable an engine by setting its active flag.
     If engine exists on disk but not in database, creates the database entry.
     Returns True if successful, False if engine not found on disk or in database.
+
+    Args:
+        engine_name: Name of the engine
+        active: Whether to enable or disable the engine
+        initial_elo: Optional starting Elo (if not provided, derived from engine name)
     """
     try:
         from web.database import db
@@ -833,14 +845,14 @@ def set_engine_active(engine_name: str, active: bool) -> bool:
                 if engine_name not in discovered:
                     return False
                 # Create engine in database
-                initial_elo = get_initial_elo(engine_name)
+                elo = initial_elo if initial_elo is not None else get_initial_elo(engine_name)
                 engine = Engine(name=engine_name, active=active)
                 db.session.add(engine)
                 db.session.flush()
                 # Create initial Elo rating
                 elo_rating = EloRating(
                     engine_id=engine.id,
-                    elo=initial_elo,
+                    elo=elo,
                     games_played=0
                 )
                 db.session.add(elo_rating)
@@ -1809,9 +1821,9 @@ def run_epd(engine_names: list[str], engine_dir: Path, epd_file: Path,
                 engine1["uci_options"], engine2["uci_options"]
             )
 
-            # Save to database with full PGN
+            # Save to database with full PGN (not rated - EPD test games)
             save_game_to_db(engine1_name, engine2_name, result, f"{time_per_move}s/move",
-                            pos_id, fen, str(game))
+                            pos_id, fen, str(game), is_rated=False)
 
             # Note: We don't update global Elo in EPD mode since these are
             # specialized positions that would skew ratings
@@ -1838,9 +1850,9 @@ def run_epd(engine_names: list[str], engine_dir: Path, epd_file: Path,
                 engine2["uci_options"], engine1["uci_options"]
             )
 
-            # Save to database with full PGN
+            # Save to database with full PGN (not rated - EPD test games)
             save_game_to_db(engine2_name, engine1_name, result, f"{time_per_move}s/move",
-                            pos_id, fen, str(game))
+                            pos_id, fen, str(game), is_rated=False)
 
             # Update session stats
             session_games[engine1_name] += 1
@@ -2431,10 +2443,12 @@ def main():
                         help="Disable one or more engines (set active=False)")
     parser.add_argument("--list", action="store_true",
                         help="List all engines with their active status")
-    parser.add_argument("--init", type=str, nargs=2, metavar=("TYPE", "VERSION"),
+    parser.add_argument("--init", type=str, nargs="+", metavar="ARG",
                         help="Download, initialize, and enable an engine. "
+                             "Usage: --init TYPE VERSION [ELO]. "
                              "TYPE is 'rusty', 'java', or 'stockfish'. "
-                             "Examples: --init rusty v1.0.17, --init java 38, --init stockfish latest")
+                             "ELO is optional starting strength (default: derived from engine name). "
+                             "Examples: --init rusty v1.0.17, --init java 38 2400, --init stockfish latest")
 
     args = parser.parse_args()
 
@@ -2454,7 +2468,19 @@ def main():
 
     # Handle --init command (downloads and enables engine)
     if args.init:
-        engine_type, version = args.init
+        if len(args.init) < 2 or len(args.init) > 3:
+            print("Error: --init requires 2-3 arguments: TYPE VERSION [ELO]")
+            sys.exit(1)
+
+        engine_type = args.init[0]
+        version = args.init[1]
+        starting_elo = None
+        if len(args.init) == 3:
+            try:
+                starting_elo = float(args.init[2])
+            except ValueError:
+                print(f"Error: Invalid Elo value '{args.init[2]}'. Must be a number.")
+                sys.exit(1)
 
         # Handle stockfish specially
         if engine_type.lower() == "stockfish":
@@ -2480,8 +2506,9 @@ def main():
             else:
                 engine_name = version
 
-            if set_engine_active(engine_name, True):
-                print(f"Enabled: {engine_name}")
+            if set_engine_active(engine_name, True, starting_elo):
+                elo_msg = f" with starting Elo {starting_elo:.0f}" if starting_elo else ""
+                print(f"Enabled: {engine_name}{elo_msg}")
             sys.exit(0)
         else:
             sys.exit(1)
