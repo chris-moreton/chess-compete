@@ -1353,11 +1353,14 @@ def play_game(engine1_cmd: Path | list, engine2_cmd: Path | list,
 
 def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
               num_games: int, time_per_move: float,
-              use_opening_book: bool = True) -> dict:
+              use_opening_book: bool = True,
+              time_low: float = None, time_high: float = None) -> dict:
     """Run a match between two engines, alternating colors."""
 
     engine1_path, engine1_uci_options = get_engine_info(engine1_name, engine_dir)
     engine2_path, engine2_uci_options = get_engine_info(engine2_name, engine_dir)
+
+    use_time_range = time_low is not None and time_high is not None
 
     # Load persistent Elo ratings
     elo_ratings = load_elo_ratings()
@@ -1399,7 +1402,10 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
 
     print(f"\n{'='*70}")
     print(f"Match: {engine1_name} vs {engine2_name}")
-    print(f"Games: {num_games}, Time: {time_per_move}s/move")
+    if use_time_range:
+        print(f"Games: {num_games}, Time: {time_low}-{time_high}s/move (random per game pair)")
+    else:
+        print(f"Games: {num_games}, Time: {time_per_move}s/move")
     if use_opening_book:
         print(f"Opening book: {len(OPENING_BOOK)} positions (randomized)")
     else:
@@ -1414,6 +1420,9 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
         print(f"  {name}: {data['elo']:.0f} ({data['games']} games){prov}")
     print(flush=True)
 
+    # Track time for game pairs when using time range
+    pair_time = None
+
     for i in range(num_games):
         # Get opening for this game pair
         if openings:
@@ -1421,6 +1430,14 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
             opening_fen, opening_name = openings[opening_idx]
         else:
             opening_fen, opening_name = None, None
+
+        # Select time for this game pair (same time for both colors)
+        if i % 2 == 0:
+            if use_time_range:
+                pair_time = random.uniform(time_low, time_high)
+            else:
+                pair_time = time_per_move
+        game_time = pair_time
 
         # Alternate colors
         if i % 2 == 0:
@@ -1435,15 +1452,15 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
             is_engine1_white = False
 
         result, game = play_game(white_path, black_path, white, black,
-                                  time_per_move, opening_fen, opening_name,
+                                  game_time, opening_fen, opening_name,
                                   white_uci, black_uci)
         results[result] += 1
 
         # Save to database with full PGN
         hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
-        save_game_to_db(white, black, result, f"{time_per_move}s/move",
+        save_game_to_db(white, black, result, f"{game_time:.2f}s/move",
                         opening_name, opening_fen, str(game),
-                        time_per_move_ms=int(time_per_move * 1000),
+                        time_per_move_ms=int(game_time * 1000),
                         hostname=hostname)
 
         # Calculate points
@@ -1767,11 +1784,13 @@ def run_epd(engine_names: list[str], engine_dir: Path, epd_file: Path,
 
 def run_league(engine_names: list[str], engine_dir: Path,
                games_per_pairing: int, time_per_move: float, results_dir: Path,
-               use_opening_book: bool = True):
+               use_opening_book: bool = True,
+               time_low: float = None, time_high: float = None):
     """Run a round-robin league with interleaved pairings."""
 
     pairings = list(combinations(engine_names, 2))
     num_pairings = len(pairings)
+    use_time_range = time_low is not None and time_high is not None
 
     # Games per pairing should be even (play each opening from both sides)
     if games_per_pairing % 2 != 0:
@@ -1804,7 +1823,10 @@ def run_league(engine_names: list[str], engine_dir: Path,
     print(f"Games per pairing: {games_per_pairing}")
     print(f"Rounds: {num_rounds} (each round = 2 games per pairing)")
     print(f"Total games: {total_games}")
-    print(f"Time: {time_per_move}s/move")
+    if use_time_range:
+        print(f"Time: {time_low}-{time_high}s/move (random per round)")
+    else:
+        print(f"Time: {time_per_move}s/move")
     if use_opening_book:
         print(f"Opening book: {len(OPENING_BOOK)} positions")
     print(f"{'='*95}")
@@ -1843,7 +1865,14 @@ def run_league(engine_names: list[str], engine_dir: Path,
     # Play rounds
     for round_idx in range(num_rounds):
         opening_fen, opening_name = openings[round_idx]
-        print(f"\n--- Round {round_idx + 1}/{num_rounds}: {opening_name or 'Starting position'} ---\n")
+
+        # Select time for this round
+        if use_time_range:
+            round_time = random.uniform(time_low, time_high)
+        else:
+            round_time = time_per_move
+
+        print(f"\n--- Round {round_idx + 1}/{num_rounds}: {opening_name or 'Starting position'} ({round_time:.2f}s/move) ---\n")
 
         # Play each pairing twice (once per color) for this opening
         for pairing_idx, (engine1, engine2) in enumerate(pairings):
@@ -1861,14 +1890,14 @@ def run_league(engine_names: list[str], engine_dir: Path,
                 black_path, black_uci = engine_info[black]
 
                 result, game = play_game(white_path, black_path, white, black,
-                                         time_per_move, opening_fen, opening_name,
+                                         round_time, opening_fen, opening_name,
                                          white_uci, black_uci)
 
                 # Save to database with full PGN
                 hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
-                save_game_to_db(white, black, result, f"{time_per_move}s/move",
+                save_game_to_db(white, black, result, f"{round_time:.2f}s/move",
                                 opening_name, opening_fen, str(game),
-                                time_per_move_ms=int(time_per_move * 1000),
+                                time_per_move_ms=int(round_time * 1000),
                                 hostname=hostname)
 
                 # Update games and points for this competition
@@ -1927,7 +1956,8 @@ def run_league(engine_names: list[str], engine_dir: Path,
 
 
 def run_gauntlet(challenger_name: str, engine_dir: Path,
-                 num_rounds: int, time_per_move: float, results_dir: Path):
+                 num_rounds: int, time_per_move: float, results_dir: Path,
+                 time_low: float = None, time_high: float = None):
     """
     Test a challenger engine against all other engines in the engines directory.
     Plays in rounds: each round consists of 2 games (1 as white, 1 as black) against each opponent.
@@ -1936,6 +1966,7 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
     # Find all active engines except the challenger
     all_engines = get_active_engines(engine_dir)
     opponents = [e for e in all_engines if e != challenger_name]
+    use_time_range = time_low is not None and time_high is not None
 
     if not opponents:
         print(f"Error: No opponent engines found in {engine_dir}")
@@ -1969,7 +2000,10 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
     print(f"Rounds: {num_rounds} (2 games per opponent per round)")
     print(f"Games per opponent: {games_per_opponent}")
     print(f"Total games: {total_games}")
-    print(f"Time: {time_per_move}s/move")
+    if use_time_range:
+        print(f"Time: {time_low}-{time_high}s/move (random per round)")
+    else:
+        print(f"Time: {time_per_move}s/move")
     print(f"Opening book: {len(OPENING_BOOK)} positions (random selection)")
     print(f"{'='*70}")
 
@@ -1992,7 +2026,13 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
 
     # Play in rounds
     for round_idx in range(num_rounds):
-        print(f"\n--- Round {round_idx + 1}/{num_rounds} ---\n")
+        # Select time for this round
+        if use_time_range:
+            round_time = random.uniform(time_low, time_high)
+        else:
+            round_time = time_per_move
+
+        print(f"\n--- Round {round_idx + 1}/{num_rounds} ({round_time:.2f}s/move) ---\n")
 
         for opponent in opponents:
             opponent_path, opponent_uci = opponent_info[opponent]
@@ -2003,14 +2043,14 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
 
             result, game = play_game(challenger_path, opponent_path,
                                       challenger_name, opponent,
-                                      time_per_move, opening_fen, opening_name,
+                                      round_time, opening_fen, opening_name,
                                       challenger_uci, opponent_uci)
 
             # Save to database with full PGN
             hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
-            save_game_to_db(challenger_name, opponent, result, f"{time_per_move}s/move",
+            save_game_to_db(challenger_name, opponent, result, f"{round_time:.2f}s/move",
                             opening_name, opening_fen, str(game),
-                            time_per_move_ms=int(time_per_move * 1000),
+                            time_per_move_ms=int(round_time * 1000),
                             hostname=hostname)
 
             if result == "1-0":
@@ -2028,14 +2068,14 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
 
             result, game = play_game(opponent_path, challenger_path,
                                       opponent, challenger_name,
-                                      time_per_move, opening_fen, opening_name,
+                                      round_time, opening_fen, opening_name,
                                       opponent_uci, challenger_uci)
 
             # Save to database with full PGN
             hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
-            save_game_to_db(opponent, challenger_name, result, f"{time_per_move}s/move",
+            save_game_to_db(opponent, challenger_name, result, f"{round_time:.2f}s/move",
                             opening_name, opening_fen, str(game),
-                            time_per_move_ms=int(time_per_move * 1000),
+                            time_per_move_ms=int(round_time * 1000),
                             hostname=hostname)
 
             if result == "0-1":
@@ -2486,23 +2526,16 @@ def main():
         if len(resolved_engines) != 1:
             print("Error: Gauntlet mode requires exactly one engine (the challenger)")
             sys.exit(1)
-        if time_per_move is None:
-            print("Error: --timelow/--timehigh not supported in gauntlet mode, use --time")
-            sys.exit(1)
-        run_gauntlet(resolved_engines[0], engine_dir, args.games, time_per_move, results_dir)
+        run_gauntlet(resolved_engines[0], engine_dir, args.games, time_per_move or 1.0, results_dir,
+                     time_low, time_high)
     elif len(resolved_engines) >= 3:
         # Round-robin league for 3+ engines
-        if time_per_move is None:
-            print("Error: --timelow/--timehigh not supported in league mode, use --time")
-            sys.exit(1)
-        run_league(resolved_engines, engine_dir, args.games, time_per_move, results_dir, use_opening_book)
+        run_league(resolved_engines, engine_dir, args.games, time_per_move or 1.0, results_dir,
+                   use_opening_book, time_low, time_high)
     elif len(resolved_engines) == 2:
         # Head-to-head match for exactly 2 engines
-        if time_per_move is None:
-            print("Error: --timelow/--timehigh not supported in head-to-head mode, use --time")
-            sys.exit(1)
         run_match(resolved_engines[0], resolved_engines[1], engine_dir,
-                  args.games, time_per_move, use_opening_book)
+                  args.games, time_per_move or 1.0, use_opening_book, time_low, time_high)
     else:
         print("Error: At least 2 engines are required (or use --random or --gauntlet mode)")
         sys.exit(1)
