@@ -3,7 +3,10 @@ Flask routes for the competition dashboard.
 """
 
 from flask import render_template, request, redirect, url_for
-from web.queries import get_dashboard_data, get_unique_hostnames, get_time_range, clear_elo_cache
+from web.queries import (
+    get_dashboard_data, get_unique_hostnames, get_time_range,
+    clear_elo_cache, recalculate_all_and_store
+)
 
 
 def register_routes(app):
@@ -62,11 +65,46 @@ def register_routes(app):
             engine_type=engine_type
         )
 
+    @app.route('/force-recalculate', methods=['POST'])
+    def force_recalculate():
+        """Clear cache and recalculate all rating systems (Elo, BayesElo, Ordo)."""
+        # Get filter parameters from form
+        min_time = request.form.get('min_time', type=int)
+        max_time = request.form.get('max_time', type=int)
+        hostname = request.form.get('hostname') or None
+        engine_type = request.form.get('engine_type') or None
+        show_all = request.form.get('all') == '1'
+
+        # Get defaults from database
+        db_min_time, db_max_time = get_time_range()
+        if min_time is None:
+            min_time = db_min_time
+        if max_time is None:
+            max_time = db_max_time
+
+        # Recalculate all ratings for this filter
+        recalculate_all_and_store(min_time, max_time, hostname, engine_type)
+
+        # Build redirect URL with filter params
+        params = []
+        if show_all:
+            params.append('all=1')
+        if min_time != db_min_time:
+            params.append(f'min_time={min_time}')
+        if max_time != db_max_time:
+            params.append(f'max_time={max_time}')
+        if hostname:
+            params.append(f'hostname={hostname}')
+        if engine_type:
+            params.append(f'engine_type={engine_type}')
+
+        redirect_url = '/?' + '&'.join(params) if params else '/'
+        return redirect(redirect_url)
+
     @app.route('/clear-cache', methods=['POST'])
     def clear_cache():
-        """Clear the ELO filter cache, forcing recalculation."""
-        num_cache, num_ratings = clear_elo_cache()
-        # Redirect back to dashboard (preserving any query params would be complex, just go to root)
+        """Clear all ELO filter caches."""
+        clear_elo_cache()
         return redirect(url_for('dashboard'))
 
     @app.route('/health')

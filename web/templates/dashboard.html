@@ -57,7 +57,12 @@
                     </div>
 
                     <div class="filter-group">
-                        <form action="/clear-cache" method="POST" style="display: inline;" onsubmit="return confirm('This will clear all cached ELO calculations. Continue?');">
+                        <form action="/force-recalculate" method="POST" style="display: inline;" onsubmit="return confirm('This will recalculate Elo, BayesElo, and Ordo ratings for the current filter. Continue?');">
+                            <input type="hidden" name="min_time" value="{{ min_time }}">
+                            <input type="hidden" name="max_time" value="{{ max_time }}">
+                            <input type="hidden" name="hostname" value="{{ hostname or '' }}">
+                            <input type="hidden" name="engine_type" value="{{ engine_type or '' }}">
+                            <input type="hidden" name="all" value="{{ '1' if not active_only else '' }}">
                             <button type="submit" class="reset-btn">Force Recalculate</button>
                         </form>
                     </div>
@@ -86,6 +91,8 @@
                         <th class="rank-col">#</th>
                         <th class="engine-col sortable" data-sort="name">Engine <span class="sort-arrow"></span></th>
                         <th class="elo-col sortable" data-sort="elo">Elo <span class="sort-arrow"></span></th>
+                        <th class="elo-col sortable" data-sort="bayes" title="BayesElo - accounts for draw rates">Bayes <span class="sort-arrow"></span></th>
+                        <th class="elo-col sortable" data-sort="ordo" title="Ordo - maximum likelihood, order-independent">Ordo <span class="sort-arrow"></span></th>
                         <th class="stability-col sortable" data-sort="stability" title="How well actual results match expected results (100 = perfect match)">Stab <span class="sort-arrow"></span></th>
                         <th class="games-col sortable" data-sort="games">Games <span class="sort-arrow"></span></th>
                         {% for col_num, col_name in column_headers %}
@@ -95,10 +102,12 @@
                 </thead>
                 <tbody>
                     {% for row in grid %}
-                    <tr data-name="{{ row.engine_name }}" data-elo="{{ row.elo }}" data-stability="{{ row.stability }}" data-games="{{ row.games_played }}">
+                    <tr data-name="{{ row.engine_name }}" data-elo="{{ row.elo }}" data-bayes="{{ row.bayes_elo if row.bayes_elo is not none else 0 }}" data-ordo="{{ row.ordo if row.ordo is not none else 0 }}" data-stability="{{ row.stability }}" data-games="{{ row.games_played }}">
                         <td class="rank-col">{{ row.rank }}</td>
                         <td class="engine-col engine-{{ row.engine_type }}">{{ row.engine_name }}</td>
                         <td class="elo-col">{{ "%.0f"|format(row.elo) }}</td>
+                        <td class="elo-col">{% if row.bayes_elo is not none %}{{ "%.0f"|format(row.bayes_elo) }}{% else %}-{% endif %}</td>
+                        <td class="elo-col">{% if row.ordo is not none %}{{ "%.0f"|format(row.ordo) }}{% else %}-{% endif %}</td>
                         <td class="stability-col{% if row.least_stable %} least-stable{% endif %}" style="background-color: {{ row.stability_color }};" title="Stability: {{ row.stability }}%">{{ row.stability }}</td>
                         <td class="games-col">{{ row.games_played }}</td>
                         {% for cell in row.cells %}
@@ -207,8 +216,8 @@
                 let aVal = a.dataset[key];
                 let bVal = b.dataset[key];
 
-                // Numeric sort for elo, stability, and games
-                if (key === 'elo' || key === 'stability' || key === 'games') {
+                // Numeric sort for elo, bayes, ordo, stability, and games
+                if (key === 'elo' || key === 'bayes' || key === 'ordo' || key === 'stability' || key === 'games') {
                     aVal = parseFloat(aVal);
                     bVal = parseFloat(bVal);
                 } else {

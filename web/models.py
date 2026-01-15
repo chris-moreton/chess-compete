@@ -71,13 +71,15 @@ class EloFilterCache(db.Model):
 
 
 class EloFilterRating(db.Model):
-    """Cached ELO rating for an engine under a specific filter."""
+    """Cached ratings for an engine under a specific filter."""
     __tablename__ = 'elo_filter_ratings'
 
     id = db.Column(db.Integer, primary_key=True)
     filter_id = db.Column(db.Integer, db.ForeignKey('elo_filter_cache.id', ondelete='CASCADE'), nullable=False)
     engine_id = db.Column(db.Integer, db.ForeignKey('engines.id', ondelete='CASCADE'), nullable=False)
     elo = db.Column(db.Numeric(7, 2), nullable=False)
+    bayes_elo = db.Column(db.Numeric(7, 2))  # NULL until Force Recalculate
+    ordo = db.Column(db.Numeric(7, 2))  # NULL until Force Recalculate
     games_played = db.Column(db.Integer, nullable=False, default=0)
 
     # Relationships

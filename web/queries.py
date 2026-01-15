@@ -238,13 +238,29 @@ def get_engines_ranked_by_elo(active_only=True, min_time_ms=0, max_time_ms=99999
         engine_type: Engine type filter (None = all, 'rusty' = v*, 'stockfish' = sf*)
 
     Returns:
-        List of dicts with engine info and ratings
+        List of dicts with engine info and ratings (elo, bayes_elo, ordo)
     """
     db = get_db()
     Engine, Game, EloFilterCache, EloFilterRating = get_models()
 
     # Recalculate ELOs incrementally
     ratings = recalculate_elos_incremental(min_time_ms, max_time_ms, hostname, engine_type)
+
+    # Get BayesElo and Ordo ratings from cache (if available)
+    cache = EloFilterCache.query.filter_by(
+        min_time_ms=min_time_ms,
+        max_time_ms=max_time_ms,
+        hostname=hostname,
+        engine_type=engine_type
+    ).first()
+
+    bayes_ordo_ratings = {}
+    if cache:
+        for r in EloFilterRating.query.filter_by(filter_id=cache.id):
+            bayes_ordo_ratings[r.engine_id] = {
+                'bayes_elo': float(r.bayes_elo) if r.bayes_elo is not None else None,
+                'ordo': float(r.ordo) if r.ordo is not None else None
+            }
 
     # Get engines
     query = Engine.query
@@ -259,9 +275,12 @@ def get_engines_ranked_by_elo(active_only=True, min_time_ms=0, max_time_ms=99999
         if not engine_matches_type_filter(engine.name, engine_type):
             continue
         elo, games_played = ratings.get(engine.id, (float(engine.initial_elo or DEFAULT_ELO), 0))
+        extra = bayes_ordo_ratings.get(engine.id, {'bayes_elo': None, 'ordo': None})
         result.append({
             'engine': engine,
             'elo': elo,
+            'bayes_elo': extra['bayes_elo'],
+            'ordo': extra['ordo'],
             'games_played': games_played
         })
 
@@ -574,6 +593,8 @@ def build_h2h_grid(engines, h2h_raw):
             'engine_name': row_engine['engine'].name,
             'engine_type': get_engine_type(row_engine['engine'].name),
             'elo': row_elo,
+            'bayes_elo': row_engine.get('bayes_elo'),
+            'ordo': row_engine.get('ordo'),
             'games_played': row_engine['games_played'],
             'stability': stability_rounded,
             'stability_color': stability_to_color(stability_rounded),
@@ -703,3 +724,407 @@ def clear_elo_cache():
     db.session.commit()
 
     return num_cache, num_ratings
+
+
+def get_game_results_for_filter(min_time_ms: int, max_time_ms: int, hostname: str | None, engine_type: str | None):
+    """
+    Get all game results matching the filter criteria.
+
+    Returns:
+        List of tuples: (white_engine_id, black_engine_id, white_score, black_score)
+    """
+    from sqlalchemy.orm import aliased
+    db = get_db()
+    Engine, Game, EloFilterCache, EloFilterRating = get_models()
+
+    WhiteEngine = aliased(Engine)
+    BlackEngine = aliased(Engine)
+
+    query = db.session.query(
+        Game.white_engine_id,
+        Game.black_engine_id,
+        Game.white_score,
+        Game.black_score
+    ).join(
+        WhiteEngine, Game.white_engine_id == WhiteEngine.id
+    ).join(
+        BlackEngine, Game.black_engine_id == BlackEngine.id
+    ).filter(
+        Game.is_rated == True
+    )
+
+    # Apply time filter
+    query = query.filter(
+        (Game.time_per_move_ms >= min_time_ms) | (Game.time_per_move_ms.is_(None))
+    )
+    query = query.filter(
+        (Game.time_per_move_ms <= max_time_ms) | (Game.time_per_move_ms.is_(None))
+    )
+
+    # Apply hostname filter
+    if hostname is not None:
+        query = query.filter(Game.hostname == hostname)
+
+    # Apply engine type filter - BOTH players must match
+    if engine_type == 'rusty':
+        query = query.filter(WhiteEngine.name.like('v%'))
+        query = query.filter(BlackEngine.name.like('v%'))
+    elif engine_type == 'stockfish':
+        query = query.filter(WhiteEngine.name.like('sf%'))
+        query = query.filter(BlackEngine.name.like('sf%'))
+
+    return query.all()
+
+
+def calculate_bayeselo(game_results, engine_ids, draw_elo=97.0, iterations=50):
+    """
+    Calculate BayesElo ratings using iterative maximum likelihood estimation.
+
+    The BayesElo model accounts for draws explicitly using a "draw elo" parameter.
+    Higher draw_elo means draws are more likely (typical chess value: ~97).
+
+    Args:
+        game_results: List of (white_id, black_id, white_score, black_score)
+        engine_ids: List of engine IDs to rate
+        draw_elo: Draw tendency parameter (default 97 for chess)
+        iterations: Number of optimization iterations
+
+    Returns:
+        dict: {engine_id: bayes_elo_rating}
+    """
+    if not game_results or len(engine_ids) < 2:
+        return {eid: 1500.0 for eid in engine_ids}
+
+    # Initialize ratings at 0 (BayesElo uses 0-centered ratings internally)
+    ratings = {eid: 0.0 for eid in engine_ids}
+
+    # Count games for each engine
+    games_count = {eid: 0 for eid in engine_ids}
+    for white_id, black_id, _, _ in game_results:
+        if white_id in games_count:
+            games_count[white_id] += 1
+        if black_id in games_count:
+            games_count[black_id] += 1
+
+    # Pre-compute draw elo factor
+    draw_factor = 10 ** (draw_elo / 400.0)
+
+    # Iterative optimization
+    for _ in range(iterations):
+        # Accumulate expected vs actual scores
+        expected = {eid: 0.0 for eid in engine_ids}
+        actual = {eid: 0.0 for eid in engine_ids}
+
+        for white_id, black_id, white_score, black_score in game_results:
+            if white_id not in ratings or black_id not in ratings:
+                continue
+
+            # Rating difference factor
+            diff = (ratings[white_id] - ratings[black_id]) / 400.0
+            white_factor = 10 ** diff
+            black_factor = 10 ** (-diff)
+
+            # Total for normalization
+            total = white_factor + draw_factor + black_factor
+
+            # Expected scores (win=1, draw=0.5, loss=0)
+            white_expected = (white_factor + 0.5 * draw_factor) / total
+            black_expected = (black_factor + 0.5 * draw_factor) / total
+
+            expected[white_id] += white_expected
+            expected[black_id] += black_expected
+            actual[white_id] += float(white_score)
+            actual[black_id] += float(black_score)
+
+        # Update ratings based on actual - expected
+        for eid in engine_ids:
+            if games_count[eid] > 0 and expected[eid] > 0:
+                # Adjust rating based on performance difference
+                diff = actual[eid] - expected[eid]
+                # Scale adjustment by number of games (like K-factor)
+                k = 40 if games_count[eid] < 30 else 20
+                ratings[eid] += k * diff / max(1, games_count[eid] / 10)
+
+    # Convert to standard Elo scale (center around 1500)
+    if ratings:
+        avg_rating = sum(ratings.values()) / len(ratings)
+        ratings = {eid: r - avg_rating + 1500 for eid, r in ratings.items()}
+
+    return ratings
+
+
+def calculate_ordo(game_results, engine_ids, iterations=100):
+    """
+    Calculate Ordo ratings using maximum likelihood estimation.
+
+    Ordo uses the Bradley-Terry model with logistic distribution,
+    finding ratings that maximize the likelihood of observed results.
+    Unlike sequential Elo, Ordo gives the same result regardless of game order.
+
+    Args:
+        game_results: List of (white_id, black_id, white_score, black_score)
+        engine_ids: List of engine IDs to rate
+        iterations: Number of optimization iterations
+
+    Returns:
+        dict: {engine_id: ordo_rating}
+    """
+    if not game_results or len(engine_ids) < 2:
+        return {eid: 1500.0 for eid in engine_ids}
+
+    # Build win/draw/loss matrix
+    # scores[i][j] = (wins for i against j, draws, losses)
+    engine_idx = {eid: i for i, eid in enumerate(engine_ids)}
+    n = len(engine_ids)
+
+    wins = [[0.0] * n for _ in range(n)]
+    draws = [[0.0] * n for _ in range(n)]
+
+    for white_id, black_id, white_score, black_score in game_results:
+        if white_id not in engine_idx or black_id not in engine_idx:
+            continue
+
+        wi = engine_idx[white_id]
+        bi = engine_idx[black_id]
+        ws = float(white_score)
+
+        if ws == 1.0:
+            wins[wi][bi] += 1
+        elif ws == 0.0:
+            wins[bi][wi] += 1
+        else:  # draw
+            draws[wi][bi] += 1
+            draws[bi][wi] += 1
+
+    # Initialize ratings
+    ratings = [0.0] * n
+
+    # Iterative optimization using MM algorithm (minorization-maximization)
+    for _ in range(iterations):
+        new_ratings = [0.0] * n
+
+        for i in range(n):
+            numerator = 0.0
+            denominator = 0.0
+
+            for j in range(n):
+                if i == j:
+                    continue
+
+                total_games = wins[i][j] + wins[j][i] + draws[i][j]
+                if total_games == 0:
+                    continue
+
+                # Score for player i against j
+                score_i = wins[i][j] + 0.5 * draws[i][j]
+
+                # Expected score based on current ratings
+                diff = (ratings[i] - ratings[j]) / 400.0
+                expected_i = 1.0 / (1.0 + 10 ** (-diff))
+
+                numerator += score_i
+                denominator += total_games * expected_i
+
+            if denominator > 0:
+                # Update formula for Bradley-Terry MM algorithm
+                new_ratings[i] = ratings[i] + 400.0 * math.log10(max(0.001, numerator / denominator))
+            else:
+                new_ratings[i] = ratings[i]
+
+        ratings = new_ratings
+
+    # Convert to dict and center around 1500
+    if ratings:
+        avg_rating = sum(ratings) / len(ratings)
+        return {engine_ids[i]: r - avg_rating + 1500 for i, r in enumerate(ratings)}
+
+    return {eid: 1500.0 for eid in engine_ids}
+
+
+def calculate_all_ratings(min_time_ms: int, max_time_ms: int, hostname: str | None, engine_type: str | None):
+    """
+    Calculate Elo, BayesElo, and Ordo ratings for all engines matching the filter.
+
+    This performs a full recalculation (not incremental) for all three rating systems.
+
+    Args:
+        min_time_ms: Minimum time per move in milliseconds
+        max_time_ms: Maximum time per move in milliseconds
+        hostname: Hostname filter (None = any host)
+        engine_type: Engine type filter (None = all, 'rusty' = v*, 'stockfish' = sf*)
+
+    Returns:
+        dict: {engine_id: {'elo': float, 'bayes_elo': float, 'ordo': float, 'games_played': int}}
+    """
+    db = get_db()
+    Engine, Game, EloFilterCache, EloFilterRating = get_models()
+
+    # Get all game results for this filter
+    game_results = get_game_results_for_filter(min_time_ms, max_time_ms, hostname, engine_type)
+
+    # Get engine IDs that match the filter
+    engine_ids = []
+    for engine in Engine.query.filter(Engine.active == True):
+        if engine_matches_type_filter(engine.name, engine_type):
+            engine_ids.append(engine.id)
+
+    # Count games per engine
+    games_count = {eid: 0 for eid in engine_ids}
+    for white_id, black_id, _, _ in game_results:
+        if white_id in games_count:
+            games_count[white_id] += 1
+        if black_id in games_count:
+            games_count[black_id] += 1
+
+    # Calculate all three rating systems
+    # 1. Sequential Elo (standard calculation)
+    elo_ratings = calculate_sequential_elo(game_results, engine_ids)
+
+    # 2. BayesElo
+    bayes_ratings = calculate_bayeselo(game_results, engine_ids)
+
+    # 3. Ordo
+    ordo_ratings = calculate_ordo(game_results, engine_ids)
+
+    # Combine results
+    results = {}
+    for eid in engine_ids:
+        results[eid] = {
+            'elo': elo_ratings.get(eid, 1500.0),
+            'bayes_elo': bayes_ratings.get(eid, 1500.0),
+            'ordo': ordo_ratings.get(eid, 1500.0),
+            'games_played': games_count.get(eid, 0)
+        }
+
+    return results
+
+
+def calculate_sequential_elo(game_results, engine_ids):
+    """
+    Calculate standard Elo ratings sequentially (same as incremental but from scratch).
+
+    Args:
+        game_results: List of (white_id, black_id, white_score, black_score)
+        engine_ids: List of engine IDs to rate
+
+    Returns:
+        dict: {engine_id: elo_rating}
+    """
+    # Get initial ELOs
+    db = get_db()
+    Engine, Game, EloFilterCache, EloFilterRating = get_models()
+
+    ratings = {}
+    games_count = {}
+
+    for engine in Engine.query.filter(Engine.id.in_(engine_ids)):
+        ratings[engine.id] = float(engine.initial_elo or DEFAULT_ELO)
+        games_count[engine.id] = 0
+
+    # Process games sequentially
+    for white_id, black_id, white_score, black_score in game_results:
+        if white_id not in ratings or black_id not in ratings:
+            continue
+
+        white_elo = ratings[white_id]
+        black_elo = ratings[black_id]
+        white_games = games_count[white_id]
+        black_games = games_count[black_id]
+
+        # Expected scores
+        white_expected = 1 / (1 + 10 ** ((black_elo - white_elo) / 400))
+        black_expected = 1 - white_expected
+
+        # K-factors
+        white_k = K_FACTOR_PROVISIONAL if white_games < PROVISIONAL_GAMES else K_FACTOR_ESTABLISHED
+        black_k = K_FACTOR_PROVISIONAL if black_games < PROVISIONAL_GAMES else K_FACTOR_ESTABLISHED
+
+        # Update ratings
+        ratings[white_id] += white_k * (float(white_score) - white_expected)
+        ratings[black_id] += black_k * (float(black_score) - black_expected)
+        games_count[white_id] += 1
+        games_count[black_id] += 1
+
+    return ratings
+
+
+def recalculate_all_and_store(min_time_ms: int, max_time_ms: int, hostname: str | None, engine_type: str | None):
+    """
+    Recalculate all rating systems and store in database.
+
+    This is called when Force Recalculate is clicked.
+
+    Args:
+        min_time_ms: Minimum time per move in milliseconds
+        max_time_ms: Maximum time per move in milliseconds
+        hostname: Hostname filter (None = any host)
+        engine_type: Engine type filter (None = all)
+
+    Returns:
+        dict: The calculated ratings
+    """
+    db = get_db()
+    Engine, Game, EloFilterCache, EloFilterRating = get_models()
+
+    # Get or create filter cache
+    cache = get_or_create_filter_cache(min_time_ms, max_time_ms, hostname, engine_type)
+
+    # Calculate all ratings
+    all_ratings = calculate_all_ratings(min_time_ms, max_time_ms, hostname, engine_type)
+
+    # Get the last game ID for this filter
+    from sqlalchemy.orm import aliased
+    WhiteEngine = aliased(Engine)
+    BlackEngine = aliased(Engine)
+
+    query = db.session.query(func.max(Game.id)).join(
+        WhiteEngine, Game.white_engine_id == WhiteEngine.id
+    ).join(
+        BlackEngine, Game.black_engine_id == BlackEngine.id
+    ).filter(Game.is_rated == True)
+
+    # Apply filters
+    query = query.filter(
+        (Game.time_per_move_ms >= min_time_ms) | (Game.time_per_move_ms.is_(None))
+    )
+    query = query.filter(
+        (Game.time_per_move_ms <= max_time_ms) | (Game.time_per_move_ms.is_(None))
+    )
+    if hostname is not None:
+        query = query.filter(Game.hostname == hostname)
+    if engine_type == 'rusty':
+        query = query.filter(WhiteEngine.name.like('v%'))
+        query = query.filter(BlackEngine.name.like('v%'))
+    elif engine_type == 'stockfish':
+        query = query.filter(WhiteEngine.name.like('sf%'))
+        query = query.filter(BlackEngine.name.like('sf%'))
+
+    last_game_id = query.scalar() or 0
+
+    # Update cache
+    cache.last_game_id = last_game_id
+
+    # Store ratings
+    for engine_id, rating_data in all_ratings.items():
+        existing = EloFilterRating.query.filter_by(
+            filter_id=cache.id, engine_id=engine_id
+        ).first()
+
+        if existing:
+            existing.elo = rating_data['elo']
+            existing.bayes_elo = rating_data['bayes_elo']
+            existing.ordo = rating_data['ordo']
+            existing.games_played = rating_data['games_played']
+        else:
+            db.session.add(EloFilterRating(
+                filter_id=cache.id,
+                engine_id=engine_id,
+                elo=rating_data['elo'],
+                bayes_elo=rating_data['bayes_elo'],
+                ordo=rating_data['ordo'],
+                games_played=rating_data['games_played']
+            ))
+
+    db.session.commit()
+
+    return all_ratings
