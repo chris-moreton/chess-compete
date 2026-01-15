@@ -58,15 +58,16 @@ class EloFilterCache(db.Model):
     min_time_ms = db.Column(db.Integer, nullable=False, default=0)
     max_time_ms = db.Column(db.Integer, nullable=False, default=999999999)
     hostname = db.Column(db.String(100))  # NULL = any host
+    engine_type = db.Column(db.String(20))  # NULL = all, 'rusty' = v*, 'stockfish' = sf*
     last_game_id = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     __table_args__ = (
-        db.UniqueConstraint('min_time_ms', 'max_time_ms', 'hostname'),
+        db.UniqueConstraint('min_time_ms', 'max_time_ms', 'hostname', 'engine_type'),
     )
 
     def __repr__(self):
-        return f'<EloFilterCache {self.min_time_ms}-{self.max_time_ms}ms, host={self.hostname}>'
+        return f'<EloFilterCache {self.min_time_ms}-{self.max_time_ms}ms, host={self.hostname}, engine={self.engine_type}>'
 
 
 class EloFilterRating(db.Model):

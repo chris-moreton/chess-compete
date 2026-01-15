@@ -43,20 +43,35 @@
                     </div>
 
                     <div class="filter-group">
+                        <label>Engine:</label>
+                        <select id="engine-type">
+                            <option value="" {% if not engine_type %}selected{% endif %}>All</option>
+                            <option value="rusty" {% if engine_type == 'rusty' %}selected{% endif %}>Rusty Rival</option>
+                            <option value="stockfish" {% if engine_type == 'stockfish' %}selected{% endif %}>Stockfish</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
                         <button onclick="applyFilters()" class="apply-btn">Apply Filters</button>
                         <button onclick="resetFilters()" class="reset-btn">Reset</button>
+                    </div>
+
+                    <div class="filter-group">
+                        <form action="/clear-cache" method="POST" style="display: inline;" onsubmit="return confirm('This will clear all cached ELO calculations. Continue?');">
+                            <button type="submit" class="reset-btn">Force Recalculate</button>
+                        </form>
                     </div>
                 </div>
 
                 <div class="filter-status">
                     {% if active_only %}
-                        Showing active engines only. <a href="?all=1{% if min_time != db_min_time %}&min_time={{ min_time }}{% endif %}{% if max_time != db_max_time %}&max_time={{ max_time }}{% endif %}{% if hostname %}&hostname={{ hostname }}{% endif %}">Show all engines</a>
+                        Showing active engines only. <a href="?all=1{% if min_time != db_min_time %}&min_time={{ min_time }}{% endif %}{% if max_time != db_max_time %}&max_time={{ max_time }}{% endif %}{% if hostname %}&hostname={{ hostname }}{% endif %}{% if engine_type %}&engine_type={{ engine_type }}{% endif %}">Show all engines</a>
                     {% else %}
-                        Showing all engines. <a href="/?{% if min_time != db_min_time %}min_time={{ min_time }}&{% endif %}{% if max_time != db_max_time %}max_time={{ max_time }}&{% endif %}{% if hostname %}hostname={{ hostname }}{% endif %}">Show active only</a>
+                        Showing all engines. <a href="/?{% if min_time != db_min_time %}min_time={{ min_time }}&{% endif %}{% if max_time != db_max_time %}max_time={{ max_time }}&{% endif %}{% if hostname %}hostname={{ hostname }}&{% endif %}{% if engine_type %}engine_type={{ engine_type }}{% endif %}">Show active only</a>
                     {% endif %}
                     | {{ total_engines }} engines
                     | Auto-refresh: 30s
-                    {% if hostname or min_time != db_min_time or max_time != db_max_time %}
+                    {% if hostname or engine_type or min_time != db_min_time or max_time != db_max_time %}
                     | <span class="filter-active">Filters active</span>
                     {% endif %}
                 </div>
@@ -118,6 +133,7 @@
             const minTime = document.getElementById('min-time').value;
             const maxTime = document.getElementById('max-time').value;
             const hostname = document.getElementById('hostname').value;
+            const engineType = document.getElementById('engine-type').value;
             const params = new URLSearchParams(window.location.search);
 
             // Preserve 'all' parameter
@@ -127,6 +143,7 @@
             params.delete('min_time');
             params.delete('max_time');
             params.delete('hostname');
+            params.delete('engine_type');
 
             if (minTime && minTime !== '{{ db_min_time }}') {
                 params.set('min_time', minTime);
@@ -136,6 +153,9 @@
             }
             if (hostname) {
                 params.set('hostname', hostname);
+            }
+            if (engineType) {
+                params.set('engine_type', engineType);
             }
             if (showAll) {
                 params.set('all', showAll);

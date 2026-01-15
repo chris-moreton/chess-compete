@@ -2,8 +2,8 @@
 Flask routes for the competition dashboard.
 """
 
-from flask import render_template, request
-from web.queries import get_dashboard_data, get_unique_hostnames, get_time_range
+from flask import render_template, request, redirect, url_for
+from web.queries import get_dashboard_data, get_unique_hostnames, get_time_range, clear_elo_cache
 
 
 def register_routes(app):
@@ -19,6 +19,7 @@ def register_routes(app):
         min_time = request.args.get('min_time', type=int)
         max_time = request.args.get('max_time', type=int)
         hostname = request.args.get('hostname') or None  # Empty string -> None
+        engine_type = request.args.get('engine_type') or None  # Empty string -> None
 
         # Get actual time range from database for slider defaults
         db_min_time, db_max_time = get_time_range()
@@ -37,7 +38,8 @@ def register_routes(app):
             active_only=active_only,
             min_time_ms=min_time,
             max_time_ms=max_time,
-            hostname=hostname
+            hostname=hostname,
+            engine_type=engine_type
         )
 
         # Get list of unique hostnames for dropdown
@@ -56,8 +58,16 @@ def register_routes(app):
             db_min_time=db_min_time,
             db_max_time=db_max_time,
             hostname=hostname,
-            hostnames=hostnames
+            hostnames=hostnames,
+            engine_type=engine_type
         )
+
+    @app.route('/clear-cache', methods=['POST'])
+    def clear_cache():
+        """Clear the ELO filter cache, forcing recalculation."""
+        num_cache, num_ratings = clear_elo_cache()
+        # Redirect back to dashboard (preserving any query params would be complex, just go to root)
+        return redirect(url_for('dashboard'))
 
     @app.route('/health')
     def health():

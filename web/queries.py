@@ -15,7 +15,7 @@ DEFAULT_ELO = 1500
 
 def get_engine_type(name: str) -> str:
     """
-    Determine the engine type from its name.
+    Determine the engine type from its name for display purposes.
 
     Returns:
         'stockfish' - for sf-* engines
@@ -34,6 +34,26 @@ def get_engine_type(name: str) -> str:
     return 'other'
 
 
+def engine_matches_type_filter(engine_name: str, engine_type_filter: str | None) -> bool:
+    """
+    Check if an engine matches the engine type filter.
+
+    Args:
+        engine_name: Name of the engine
+        engine_type_filter: 'rusty' for Rusty Rival (v*), 'stockfish' for Stockfish (sf*), None for all
+
+    Returns:
+        True if the engine matches the filter
+    """
+    if engine_type_filter is None:
+        return True
+    if engine_type_filter == 'rusty':
+        return engine_name.startswith('v')
+    if engine_type_filter == 'stockfish':
+        return engine_name.startswith('sf')
+    return True
+
+
 def get_db():
     """Get db instance (late import to avoid circular imports)."""
     from web.database import db
@@ -46,7 +66,7 @@ def get_models():
     return Engine, Game, EloFilterCache, EloFilterRating
 
 
-def get_or_create_filter_cache(min_time_ms: int, max_time_ms: int, hostname: str | None):
+def get_or_create_filter_cache(min_time_ms: int, max_time_ms: int, hostname: str | None, engine_type: str | None):
     """
     Find or create a filter cache entry.
 
@@ -54,6 +74,7 @@ def get_or_create_filter_cache(min_time_ms: int, max_time_ms: int, hostname: str
         min_time_ms: Minimum time per move in milliseconds
         max_time_ms: Maximum time per move in milliseconds
         hostname: Hostname filter (None = any host)
+        engine_type: Engine type filter (None = all, 'rusty' = v*, 'stockfish' = sf*)
 
     Returns:
         EloFilterCache instance
@@ -64,14 +85,16 @@ def get_or_create_filter_cache(min_time_ms: int, max_time_ms: int, hostname: str
     cache = EloFilterCache.query.filter_by(
         min_time_ms=min_time_ms,
         max_time_ms=max_time_ms,
-        hostname=hostname
+        hostname=hostname,
+        engine_type=engine_type
     ).first()
 
     if not cache:
         cache = EloFilterCache(
             min_time_ms=min_time_ms,
             max_time_ms=max_time_ms,
-            hostname=hostname
+            hostname=hostname,
+            engine_type=engine_type
         )
         db.session.add(cache)
         db.session.commit()
@@ -79,7 +102,7 @@ def get_or_create_filter_cache(min_time_ms: int, max_time_ms: int, hostname: str
     return cache
 
 
-def recalculate_elos_incremental(min_time_ms: int, max_time_ms: int, hostname: str | None):
+def recalculate_elos_incremental(min_time_ms: int, max_time_ms: int, hostname: str | None, engine_type: str | None = None):
     """
     Incrementally recalculate ELO ratings for engines under the given filter.
 
@@ -94,27 +117,39 @@ def recalculate_elos_incremental(min_time_ms: int, max_time_ms: int, hostname: s
         min_time_ms: Minimum time per move in milliseconds
         max_time_ms: Maximum time per move in milliseconds
         hostname: Hostname filter (None = any host)
+        engine_type: Engine type filter (None = all, 'rusty' = v*, 'stockfish' = sf*)
+                     When set, BOTH players must be of this engine type
 
     Returns:
         dict: {engine_id: (elo, games_played)}
     """
+    from sqlalchemy.orm import aliased
     db = get_db()
     Engine, Game, EloFilterCache, EloFilterRating = get_models()
 
-    cache = get_or_create_filter_cache(min_time_ms, max_time_ms, hostname)
+    cache = get_or_create_filter_cache(min_time_ms, max_time_ms, hostname, engine_type)
 
     # Load existing ratings for this filter
     ratings = {}
     for r in EloFilterRating.query.filter_by(filter_id=cache.id):
         ratings[r.engine_id] = (float(r.elo), r.games_played)
 
-    # Load initial ELOs for engines not yet in cache
+    # Load initial ELOs for engines not yet in cache (only matching engine type)
     for engine in Engine.query.filter(Engine.active == True):
         if engine.id not in ratings:
-            ratings[engine.id] = (float(engine.initial_elo or DEFAULT_ELO), 0)
+            if engine_matches_type_filter(engine.name, engine_type):
+                ratings[engine.id] = (float(engine.initial_elo or DEFAULT_ELO), 0)
 
     # Query new games matching filters
-    query = Game.query.filter(
+    # Need to join with Engine table to filter by engine type
+    WhiteEngine = aliased(Engine)
+    BlackEngine = aliased(Engine)
+
+    query = db.session.query(Game).join(
+        WhiteEngine, Game.white_engine_id == WhiteEngine.id
+    ).join(
+        BlackEngine, Game.black_engine_id == BlackEngine.id
+    ).filter(
         Game.id > cache.last_game_id,
         Game.is_rated == True,
     )
@@ -130,6 +165,14 @@ def recalculate_elos_incremental(min_time_ms: int, max_time_ms: int, hostname: s
     # Apply hostname filter
     if hostname is not None:
         query = query.filter(Game.hostname == hostname)
+
+    # Apply engine type filter - BOTH players must match
+    if engine_type == 'rusty':
+        query = query.filter(WhiteEngine.name.like('v%'))
+        query = query.filter(BlackEngine.name.like('v%'))
+    elif engine_type == 'stockfish':
+        query = query.filter(WhiteEngine.name.like('sf%'))
+        query = query.filter(BlackEngine.name.like('sf%'))
 
     games = query.order_by(Game.id).all()
 
@@ -183,7 +226,7 @@ def recalculate_elos_incremental(min_time_ms: int, max_time_ms: int, hostname: s
     return ratings
 
 
-def get_engines_ranked_by_elo(active_only=True, min_time_ms=0, max_time_ms=999999999, hostname=None):
+def get_engines_ranked_by_elo(active_only=True, min_time_ms=0, max_time_ms=999999999, hostname=None, engine_type=None):
     """
     Get engines sorted by Elo rating descending.
 
@@ -192,6 +235,7 @@ def get_engines_ranked_by_elo(active_only=True, min_time_ms=0, max_time_ms=99999
         min_time_ms: Minimum time per move filter
         max_time_ms: Maximum time per move filter
         hostname: Hostname filter (None = any)
+        engine_type: Engine type filter (None = all, 'rusty' = v*, 'stockfish' = sf*)
 
     Returns:
         List of dicts with engine info and ratings
@@ -200,7 +244,7 @@ def get_engines_ranked_by_elo(active_only=True, min_time_ms=0, max_time_ms=99999
     Engine, Game, EloFilterCache, EloFilterRating = get_models()
 
     # Recalculate ELOs incrementally
-    ratings = recalculate_elos_incremental(min_time_ms, max_time_ms, hostname)
+    ratings = recalculate_elos_incremental(min_time_ms, max_time_ms, hostname, engine_type)
 
     # Get engines
     query = Engine.query
@@ -209,9 +253,11 @@ def get_engines_ranked_by_elo(active_only=True, min_time_ms=0, max_time_ms=99999
 
     engines = query.all()
 
-    # Build result list with ratings
+    # Build result list with ratings (only include engines matching type filter)
     result = []
     for engine in engines:
+        if not engine_matches_type_filter(engine.name, engine_type):
+            continue
         elo, games_played = ratings.get(engine.id, (float(engine.initial_elo or DEFAULT_ELO), 0))
         result.append({
             'engine': engine,
@@ -225,7 +271,7 @@ def get_engines_ranked_by_elo(active_only=True, min_time_ms=0, max_time_ms=99999
     return result
 
 
-def get_h2h_raw_data(min_time_ms=0, max_time_ms=999999999, hostname=None):
+def get_h2h_raw_data(min_time_ms=0, max_time_ms=999999999, hostname=None, engine_type=None):
     """
     Get raw head-to-head data from games table.
     Only includes rated games matching the filters.
@@ -234,12 +280,18 @@ def get_h2h_raw_data(min_time_ms=0, max_time_ms=999999999, hostname=None):
         min_time_ms: Minimum time per move filter
         max_time_ms: Maximum time per move filter
         hostname: Hostname filter (None = any)
+        engine_type: Engine type filter (None = all, 'rusty' = v*, 'stockfish' = sf*)
+                     When set, BOTH players must be of this engine type
 
     Returns:
         dict: {(white_id, black_id): {'white_points': float, 'black_points': float, 'games': int}}
     """
+    from sqlalchemy.orm import aliased
     db = get_db()
     Engine, Game, EloFilterCache, EloFilterRating = get_models()
+
+    WhiteEngine = aliased(Engine)
+    BlackEngine = aliased(Engine)
 
     query = db.session.query(
         Game.white_engine_id,
@@ -247,6 +299,10 @@ def get_h2h_raw_data(min_time_ms=0, max_time_ms=999999999, hostname=None):
         func.sum(Game.white_score).label('white_points'),
         func.sum(Game.black_score).label('black_points'),
         func.count(Game.id).label('total_games')
+    ).join(
+        WhiteEngine, Game.white_engine_id == WhiteEngine.id
+    ).join(
+        BlackEngine, Game.black_engine_id == BlackEngine.id
     ).filter(
         Game.is_rated == True
     )
@@ -262,6 +318,14 @@ def get_h2h_raw_data(min_time_ms=0, max_time_ms=999999999, hostname=None):
     # Apply hostname filter
     if hostname is not None:
         query = query.filter(Game.hostname == hostname)
+
+    # Apply engine type filter - BOTH players must match
+    if engine_type == 'rusty':
+        query = query.filter(WhiteEngine.name.like('v%'))
+        query = query.filter(BlackEngine.name.like('v%'))
+    elif engine_type == 'stockfish':
+        query = query.filter(WhiteEngine.name.like('sf%'))
+        query = query.filter(BlackEngine.name.like('sf%'))
 
     results = query.group_by(
         Game.white_engine_id,
@@ -578,7 +642,7 @@ def get_time_range():
     return min_time, max_time
 
 
-def get_dashboard_data(active_only=True, min_time_ms=0, max_time_ms=999999999, hostname=None):
+def get_dashboard_data(active_only=True, min_time_ms=0, max_time_ms=999999999, hostname=None, engine_type=None):
     """
     Get all data needed for the dashboard.
 
@@ -587,6 +651,7 @@ def get_dashboard_data(active_only=True, min_time_ms=0, max_time_ms=999999999, h
         min_time_ms: Minimum time per move filter
         max_time_ms: Maximum time per move filter
         hostname: Hostname filter (None = any)
+        engine_type: Engine type filter (None = all, 'rusty' = v*, 'stockfish' = sf*)
 
     Returns:
         (engines, grid, column_headers, last_played_engines)
@@ -595,7 +660,8 @@ def get_dashboard_data(active_only=True, min_time_ms=0, max_time_ms=999999999, h
         active_only=active_only,
         min_time_ms=min_time_ms,
         max_time_ms=max_time_ms,
-        hostname=hostname
+        hostname=hostname,
+        engine_type=engine_type
     )
 
     if not engines:
@@ -604,10 +670,36 @@ def get_dashboard_data(active_only=True, min_time_ms=0, max_time_ms=999999999, h
     h2h_raw = get_h2h_raw_data(
         min_time_ms=min_time_ms,
         max_time_ms=max_time_ms,
-        hostname=hostname
+        hostname=hostname,
+        engine_type=engine_type
     )
     grid = build_h2h_grid(engines, h2h_raw)
     column_headers = [(i + 1, e['engine'].name) for i, e in enumerate(engines)]
     last_played = get_last_played_engines()
 
     return engines, grid, column_headers, last_played
+
+
+def clear_elo_cache():
+    """
+    Clear all ELO filter cache entries and their associated ratings.
+    This forces a full recalculation the next time any filter is used.
+
+    Returns:
+        tuple: (num_cache_entries_deleted, num_ratings_deleted)
+    """
+    db = get_db()
+    Engine, Game, EloFilterCache, EloFilterRating = get_models()
+
+    # Count before deleting
+    num_ratings = EloFilterRating.query.count()
+    num_cache = EloFilterCache.query.count()
+
+    # Delete all ratings first (due to foreign key), then cache entries
+    # Note: CASCADE should handle ratings, but be explicit
+    EloFilterRating.query.delete()
+    EloFilterCache.query.delete()
+
+    db.session.commit()
+
+    return num_cache, num_ratings
