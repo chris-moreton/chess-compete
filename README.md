@@ -13,7 +13,8 @@ A comprehensive engine vs engine testing harness with Elo tracking, automatic en
 5. [Command Reference](#command-reference)
 6. [Elo Rating System](#elo-rating-system)
 7. [Web Dashboard](#web-dashboard)
-8. [Troubleshooting](#troubleshooting)
+8. [Development](#development)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -21,14 +22,14 @@ A comprehensive engine vs engine testing harness with Elo tracking, automatic en
 
 ```bash
 # Initialize and enable an engine (downloads automatically)
-python compete.py --init rusty v1.0.17
-python compete.py --init stockfish latest
+python -m compete --init rusty v1.0.17
+python -m compete --init stockfish latest
 
 # Run a head-to-head match
-python compete.py v1.0.17 sf-2400 --games 100 --time 1.0
+python -m compete v1.0.17 sf-2400 --games 100 --time 1.0
 
 # Random mode (continuous random pairings from active engines)
-python compete.py --random --games 100 --time 0.5
+python -m compete --random --games 100 --time 0.5
 ```
 
 ---
@@ -114,13 +115,13 @@ Use `--init` to download and enable engines:
 
 ```bash
 # Download and enable Stockfish (enables all sf-* variants)
-python compete.py --init stockfish latest
+python -m compete --init stockfish latest
 
 # Download and enable Rusty Rival
-python compete.py --init rusty v1.0.17
+python -m compete --init rusty v1.0.17
 
 # Download and enable Java Rival
-python compete.py --init java 38
+python -m compete --init java 38
 ```
 
 ---
@@ -142,26 +143,26 @@ This means you can enable an engine on one machine, and other machines will auto
 
 ```bash
 # Stockfish (enables all sf-* variants: sf-1400, sf-1600, ..., sf-3000, sf-full)
-python compete.py --init stockfish latest
+python -m compete --init stockfish latest
 
 # Rusty Rival
-python compete.py --init rusty v1.0.17
+python -m compete --init rusty v1.0.17
 
 # Java Rival
-python compete.py --init java 38
+python -m compete --init java 38
 ```
 
 ### Enabling and Disabling Engines
 
 ```bash
 # List all engines with their status
-python compete.py --list
+python -m compete --list
 
 # Disable engines (won't be selected in random/gauntlet mode)
-python compete.py --disable sf-1400 sf-full
+python -m compete --disable sf-1400 sf-full
 
 # Enable engines
-python compete.py --enable java-rival-38 v1.0.17
+python -m compete --enable java-rival-38 v1.0.17
 ```
 
 ### Directory Structure
@@ -196,7 +197,7 @@ The script automatically discovers engines:
 ### Head-to-Head Match (2 engines)
 
 ```bash
-python compete.py v1.0.17 sf-2400 --games 100 --time 1.0
+python -m compete v1.0.17 sf-2400 --games 100 --time 1.0
 ```
 
 - Each opening played twice (once per side)
@@ -206,7 +207,7 @@ python compete.py v1.0.17 sf-2400 --games 100 --time 1.0
 ### Round-Robin League (3+ engines)
 
 ```bash
-python compete.py v1.0.17 sf-2400 sf-2600 sf-2800 --games 50 --time 1.0
+python -m compete v1.0.17 sf-2400 sf-2600 sf-2800 --games 50 --time 1.0
 ```
 
 - All possible pairings played
@@ -216,7 +217,7 @@ python compete.py v1.0.17 sf-2400 sf-2600 sf-2800 --games 50 --time 1.0
 ### Gauntlet Mode
 
 ```bash
-python compete.py v1.0.17 --gauntlet --games 50 --time 0.5
+python -m compete v1.0.17 --gauntlet --games 50 --time 0.5
 ```
 
 - Tests one engine against all **active** engines
@@ -225,10 +226,10 @@ python compete.py v1.0.17 --gauntlet --games 50 --time 0.5
 ### Random Mode
 
 ```bash
-python compete.py --random --games 100 --time 0.5
+python -m compete --random --games 100 --time 0.5
 
 # Weighted: favor engines with fewer games
-python compete.py --random --weighted --games 100 --time 0.5
+python -m compete --random --weighted --games 100 --time 0.5
 ```
 
 - Continuous random pairings from **active** engines
@@ -238,7 +239,7 @@ python compete.py --random --weighted --games 100 --time 0.5
 ### EPD Mode
 
 ```bash
-python compete.py v1.0.17 sf-2800 --epd eet.epd --time 1.0
+python -m compete v1.0.17 sf-2800 --epd eet.epd --time 1.0
 ```
 
 - Play through positions from an EPD file
@@ -308,6 +309,46 @@ flask --app web.app run
 ```
 
 Access at `http://localhost:5000`
+
+---
+
+## Development
+
+### Running Tests
+
+```bash
+# Run all tests
+python -m pytest tests/
+
+# Run tests with verbose output
+python -m pytest tests/ -v
+
+# Run specific test file
+python -m pytest tests/test_game.py -v
+```
+
+### Project Structure
+
+```
+compete/
+├── __init__.py        # Package exports
+├── __main__.py        # Entry point (python -m compete)
+├── cli.py             # Argument parsing, main()
+├── constants.py       # K_FACTOR_*, DEFAULT_ELO, DB_* constants
+├── database.py        # DB operations, Elo tracking
+├── engine_manager.py  # Engine init, discovery, paths
+├── game.py            # play_game(), calculate_elo_difference()
+├── competitions.py    # run_match, run_league, run_gauntlet, run_random, run_epd
+└── openings.py        # OPENING_BOOK data, load_epd_positions()
+
+tests/
+├── test_constants.py
+├── test_openings.py
+├── test_database.py
+├── test_engine_manager.py
+├── test_game.py
+└── test_competitions.py
+```
 
 ---
 
