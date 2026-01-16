@@ -121,12 +121,16 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
     """
     Play a cup match between two engines.
 
+    Args:
+        games_per_match: Number of game PAIRS (so total games = games_per_match * 2)
+
     Returns: (winner_name, engine1_points, engine2_points, games_played, is_tiebreaker, decided_by_coin_flip)
 
     Rules:
-    1. Play games_per_match games, alternating colors
-    2. If tied: play tiebreaker games until someone wins (max 20)
-    3. If still tied after 20 tiebreaker games: coin flip decides
+    1. Play games_per_match pairs (2 games each, alternating colors)
+    2. Each game gets a random opening
+    3. If tied: play tiebreaker pairs until someone wins (max 10 pairs = 20 games)
+    4. If still tied after tiebreaker: coin flip decides
     """
     engine1_path, engine1_uci = get_engine_info(engine1_name, engine_dir)
     engine2_path, engine2_uci = get_engine_info(engine2_name, engine_dir)
@@ -139,26 +143,14 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
     is_tiebreaker = False
     decided_by_coin_flip = False
 
-    # Prepare openings
-    openings = OPENING_BOOK.copy()
-    random.shuffle(openings)
-    opening_idx = 0
-
-    def get_next_opening():
-        nonlocal opening_idx
-        if opening_idx >= len(openings):
-            random.shuffle(openings)
-            opening_idx = 0
-        opening = openings[opening_idx]
-        opening_idx += 1
-        return opening
-
     def play_one_game(white_name: str, black_name: str, white_path, black_path,
-                      white_uci, black_uci, opening_fen: str, opening_name: str,
-                      game_time: float):
-        """Play a single game and return the result."""
+                      white_uci, black_uci, game_time: float):
+        """Play a single game with random opening and return the result."""
         nonlocal games_played
         games_played += 1
+
+        # Random opening for each game
+        opening_fen, opening_name = random.choice(OPENING_BOOK)
 
         result, game = play_game(white_path, black_path, white_name, black_name,
                                  game_time, opening_fen, opening_name,
@@ -171,13 +163,10 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
                         time_per_move_ms=int(game_time * 1000),
                         hostname=hostname)
 
-        return result
+        return result, opening_name
 
-    # Play regular games (in pairs for color balance)
-    num_pairs = games_per_match // 2
-    for pair_idx in range(num_pairs):
-        opening_fen, opening_name = get_next_opening()
-
+    # Play regular game pairs
+    for pair_idx in range(games_per_match):
         # Select time for this pair
         if use_time_range:
             pair_time = random.uniform(time_low, time_high)
@@ -185,10 +174,9 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
             pair_time = time_per_move
 
         # Game 1: engine1 as white
-        result = play_one_game(engine1_name, engine2_name,
-                               engine1_path, engine2_path,
-                               engine1_uci, engine2_uci,
-                               opening_fen, opening_name, pair_time)
+        result, opening = play_one_game(engine1_name, engine2_name,
+                                        engine1_path, engine2_path,
+                                        engine1_uci, engine2_uci, pair_time)
 
         if result == "1-0":
             engine1_points += 1
@@ -198,14 +186,13 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
             engine1_points += 0.5
             engine2_points += 0.5
 
-        print(f"  Game {games_played}: {engine1_name} vs {engine2_name} -> {result} "
-              f"[{engine1_points:.1f} - {engine2_points:.1f}]")
+        print(f"  Game {games_played}: {engine1_name} vs {engine2_name} -> {result} [{opening}] "
+              f"Score: {engine1_points:.1f} - {engine2_points:.1f}")
 
-        # Game 2: engine2 as white (same opening)
-        result = play_one_game(engine2_name, engine1_name,
-                               engine2_path, engine1_path,
-                               engine2_uci, engine1_uci,
-                               opening_fen, opening_name, pair_time)
+        # Game 2: engine2 as white (different random opening)
+        result, opening = play_one_game(engine2_name, engine1_name,
+                                        engine2_path, engine1_path,
+                                        engine2_uci, engine1_uci, pair_time)
 
         if result == "1-0":
             engine2_points += 1
@@ -215,88 +202,58 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
             engine1_points += 0.5
             engine2_points += 0.5
 
-        print(f"  Game {games_played}: {engine2_name} vs {engine1_name} -> {result} "
-              f"[{engine1_points:.1f} - {engine2_points:.1f}]")
+        print(f"  Game {games_played}: {engine2_name} vs {engine1_name} -> {result} [{opening}] "
+              f"Score: {engine1_points:.1f} - {engine2_points:.1f}")
 
-    # Handle odd game count (play one extra game)
-    if games_per_match % 2 == 1:
-        opening_fen, opening_name = get_next_opening()
-        game_time = random.uniform(time_low, time_high) if use_time_range else time_per_move
+    # Tiebreaker if needed (play pairs until someone pulls ahead)
+    max_tiebreaker_pairs = 10  # 20 games max
+    tiebreaker_pairs = 0
 
-        # Random color assignment for odd game
-        if random.choice([True, False]):
-            result = play_one_game(engine1_name, engine2_name,
-                                   engine1_path, engine2_path,
-                                   engine1_uci, engine2_uci,
-                                   opening_fen, opening_name, game_time)
-            if result == "1-0":
-                engine1_points += 1
-            elif result == "0-1":
-                engine2_points += 1
-            else:
-                engine1_points += 0.5
-                engine2_points += 0.5
-        else:
-            result = play_one_game(engine2_name, engine1_name,
-                                   engine2_path, engine1_path,
-                                   engine2_uci, engine1_uci,
-                                   opening_fen, opening_name, game_time)
-            if result == "1-0":
-                engine2_points += 1
-            elif result == "0-1":
-                engine1_points += 1
-            else:
-                engine1_points += 0.5
-                engine2_points += 0.5
-
-        print(f"  Game {games_played}: Result -> {result} "
-              f"[{engine1_points:.1f} - {engine2_points:.1f}]")
-
-    # Tiebreaker if needed
-    max_tiebreaker_games = 20
-    tiebreaker_games = 0
-
-    while engine1_points == engine2_points and tiebreaker_games < max_tiebreaker_games:
+    while engine1_points == engine2_points and tiebreaker_pairs < max_tiebreaker_pairs:
         is_tiebreaker = True
-        tiebreaker_games += 1
+        tiebreaker_pairs += 1
 
-        opening_fen, opening_name = get_next_opening()
         game_time = random.uniform(time_low, time_high) if use_time_range else time_per_move
 
-        # Alternate colors in tiebreaker
-        if tiebreaker_games % 2 == 1:
-            result = play_one_game(engine1_name, engine2_name,
-                                   engine1_path, engine2_path,
-                                   engine1_uci, engine2_uci,
-                                   opening_fen, opening_name, game_time)
-            if result == "1-0":
-                engine1_points += 1
-            elif result == "0-1":
-                engine2_points += 1
-            else:
-                engine1_points += 0.5
-                engine2_points += 0.5
+        # Game 1 of tiebreaker pair: engine1 as white
+        result, opening = play_one_game(engine1_name, engine2_name,
+                                        engine1_path, engine2_path,
+                                        engine1_uci, engine2_uci, game_time)
+        if result == "1-0":
+            engine1_points += 1
+        elif result == "0-1":
+            engine2_points += 1
         else:
-            result = play_one_game(engine2_name, engine1_name,
-                                   engine2_path, engine1_path,
-                                   engine2_uci, engine1_uci,
-                                   opening_fen, opening_name, game_time)
-            if result == "1-0":
-                engine2_points += 1
-            elif result == "0-1":
-                engine1_points += 1
-            else:
-                engine1_points += 0.5
-                engine2_points += 0.5
+            engine1_points += 0.5
+            engine2_points += 0.5
 
-        print(f"  Tiebreaker {tiebreaker_games}: Result -> {result} "
-              f"[{engine1_points:.1f} - {engine2_points:.1f}]")
+        print(f"  Tiebreaker {games_played}: {engine1_name} vs {engine2_name} -> {result} [{opening}] "
+              f"Score: {engine1_points:.1f} - {engine2_points:.1f}")
+
+        # Check if decided after game 1
+        if engine1_points != engine2_points:
+            break
+
+        # Game 2 of tiebreaker pair: engine2 as white
+        result, opening = play_one_game(engine2_name, engine1_name,
+                                        engine2_path, engine1_path,
+                                        engine2_uci, engine1_uci, game_time)
+        if result == "1-0":
+            engine2_points += 1
+        elif result == "0-1":
+            engine1_points += 1
+        else:
+            engine1_points += 0.5
+            engine2_points += 0.5
+
+        print(f"  Tiebreaker {games_played}: {engine2_name} vs {engine1_name} -> {result} [{opening}] "
+              f"Score: {engine1_points:.1f} - {engine2_points:.1f}")
 
     # Coin flip if still tied
     if engine1_points == engine2_points:
         decided_by_coin_flip = True
         winner_name = random.choice([engine1_name, engine2_name])
-        print(f"  Match tied after {max_tiebreaker_games} tiebreaker games!")
+        print(f"  Match tied after {max_tiebreaker_pairs * 2} tiebreaker games!")
         print(f"  COIN FLIP: {winner_name} wins!")
     else:
         winner_name = engine1_name if engine1_points > engine2_points else engine2_name
@@ -313,7 +270,7 @@ def run_cup(engine_dir: Path, num_engines: int = None, games_per_match: int = 10
     Args:
         engine_dir: Path to engines directory
         num_engines: Limit to top N engines (None = all active)
-        games_per_match: Number of games per match
+        games_per_match: Number of game PAIRS per match (total games = pairs * 2)
         time_per_move: Fixed time per move (ignored if time_low/time_high set)
         cup_name: Optional custom cup name
         time_low: Minimum time per move for random range
