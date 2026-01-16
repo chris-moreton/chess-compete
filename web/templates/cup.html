@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="30">
+    <title>{{ cup.name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .cup-header {
+            margin-bottom: 30px;
+        }
+        .cup-info {
+            color: #888;
+            margin-bottom: 10px;
+        }
+        .cup-info span {
+            margin-right: 20px;
+        }
+        .cup-winner {
+            font-size: 1.5em;
+            color: #ffd700;
+            margin-top: 15px;
+        }
+        .cup-winner-trophy {
+            margin-right: 10px;
+        }
+
+        .bracket-container {
+            overflow-x: auto;
+            padding: 20px 0;
+        }
+        .bracket {
+            display: flex;
+            gap: 40px;
+            min-width: fit-content;
+        }
+        .round {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            min-width: 220px;
+        }
+        .round-header {
+            color: #888;
+            text-transform: uppercase;
+            font-size: 0.85em;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #333;
+            margin-bottom: 10px;
+        }
+        .round-status {
+            font-size: 0.75em;
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin-left: 10px;
+        }
+        .round-status.completed {
+            background: #2e7d32;
+        }
+        .round-status.in_progress {
+            background: #f57c00;
+        }
+        .round-status.pending {
+            background: #424242;
+        }
+
+        .matches-container {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .match {
+            background: #1e1e1e;
+            border: 1px solid #333;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .match.completed {
+            border-color: #2e7d32;
+        }
+        .match.in_progress {
+            border-color: #f57c00;
+        }
+        .match.bye {
+            border-color: #616161;
+            opacity: 0.7;
+        }
+
+        .match-engine {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            border-bottom: 1px solid #333;
+        }
+        .match-engine:last-child {
+            border-bottom: none;
+        }
+        .match-engine.winner {
+            background: rgba(76, 175, 80, 0.15);
+        }
+        .match-engine.loser {
+            opacity: 0.6;
+        }
+        .match-engine.bye-line {
+            background: #252525;
+            color: #666;
+            font-style: italic;
+        }
+
+        .engine-name {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .seed {
+            color: #888;
+            font-size: 0.85em;
+            min-width: 25px;
+        }
+        .score {
+            font-weight: bold;
+            color: #4fc3f7;
+        }
+        .match-info {
+            font-size: 0.75em;
+            color: #666;
+            padding: 4px 12px;
+            background: #161616;
+        }
+        .tiebreaker {
+            color: #ff9800;
+        }
+        .coin-flip {
+            color: #f44336;
+        }
+
+        .back-link {
+            margin-bottom: 20px;
+            display: block;
+        }
+        .back-link a {
+            color: #888;
+            text-decoration: none;
+        }
+        .back-link a:hover {
+            color: #4fc3f7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <p class="back-link"><a href="/cups">&larr; Back to Cups</a></p>
+
+        <div class="cup-header">
+            <h1>{{ cup.name }}</h1>
+            <div class="cup-info">
+                <span>{{ cup.num_participants }} participants</span>
+                <span>{{ cup.games_per_match }} games/match</span>
+                <span>{{ time_control }}</span>
+                {% if cup.hostname %}
+                <span>Host: {{ cup.hostname }}</span>
+                {% endif %}
+            </div>
+            {% if winner_name %}
+            <div class="cup-winner">
+                <span class="cup-winner-trophy">&#127942;</span>
+                Winner: {{ winner_name }}
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="bracket-container">
+            <div class="bracket">
+                {% for round in rounds %}
+                <div class="round">
+                    <div class="round-header">
+                        {{ round.round_name }}
+                        <span class="round-status {{ round.status }}">{{ round.status.replace('_', ' ') }}</span>
+                    </div>
+                    <div class="matches-container">
+                        {% for match in round.matches %}
+                        <div class="match {{ match.status }}">
+                            {% if match.is_bye %}
+                            <div class="match-engine winner">
+                                <div class="engine-name">
+                                    <span class="seed">#{{ match.engine1_seed }}</span>
+                                    {{ match.engine1_name }}
+                                </div>
+                            </div>
+                            <div class="match-engine bye-line">
+                                <div class="engine-name">
+                                    <span class="seed"></span>
+                                    BYE
+                                </div>
+                            </div>
+                            {% else %}
+                            <div class="match-engine {% if match.winner_name == match.engine1_name %}winner{% elif match.winner_name %}loser{% endif %}">
+                                <div class="engine-name">
+                                    <span class="seed">#{{ match.engine1_seed }}</span>
+                                    {{ match.engine1_name }}
+                                </div>
+                                <span class="score">{{ match.engine1_points if match.games_played else '-' }}</span>
+                            </div>
+                            <div class="match-engine {% if match.winner_name == match.engine2_name %}winner{% elif match.winner_name %}loser{% endif %}">
+                                <div class="engine-name">
+                                    <span class="seed">#{{ match.engine2_seed }}</span>
+                                    {{ match.engine2_name }}
+                                </div>
+                                <span class="score">{{ match.engine2_points if match.games_played else '-' }}</span>
+                            </div>
+                            {% if match.games_played %}
+                            <div class="match-info">
+                                {{ match.games_played }} games
+                                {% if match.is_tiebreaker %}
+                                <span class="tiebreaker">(tiebreaker)</span>
+                                {% endif %}
+                                {% if match.decided_by_coin_flip %}
+                                <span class="coin-flip">(coin flip)</span>
+                                {% endif %}
+                            </div>
+                            {% endif %}
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</body>
+</html>

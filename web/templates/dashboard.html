@@ -75,6 +75,7 @@
                         Showing all engines. <a href="/?{% if min_time != db_min_time %}min_time={{ min_time }}&{% endif %}{% if max_time != db_max_time %}max_time={{ max_time }}&{% endif %}{% if hostname %}hostname={{ hostname }}&{% endif %}{% if engine_type %}engine_type={{ engine_type }}{% endif %}">Show active only</a>
                     {% endif %}
                     | {{ total_engines }} engines
+                    | <a href="/cups">Cup Competitions</a>
                     | Auto-refresh: 30s
                     {% if hostname or engine_type or min_time != db_min_time or max_time != db_max_time %}
                     | <span class="filter-active">Filters active</span>

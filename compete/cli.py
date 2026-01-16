@@ -24,6 +24,7 @@ from compete.competitions import (
     run_random,
     run_epd,
 )
+from compete.cup import run_cup
 
 
 def main():
@@ -64,6 +65,12 @@ def main():
                              "TYPE is 'rusty', 'java', or 'stockfish'. "
                              "ELO is optional starting strength (default: derived from engine name). "
                              "Examples: --init rusty v1.0.17, --init java 38 2400, --init stockfish latest")
+    parser.add_argument("--cup", action="store_true",
+                        help="Cup mode: knockout tournament with seeded brackets")
+    parser.add_argument("--cup-engines", type=int, default=None, metavar="N",
+                        help="Limit cup to top N engines by Ordo rating (default: all active)")
+    parser.add_argument("--cup-name", type=str, default=None, metavar="NAME",
+                        help="Custom name for the cup competition")
 
     args = parser.parse_args()
 
@@ -181,8 +188,8 @@ def main():
             print(f"Resolved '{orig}' -> '{resolved}'")
 
     # Auto-initialize missing engines
-    if args.random or args.gauntlet:
-        # For random/gauntlet: ensure all active engines from database are initialized
+    if args.random or args.gauntlet or args.cup:
+        # For random/gauntlet/cup: ensure all active engines from database are initialized
         active_engines = get_active_engines(engine_dir)
         if active_engines:
             print(f"Checking {len(active_engines)} active engines...")
@@ -195,7 +202,13 @@ def main():
             print("Error: Failed to initialize some engines")
             sys.exit(1)
 
-    if args.epd:
+    if args.cup:
+        # Cup mode: knockout tournament with seeded brackets
+        if args.engines:
+            print("Warning: Engine arguments ignored in cup mode (uses active engines by Ordo rating)")
+        run_cup(engine_dir, args.cup_engines, args.games, time_per_move or 1.0,
+                args.cup_name, time_low, time_high)
+    elif args.epd:
         # EPD mode: play through positions from an EPD file
         epd_path = Path(args.epd)
         if not epd_path.exists():

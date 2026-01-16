@@ -7,6 +7,7 @@ from web.queries import (
     get_dashboard_data, get_unique_hostnames, get_time_range,
     clear_elo_cache, recalculate_all_and_store
 )
+from web.models import Cup, CupRound, CupMatch, Engine
 
 
 def register_routes(app):
@@ -106,6 +107,98 @@ def register_routes(app):
         """Clear all ELO filter caches."""
         clear_elo_cache()
         return redirect(url_for('dashboard'))
+
+    @app.route('/cups')
+    def cups_list():
+        """List all cups."""
+        cups = Cup.query.order_by(Cup.created_at.desc()).all()
+
+        # Enrich cups with winner name
+        cups_data = []
+        for cup in cups:
+            winner_name = None
+            if cup.winner_engine_id:
+                winner = Engine.query.get(cup.winner_engine_id)
+                if winner:
+                    winner_name = winner.name
+
+            cups_data.append({
+                'id': cup.id,
+                'name': cup.name,
+                'status': cup.status,
+                'num_participants': cup.num_participants,
+                'games_per_match': cup.games_per_match,
+                'time_per_move_ms': cup.time_per_move_ms,
+                'time_low_ms': cup.time_low_ms,
+                'time_high_ms': cup.time_high_ms,
+                'winner_name': winner_name,
+                'hostname': cup.hostname,
+                'created_at': cup.created_at,
+                'completed_at': cup.completed_at,
+            })
+
+        return render_template('cups_list.html', cups=cups_data)
+
+    @app.route('/cup/<int:cup_id>')
+    def cup_detail(cup_id):
+        """Show cup bracket and results."""
+        cup = Cup.query.get_or_404(cup_id)
+
+        # Get winner name
+        winner_name = None
+        if cup.winner_engine_id:
+            winner = Engine.query.get(cup.winner_engine_id)
+            if winner:
+                winner_name = winner.name
+
+        # Get rounds with matches
+        rounds_data = []
+        for cup_round in cup.rounds:
+            matches_data = []
+            for match in cup_round.matches:
+                engine1 = Engine.query.get(match.engine1_id)
+                engine2 = Engine.query.get(match.engine2_id) if match.engine2_id else None
+                winner = Engine.query.get(match.winner_engine_id) if match.winner_engine_id else None
+
+                matches_data.append({
+                    'id': match.id,
+                    'match_order': match.match_order,
+                    'engine1_name': engine1.name if engine1 else 'Unknown',
+                    'engine2_name': engine2.name if engine2 else 'BYE',
+                    'engine1_seed': match.engine1_seed,
+                    'engine2_seed': match.engine2_seed,
+                    'engine1_points': float(match.engine1_points) if match.engine1_points else 0,
+                    'engine2_points': float(match.engine2_points) if match.engine2_points else 0,
+                    'games_played': match.games_played,
+                    'winner_name': winner.name if winner else None,
+                    'status': match.status,
+                    'is_bye': match.status == 'bye',
+                    'is_tiebreaker': match.is_tiebreaker,
+                    'decided_by_coin_flip': match.decided_by_coin_flip,
+                })
+
+            rounds_data.append({
+                'round_number': cup_round.round_number,
+                'round_name': cup_round.round_name,
+                'status': cup_round.status,
+                'matches': matches_data,
+            })
+
+        # Format time control
+        if cup.time_per_move_ms:
+            time_control = f"{cup.time_per_move_ms / 1000:.1f}s/move"
+        elif cup.time_low_ms and cup.time_high_ms:
+            time_control = f"{cup.time_low_ms / 1000:.1f}-{cup.time_high_ms / 1000:.1f}s/move"
+        else:
+            time_control = "Unknown"
+
+        return render_template(
+            'cup.html',
+            cup=cup,
+            winner_name=winner_name,
+            rounds=rounds_data,
+            time_control=time_control,
+        )
 
     @app.route('/health')
     def health():

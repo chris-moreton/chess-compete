@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="30">
+    <title>Cup Competitions</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .cups-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .cups-table th, .cups-table td {
+            padding: 10px 15px;
+            text-align: left;
+            border-bottom: 1px solid #333;
+        }
+        .cups-table th {
+            background: #1a1a1a;
+            color: #888;
+            font-weight: normal;
+            text-transform: uppercase;
+            font-size: 0.85em;
+        }
+        .cups-table tbody tr:hover {
+            background: #252525;
+        }
+        .cups-table a {
+            color: #4fc3f7;
+            text-decoration: none;
+        }
+        .cups-table a:hover {
+            text-decoration: underline;
+        }
+        .status-completed {
+            color: #4caf50;
+        }
+        .status-in_progress {
+            color: #ff9800;
+        }
+        .winner-name {
+            color: #ffd700;
+            font-weight: bold;
+        }
+        .back-link {
+            margin-bottom: 20px;
+            display: block;
+        }
+        .back-link a {
+            color: #888;
+            text-decoration: none;
+        }
+        .back-link a:hover {
+            color: #4fc3f7;
+        }
+        .no-cups {
+            color: #888;
+            margin-top: 40px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <p class="back-link"><a href="/">&larr; Back to Dashboard</a></p>
+        <h1>Cup Competitions</h1>
+
+        {% if cups %}
+        <table class="cups-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>Winner</th>
+                    <th>Participants</th>
+                    <th>Games/Match</th>
+                    <th>Time Control</th>
+                    <th>Host</th>
+                    <th>Started</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for cup in cups %}
+                <tr>
+                    <td><a href="/cup/{{ cup.id }}">{{ cup.name }}</a></td>
+                    <td class="status-{{ cup.status }}">{{ cup.status.replace('_', ' ').title() }}</td>
+                    <td>
+                        {% if cup.winner_name %}
+                        <span class="winner-name">{{ cup.winner_name }}</span>
+                        {% else %}
+                        -
+                        {% endif %}
+                    </td>
+                    <td>{{ cup.num_participants }}</td>
+                    <td>{{ cup.games_per_match }}</td>
+                    <td>
+                        {% if cup.time_per_move_ms %}
+                        {{ "%.1f"|format(cup.time_per_move_ms / 1000) }}s/move
+                        {% elif cup.time_low_ms and cup.time_high_ms %}
+                        {{ "%.1f"|format(cup.time_low_ms / 1000) }}-{{ "%.1f"|format(cup.time_high_ms / 1000) }}s/move
+                        {% else %}
+                        -
+                        {% endif %}
+                    </td>
+                    <td>{{ cup.hostname or '-' }}</td>
+                    <td>{{ cup.created_at.strftime('%Y-%m-%d %H:%M') if cup.created_at else '-' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="no-cups">No cup competitions yet. Run <code>python -m compete --cup</code> to start one.</p>
+        {% endif %}
+    </div>
+</body>
+</html>
