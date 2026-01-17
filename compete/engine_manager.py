@@ -538,13 +538,22 @@ def get_engine_info(name: str, engine_dir: Path) -> tuple[Path | list, dict]:
     command can be:
     - Path: for native executables (will be converted to str for popen_uci)
     - list: for Java engines ["java", "-jar", "path/to/engine.jar"]
+
+    If the engine is not found locally, attempts to download and initialize it.
     """
     engines = discover_engines(engine_dir)
 
     if name not in engines:
-        print(f"Error: Engine '{name}' not found")
-        print(f"Available engines: {', '.join(get_all_engines(engine_dir))}")
-        sys.exit(1)
+        # Engine not found locally - attempt to download it
+        print(f"Engine '{name}' not found locally, attempting to download...")
+        if ensure_engine_initialized(name, engine_dir):
+            # Re-discover engines after successful initialization
+            engines = discover_engines(engine_dir)
+
+        if name not in engines:
+            print(f"Error: Engine '{name}' not found and could not be initialized")
+            print(f"Available engines: {', '.join(get_all_engines(engine_dir))}")
+            sys.exit(1)
 
     engine_config = engines[name]
     binary_path = engine_config["binary"]
