@@ -512,6 +512,8 @@ def build_h2h_grid(engines, h2h_raw):
         # Track deviations for stability calculation
         total_excess_deviation = 0.0
         total_opponent_games = 0
+        # Track total games against visible engines (for accurate games_played count)
+        visible_games_played = 0
 
         for col_idx, col_engine in enumerate(engines):
             col_id = col_engine['engine'].id
@@ -538,6 +540,9 @@ def build_h2h_grid(engines, h2h_raw):
             row_points = as_white['white_points'] + as_black['black_points']
             col_points = as_white['black_points'] + as_black['white_points']
             total_games = as_white['games'] + as_black['games']
+
+            # Add to visible games count (all games against visible opponents)
+            visible_games_played += total_games
 
             if total_games == 0:
                 cells.append({
@@ -595,7 +600,7 @@ def build_h2h_grid(engines, h2h_raw):
             'elo': row_elo,
             'bayes_elo': row_engine.get('bayes_elo'),
             'ordo': row_engine.get('ordo'),
-            'games_played': row_engine['games_played'],
+            'games_played': visible_games_played,  # Use games against visible engines, not cached total
             'stability': stability_rounded,
             'stability_color': stability_to_color(stability_rounded),
             'least_stable': False,
