@@ -444,10 +444,30 @@ def get_all_engines(engine_dir: Path) -> list[str]:
     return sorted(engines.keys())
 
 
+def _engine_matches_type(name: str, engine_type: str | None) -> bool:
+    """Check if an engine name matches the specified type filter."""
+    if engine_type is None:
+        return True
+    if engine_type == 'rusty':
+        return name.startswith('v') and len(name) > 1 and name[1:2].isdigit()
+    if engine_type == 'stockfish':
+        return name.startswith('sf')
+    return True
+
+
 @db_retry
-def get_active_engines(engine_dir: Path) -> list[str]:
+def get_active_engines(engine_dir: Path, engine_type: str = None,
+                       include_inactive: bool = False) -> list[str]:
     """
-    Get list of active engines from database.
+    Get list of engines from database.
+
+    Args:
+        engine_dir: Path to engines directory
+        engine_type: Filter by type ('rusty' or 'stockfish', None = all)
+        include_inactive: If True, include inactive engines
+
+    Returns:
+        Sorted list of engine names matching the filters.
     """
     try:
         from web.database import db
@@ -455,10 +475,16 @@ def get_active_engines(engine_dir: Path) -> list[str]:
 
         app = _get_app()
         with app.app_context():
-            active = Engine.query.filter_by(active=True).all()
-            return sorted([e.name for e in active])
+            if include_inactive:
+                engines = Engine.query.all()
+            else:
+                engines = Engine.query.filter_by(active=True).all()
+
+            # Filter by engine type
+            names = [e.name for e in engines if _engine_matches_type(e.name, engine_type)]
+            return sorted(names)
     except Exception as e:
-        print(f"Error: Failed to get active engines from database: {e}")
+        print(f"Error: Failed to get engines from database: {e}")
         traceback.print_exc()
         sys.exit(1)
 

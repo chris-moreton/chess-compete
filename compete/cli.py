@@ -193,11 +193,17 @@ def main():
 
     # Auto-initialize missing engines
     if args.random or args.gauntlet or args.cup:
-        # For random/gauntlet/cup: ensure all active engines from database are initialized
-        active_engines = get_active_engines(engine_dir)
-        if active_engines:
-            print(f"Checking {len(active_engines)} active engines...")
-            if not ensure_engines_initialized(active_engines, engine_dir):
+        # For random/gauntlet/cup: ensure all matching engines from database are initialized
+        engines_to_init = get_active_engines(engine_dir, args.enginetype, args.includeinactive)
+        if engines_to_init:
+            filter_desc = []
+            if args.enginetype:
+                filter_desc.append(f"type={args.enginetype}")
+            if args.includeinactive:
+                filter_desc.append("including inactive")
+            filter_str = f" ({', '.join(filter_desc)})" if filter_desc else ""
+            print(f"Checking {len(engines_to_init)} engines{filter_str}...")
+            if not ensure_engines_initialized(engines_to_init, engine_dir):
                 print("Error: Failed to initialize some engines")
                 sys.exit(1)
     elif resolved_engines:
@@ -234,14 +240,16 @@ def main():
         # Random mode: randomly pair engines for matches
         if args.engines:
             print("Warning: Engine arguments ignored in random mode")
-        run_random(engine_dir, args.games, time_per_move, results_dir, args.weighted, time_low, time_high)
+        run_random(engine_dir, args.games, time_per_move, results_dir, args.weighted, time_low, time_high,
+                   engine_type=args.enginetype, include_inactive=args.includeinactive)
     elif args.gauntlet:
         # Gauntlet mode: test one engine against all others
         if len(resolved_engines) != 1:
             print("Error: Gauntlet mode requires exactly one engine (the challenger)")
             sys.exit(1)
         run_gauntlet(resolved_engines[0], engine_dir, args.games, time_per_move or 1.0, results_dir,
-                     time_low, time_high)
+                     time_low, time_high,
+                     engine_type=args.enginetype, include_inactive=args.includeinactive)
     elif len(resolved_engines) >= 3:
         # Round-robin league for 3+ engines
         run_league(resolved_engines, engine_dir, args.games, time_per_move or 1.0, results_dir,

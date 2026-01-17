@@ -619,14 +619,19 @@ def run_league(engine_names: list[str], engine_dir: Path,
 
 def run_gauntlet(challenger_name: str, engine_dir: Path,
                  num_rounds: int, time_per_move: float, results_dir: Path,
-                 time_low: float = None, time_high: float = None):
+                 time_low: float = None, time_high: float = None,
+                 engine_type: str = None, include_inactive: bool = False):
     """
     Test a challenger engine against all other engines in the engines directory.
     Plays in rounds: each round consists of 2 games (1 as white, 1 as black) against each opponent.
     Each game uses a random opening.
+
+    Args:
+        engine_type: Filter opponents by type ('rusty' or 'stockfish', None = all)
+        include_inactive: If True, include inactive engines as opponents
     """
-    # Find all active engines except the challenger
-    all_engines = get_active_engines(engine_dir)
+    # Find all engines matching filters except the challenger
+    all_engines = get_active_engines(engine_dir, engine_type, include_inactive)
     opponents = [e for e in all_engines if e != challenger_name]
     use_time_range = time_low is not None and time_high is not None
 
@@ -801,7 +806,8 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
 
 
 def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results_dir: Path, weighted: bool = False,
-               time_low: float = None, time_high: float = None):
+               time_low: float = None, time_high: float = None,
+               engine_type: str = None, include_inactive: bool = False):
     """
     Randomly select pairs of engines and play 2-game matches (1 white, 1 black).
     Each game uses a random opening.
@@ -816,10 +822,14 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
 
     The active engines list is re-fetched before each match, allowing live
     enable/disable of engines without restarting the competition.
+
+    Args:
+        engine_type: Filter engines by type ('rusty' or 'stockfish', None = all)
+        include_inactive: If True, include inactive engines
     """
     use_time_range = time_low is not None and time_high is not None
-    # Find all active engines
-    all_engines = get_active_engines(engine_dir)
+    # Find all engines matching filters
+    all_engines = get_active_engines(engine_dir, engine_type, include_inactive)
 
     if len(all_engines) < 2:
         print(f"Error: Need at least 2 engines in {engine_dir}, found {len(all_engines)}")
@@ -859,8 +869,8 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
     session_start_elo = {}  # engine -> Elo at start of session
 
     for match_idx in range(num_matches):
-        # Re-fetch active engines before each match (allows live enable/disable)
-        current_engines = get_active_engines(engine_dir)
+        # Re-fetch engines before each match (allows live enable/disable)
+        current_engines = get_active_engines(engine_dir, engine_type, include_inactive)
 
         # Check if engine list changed
         if set(current_engines) != set(all_engines):
