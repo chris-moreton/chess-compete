@@ -71,6 +71,10 @@ def main():
                         help="Limit cup to top N engines by Ordo rating (default: all active)")
     parser.add_argument("--cup-name", type=str, default=None, metavar="NAME",
                         help="Custom name for the cup competition")
+    parser.add_argument("--enginetype", type=str, default=None, choices=["rusty", "stockfish"],
+                        help="Filter engines by type (rusty or stockfish)")
+    parser.add_argument("--includeinactive", action="store_true",
+                        help="Include inactive engines in cup competition")
 
     args = parser.parse_args()
 
@@ -207,7 +211,8 @@ def main():
         if args.engines:
             print("Warning: Engine arguments ignored in cup mode (uses active engines by Ordo rating)")
         run_cup(engine_dir, args.cup_engines, args.games, time_per_move or 1.0,
-                args.cup_name, time_low, time_high)
+                args.cup_name, time_low, time_high,
+                engine_type=args.enginetype, include_inactive=args.includeinactive)
     elif args.epd:
         # EPD mode: play through positions from an EPD file
         epd_path = Path(args.epd)

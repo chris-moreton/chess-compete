@@ -17,9 +17,16 @@ from compete.game import play_game
 from compete.openings import OPENING_BOOK
 
 
-def get_seeded_engines(engine_dir: Path, num_engines: int = None) -> list[tuple[str, float]]:
+def get_seeded_engines(engine_dir: Path, num_engines: int = None,
+                       engine_type: str = None, include_inactive: bool = False) -> list[tuple[str, float]]:
     """
-    Get active engines sorted by Ordo rating for seeding.
+    Get engines sorted by Ordo rating for seeding.
+
+    Args:
+        engine_dir: Path to engines directory
+        num_engines: Limit to top N engines (None = all)
+        engine_type: Filter by engine type ('rusty' or 'stockfish', None = all)
+        include_inactive: If True, include inactive engines
 
     Returns list of (engine_name, ordo_rating) tuples, best first.
     Uses Ordo rating if available, falls back to standard Elo.
@@ -30,7 +37,8 @@ def get_seeded_engines(engine_dir: Path, num_engines: int = None) -> list[tuple[
     app = create_app()
     with app.app_context():
         # Get engines with all rating types
-        ranked = get_engines_ranked_by_elo(active_only=True)
+        active_only = not include_inactive
+        ranked = get_engines_ranked_by_elo(active_only=active_only, engine_type=engine_type)
 
         # Extract name and Ordo (or Elo as fallback)
         seeded = []
@@ -263,7 +271,8 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
 
 def run_cup(engine_dir: Path, num_engines: int = None, games_per_match: int = 10,
             time_per_move: float = 1.0, cup_name: str = None,
-            time_low: float = None, time_high: float = None):
+            time_low: float = None, time_high: float = None,
+            engine_type: str = None, include_inactive: bool = False):
     """
     Run a complete knockout cup competition.
 
@@ -275,6 +284,8 @@ def run_cup(engine_dir: Path, num_engines: int = None, games_per_match: int = 10
         cup_name: Optional custom cup name
         time_low: Minimum time per move for random range
         time_high: Maximum time per move for random range
+        engine_type: Filter by engine type ('rusty' or 'stockfish', None = all)
+        include_inactive: If True, include inactive engines in the cup
     """
     from web.database import db
     from web.models import Cup, CupRound, CupMatch, Engine
@@ -283,8 +294,14 @@ def run_cup(engine_dir: Path, num_engines: int = None, games_per_match: int = 10
     use_time_range = time_low is not None and time_high is not None
 
     # Get seeded engines
-    print("Getting seeded engines by Ordo rating...")
-    seeded_engines = get_seeded_engines(engine_dir, num_engines)
+    filter_desc = []
+    if engine_type:
+        filter_desc.append(f"type={engine_type}")
+    if include_inactive:
+        filter_desc.append("including inactive")
+    filter_str = f" ({', '.join(filter_desc)})" if filter_desc else ""
+    print(f"Getting seeded engines by Ordo rating{filter_str}...")
+    seeded_engines = get_seeded_engines(engine_dir, num_engines, engine_type, include_inactive)
 
     if len(seeded_engines) < 2:
         print("Error: Need at least 2 active engines for a cup")
