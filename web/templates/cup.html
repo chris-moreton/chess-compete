@@ -116,6 +116,20 @@
             gap: 8px;
             color: #fff;
         }
+        .engine-name a {
+            color: #fff;
+            text-decoration: none;
+        }
+        .engine-name a:hover {
+            color: #4fc3f7;
+        }
+        .cup-winner a {
+            color: #ffd700;
+            text-decoration: none;
+        }
+        .cup-winner a:hover {
+            text-decoration: underline;
+        }
         .seed {
             color: #888;
             font-size: 0.85em;
@@ -168,7 +182,7 @@
             {% if winner_name %}
             <div class="cup-winner">
                 <span class="cup-winner-trophy">&#127942;</span>
-                Winner: {{ winner_name }}
+                Winner: <a href="/engine/{{ winner_name }}">{{ winner_name }}</a>
             </div>
             {% endif %}
         </div>
@@ -188,7 +202,7 @@
                             <div class="match-engine winner">
                                 <div class="engine-name">
                                     <span class="seed">#{{ match.engine1_seed }}</span>
-                                    {{ match.engine1_name }}
+                                    <a href="/engine/{{ match.engine1_name }}">{{ match.engine1_name }}</a>
                                 </div>
                             </div>
                             <div class="match-engine bye-line">
@@ -201,14 +215,14 @@
                             <div class="match-engine {% if match.winner_name == match.engine1_name %}winner{% elif match.winner_name %}loser{% endif %}">
                                 <div class="engine-name">
                                     <span class="seed">#{{ match.engine1_seed }}</span>
-                                    {{ match.engine1_name }}
+                                    <a href="/engine/{{ match.engine1_name }}">{{ match.engine1_name }}</a>
                                 </div>
                                 <span class="score">{{ match.engine1_points if match.games_played else '-' }}</span>
                             </div>
                             <div class="match-engine {% if match.winner_name == match.engine2_name %}winner{% elif match.winner_name %}loser{% endif %}">
                                 <div class="engine-name">
                                     <span class="seed">#{{ match.engine2_seed }}</span>
-                                    {{ match.engine2_name }}
+                                    <a href="/engine/{{ match.engine2_name }}">{{ match.engine2_name }}</a>
                                 </div>
                                 <span class="score">{{ match.engine2_points if match.games_played else '-' }}</span>
                             </div>

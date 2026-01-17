@@ -75,6 +75,7 @@
                         Showing all engines. <a href="/?{% if min_time != db_min_time %}min_time={{ min_time }}&{% endif %}{% if max_time != db_max_time %}max_time={{ max_time }}&{% endif %}{% if hostname %}hostname={{ hostname }}&{% endif %}{% if engine_type %}engine_type={{ engine_type }}{% endif %}">Show active only</a>
                     {% endif %}
                     | {{ total_engines }} engines
+                    | <a href="/engines">Manage Engines</a>
                     | <a href="/cups">Cup Competitions</a>
                     | Auto-refresh: 30s
                     {% if hostname or engine_type or min_time != db_min_time or max_time != db_max_time %}
@@ -105,7 +106,7 @@
                     {% for row in grid %}
                     <tr data-name="{{ row.engine_name }}" data-elo="{{ row.elo }}" data-bayes="{{ row.bayes_elo if row.bayes_elo is not none else 0 }}" data-ordo="{{ row.ordo if row.ordo is not none else 0 }}" data-stability="{{ row.stability }}" data-games="{{ row.games_played }}">
                         <td class="rank-col">{{ row.rank }}</td>
-                        <td class="engine-col engine-{{ row.engine_type }}">{{ row.engine_name }}</td>
+                        <td class="engine-col engine-{{ row.engine_type }}"><a href="/engine/{{ row.engine_name }}">{{ row.engine_name }}</a></td>
                         <td class="elo-col">{{ "%.0f"|format(row.elo) }}</td>
                         <td class="elo-col">{% if row.bayes_elo is not none %}{{ "%.0f"|format(row.bayes_elo) }}{% else %}-{% endif %}</td>
                         <td class="elo-col">{% if row.ordo is not none %}{{ "%.0f"|format(row.ordo) }}{% else %}-{% endif %}</td>

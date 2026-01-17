@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ engine.name }} - Head-to-Head Stats</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .engine-header {
+            margin-bottom: 30px;
+        }
+        .engine-header h1 {
+            margin-bottom: 10px;
+        }
+        .engine-status {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            margin-left: 10px;
+        }
+        .engine-status.active {
+            background: rgba(76, 175, 80, 0.2);
+            color: #4caf50;
+        }
+        .engine-status.inactive {
+            background: rgba(244, 67, 54, 0.2);
+            color: #f44336;
+        }
+        .overall-stats {
+            display: flex;
+            gap: 30px;
+            margin-bottom: 20px;
+            color: #888;
+        }
+        .overall-stats .stat {
+            display: flex;
+            gap: 5px;
+        }
+        .overall-stats .value {
+            color: #fff;
+        }
+        .filter-bar {
+            margin-bottom: 20px;
+        }
+        .filter-bar a {
+            color: #4fc3f7;
+            text-decoration: none;
+        }
+        .filter-bar a:hover {
+            text-decoration: underline;
+        }
+        .h2h-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .h2h-table th, .h2h-table td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid #333;
+        }
+        .h2h-table th {
+            background: #1a1a1a;
+            color: #888;
+            font-weight: normal;
+            text-transform: uppercase;
+            font-size: 0.8em;
+        }
+        .h2h-table tbody tr:hover {
+            background: #252525;
+        }
+        .h2h-table a {
+            color: #4fc3f7;
+            text-decoration: none;
+        }
+        .h2h-table a:hover {
+            text-decoration: underline;
+        }
+        .opponent-inactive {
+            opacity: 0.6;
+        }
+        .color-header {
+            text-align: center !important;
+        }
+        .color-cell {
+            text-align: center;
+            font-size: 0.9em;
+        }
+        .win { color: #4caf50; }
+        .loss { color: #f44336; }
+        .draw { color: #888; }
+        .score-good { color: #4caf50; }
+        .score-bad { color: #f44336; }
+        .score-neutral { color: #888; }
+        .time-breakdown {
+            font-size: 0.75em;
+            color: #666;
+            margin-top: 4px;
+        }
+        .time-breakdown span {
+            margin-right: 8px;
+            white-space: nowrap;
+        }
+        .back-link {
+            margin-bottom: 20px;
+            display: block;
+        }
+        .back-link a {
+            color: #888;
+            text-decoration: none;
+        }
+        .back-link a:hover {
+            color: #4fc3f7;
+        }
+        .expand-btn {
+            background: none;
+            border: none;
+            color: #4fc3f7;
+            cursor: pointer;
+            font-size: 0.8em;
+            padding: 0;
+        }
+        .expand-btn:hover {
+            text-decoration: underline;
+        }
+        .time-row {
+            display: none;
+            background: #1a1a1a;
+        }
+        .time-row.visible {
+            display: table-row;
+        }
+        .time-row td {
+            padding: 8px 12px;
+            font-size: 0.85em;
+            color: #888;
+        }
+        .time-buckets {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .time-bucket {
+            background: #252525;
+            padding: 5px 10px;
+            border-radius: 4px;
+        }
+        .time-bucket .label {
+            color: #888;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <p class="back-link"><a href="/engines">&larr; Back to Engines</a></p>
+
+        <div class="engine-header">
+            <h1>
+                {{ engine.name }}
+                <span class="engine-status {{ 'active' if engine.active else 'inactive' }}">
+                    {{ 'Active' if engine.active else 'Inactive' }}
+                </span>
+            </h1>
+            <div class="overall-stats">
+                <div class="stat">Games: <span class="value">{{ total_games }}</span></div>
+                <div class="stat">Wins: <span class="value win">{{ total_wins }}</span></div>
+                <div class="stat">Losses: <span class="value loss">{{ total_losses }}</span></div>
+                <div class="stat">Draws: <span class="value draw">{{ total_draws }}</span></div>
+                {% set overall_score = total_wins + total_draws * 0.5 %}
+                {% set overall_pct = (overall_score / total_games * 100) if total_games > 0 else 0 %}
+                <div class="stat">Score: <span class="value {% if overall_pct > 55 %}score-good{% elif overall_pct < 45 %}score-bad{% else %}score-neutral{% endif %}">{{ "%.1f"|format(overall_pct) }}%</span></div>
+            </div>
+        </div>
+
+        <div class="filter-bar">
+            {% if active_only %}
+                Showing vs active engines only. <a href="?all=1">Show all opponents</a>
+            {% else %}
+                Showing vs all engines. <a href="?">Active opponents only</a>
+            {% endif %}
+        </div>
+
+        <table class="h2h-table">
+            <thead>
+                <tr>
+                    <th>Opponent</th>
+                    <th class="color-header" colspan="3">As White</th>
+                    <th class="color-header" colspan="3">As Black</th>
+                    <th>Total</th>
+                    <th>Score</th>
+                    <th></th>
+                </tr>
+                <tr>
+                    <th></th>
+                    <th class="color-header">W</th>
+                    <th class="color-header">L</th>
+                    <th class="color-header">D</th>
+                    <th class="color-header">W</th>
+                    <th class="color-header">L</th>
+                    <th class="color-header">D</th>
+                    <th></th>
+                    <th></th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for stat in h2h_stats %}
+                <tr class="{% if not stat.opponent_active %}opponent-inactive{% endif %}">
+                    <td><a href="/engine/{{ stat.opponent_name }}">{{ stat.opponent_name }}</a></td>
+                    <td class="color-cell win">{{ stat.white_wins }}</td>
+                    <td class="color-cell loss">{{ stat.white_losses }}</td>
+                    <td class="color-cell draw">{{ stat.white_draws }}</td>
+                    <td class="color-cell win">{{ stat.black_wins }}</td>
+                    <td class="color-cell loss">{{ stat.black_losses }}</td>
+                    <td class="color-cell draw">{{ stat.black_draws }}</td>
+                    <td>{{ stat.total_games }}</td>
+                    <td class="{% if stat.score_pct > 55 %}score-good{% elif stat.score_pct < 45 %}score-bad{% else %}score-neutral{% endif %}">
+                        {{ "%.1f"|format(stat.score_pct) }}%
+                    </td>
+                    <td>
+                        {% if stat.time_breakdown %}
+                        <button class="expand-btn" onclick="toggleTimeRow('time-{{ loop.index }}')">times</button>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% if stat.time_breakdown %}
+                <tr class="time-row" id="time-{{ loop.index }}">
+                    <td colspan="10">
+                        <div class="time-buckets">
+                            {% for tb in stat.time_breakdown %}
+                            <div class="time-bucket">
+                                <span class="label">{{ tb.label }}:</span>
+                                <span class="win">+{{ tb.wins }}</span>
+                                <span class="loss">-{{ tb.losses }}</span>
+                                <span class="draw">={{ tb.draws }}</span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+    function toggleTimeRow(id) {
+        const row = document.getElementById(id);
+        row.classList.toggle('visible');
+    }
+    </script>
+</body>
+</html>

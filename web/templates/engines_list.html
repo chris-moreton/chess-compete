@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engine Management</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .filter-bar {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .filter-bar label {
+            color: #888;
+            margin-right: 5px;
+        }
+        .filter-bar select {
+            background: #1e1e1e;
+            color: #fff;
+            border: 1px solid #333;
+            padding: 5px 10px;
+            border-radius: 4px;
+        }
+        .filter-bar a {
+            color: #4fc3f7;
+            text-decoration: none;
+        }
+        .filter-bar a:hover {
+            text-decoration: underline;
+        }
+        .engines-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .engines-table th, .engines-table td {
+            padding: 10px 15px;
+            text-align: left;
+            border-bottom: 1px solid #333;
+        }
+        .engines-table th {
+            background: #1a1a1a;
+            color: #888;
+            font-weight: normal;
+            text-transform: uppercase;
+            font-size: 0.85em;
+        }
+        .engines-table tbody tr:hover {
+            background: #252525;
+        }
+        .engines-table a {
+            color: #4fc3f7;
+            text-decoration: none;
+        }
+        .engines-table a:hover {
+            text-decoration: underline;
+        }
+        .status-active {
+            color: #4caf50;
+        }
+        .status-inactive {
+            color: #f44336;
+        }
+        .toggle-btn {
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+            padding: 4px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85em;
+        }
+        .toggle-btn:hover {
+            background: #444;
+        }
+        .toggle-btn.enable {
+            border-color: #4caf50;
+        }
+        .toggle-btn.disable {
+            border-color: #f44336;
+        }
+        .back-link {
+            margin-bottom: 20px;
+            display: block;
+        }
+        .back-link a {
+            color: #888;
+            text-decoration: none;
+        }
+        .back-link a:hover {
+            color: #4fc3f7;
+        }
+        .engine-count {
+            color: #888;
+            margin-left: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <p class="back-link"><a href="/">&larr; Back to Dashboard</a></p>
+        <h1>Engine Management</h1>
+
+        <div class="filter-bar">
+            <div>
+                <label>Type:</label>
+                <select id="engine-type" onchange="applyFilters()">
+                    <option value="" {% if not engine_type %}selected{% endif %}>All</option>
+                    <option value="rusty" {% if engine_type == 'rusty' %}selected{% endif %}>Rusty Rival</option>
+                    <option value="stockfish" {% if engine_type == 'stockfish' %}selected{% endif %}>Stockfish</option>
+                </select>
+            </div>
+            <div>
+                {% if active_only %}
+                    Showing active only. <a href="?all=1{% if engine_type %}&engine_type={{ engine_type }}{% endif %}">Show all</a>
+                {% else %}
+                    Showing all engines. <a href="?{% if engine_type %}engine_type={{ engine_type }}{% endif %}">Active only</a>
+                {% endif %}
+            </div>
+            <span class="engine-count">{{ engines|length }} engines</span>
+        </div>
+
+        <table class="engines-table">
+            <thead>
+                <tr>
+                    <th>Engine</th>
+                    <th>Status</th>
+                    <th>Games</th>
+                    <th>Initial Elo</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for engine in engines %}
+                <tr>
+                    <td><a href="/engine/{{ engine.name }}">{{ engine.name }}</a></td>
+                    <td class="status-{{ 'active' if engine.active else 'inactive' }}">
+                        {{ 'Active' if engine.active else 'Inactive' }}
+                    </td>
+                    <td>{{ engine.games_count }}</td>
+                    <td>{{ engine.initial_elo or 1500 }}</td>
+                    <td>
+                        <form action="/engine/{{ engine.name }}/toggle" method="POST" style="display: inline;">
+                            <button type="submit" class="toggle-btn {{ 'disable' if engine.active else 'enable' }}">
+                                {{ 'Disable' if engine.active else 'Enable' }}
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+    function applyFilters() {
+        const engineType = document.getElementById('engine-type').value;
+        const params = new URLSearchParams(window.location.search);
+
+        if (engineType) {
+            params.set('engine_type', engineType);
+        } else {
+            params.delete('engine_type');
+        }
+
+        const queryString = params.toString();
+        window.location.href = queryString ? '?' + queryString : '/engines';
+    }
+    </script>
+</body>
+</html>

@@ -43,6 +43,10 @@
         .winner-name {
             color: #ffd700;
             font-weight: bold;
+            text-decoration: none;
+        }
+        .winner-name:hover {
+            text-decoration: underline;
         }
         .back-link {
             margin-bottom: 20px;
@@ -88,7 +92,7 @@
                     <td class="status-{{ cup.status }}">{{ cup.status.replace('_', ' ').title() }}</td>
                     <td>
                         {% if cup.winner_name %}
-                        <span class="winner-name">{{ cup.winner_name }}</span>
+                        <a href="/engine/{{ cup.winner_name }}" class="winner-name">{{ cup.winner_name }}</a>
                         {% else %}
                         -
                         {% endif %}
