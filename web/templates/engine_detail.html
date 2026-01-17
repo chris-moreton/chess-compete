@@ -6,6 +6,18 @@
     <title>{{ engine.name }} - Head-to-Head Stats</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <style>
+        body {
+            background: #121212;
+            color: #e0e0e0;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #fff;
+        }
         .engine-header {
             margin-bottom: 30px;
         }
@@ -31,7 +43,7 @@
             display: flex;
             gap: 30px;
             margin-bottom: 20px;
-            color: #888;
+            color: #aaa;
         }
         .overall-stats .stat {
             display: flex;
@@ -39,9 +51,11 @@
         }
         .overall-stats .value {
             color: #fff;
+            font-weight: bold;
         }
         .filter-bar {
             margin-bottom: 20px;
+            color: #aaa;
         }
         .filter-bar a {
             color: #4fc3f7;
@@ -54,21 +68,46 @@
             width: 100%;
             border-collapse: collapse;
             margin-top: 20px;
+            background: #1e1e1e;
         }
         .h2h-table th, .h2h-table td {
             padding: 10px 12px;
             text-align: left;
             border-bottom: 1px solid #333;
+            color: #e0e0e0;
         }
         .h2h-table th {
-            background: #1a1a1a;
-            color: #888;
+            background: #252525;
+            color: #aaa;
             font-weight: normal;
             text-transform: uppercase;
             font-size: 0.8em;
+            position: sticky;
+            top: 0;
+        }
+        .h2h-table th.sortable {
+            cursor: pointer;
+            user-select: none;
+        }
+        .h2h-table th.sortable:hover {
+            background: #333;
+            color: #fff;
+        }
+        .h2h-table th .sort-arrow {
+            margin-left: 5px;
+            font-size: 0.7em;
+        }
+        .h2h-table th.sort-asc .sort-arrow::after {
+            content: "▲";
+        }
+        .h2h-table th.sort-desc .sort-arrow::after {
+            content: "▼";
         }
         .h2h-table tbody tr:hover {
-            background: #252525;
+            background: #2a2a2a;
+        }
+        .h2h-table tbody tr.data-row {
+            cursor: default;
         }
         .h2h-table a {
             color: #4fc3f7;
@@ -87,21 +126,12 @@
             text-align: center;
             font-size: 0.9em;
         }
-        .win { color: #4caf50; }
-        .loss { color: #f44336; }
-        .draw { color: #888; }
-        .score-good { color: #4caf50; }
-        .score-bad { color: #f44336; }
-        .score-neutral { color: #888; }
-        .time-breakdown {
-            font-size: 0.75em;
-            color: #666;
-            margin-top: 4px;
-        }
-        .time-breakdown span {
-            margin-right: 8px;
-            white-space: nowrap;
-        }
+        .win { color: #66bb6a; }
+        .loss { color: #ef5350; }
+        .draw { color: #aaa; }
+        .score-good { color: #66bb6a; }
+        .score-bad { color: #ef5350; }
+        .score-neutral { color: #aaa; }
         .back-link {
             margin-bottom: 20px;
             display: block;
@@ -114,15 +144,16 @@
             color: #4fc3f7;
         }
         .expand-btn {
-            background: none;
-            border: none;
+            background: #333;
+            border: 1px solid #444;
             color: #4fc3f7;
             cursor: pointer;
-            font-size: 0.8em;
-            padding: 0;
+            font-size: 0.75em;
+            padding: 2px 8px;
+            border-radius: 3px;
         }
         .expand-btn:hover {
-            text-decoration: underline;
+            background: #444;
         }
         .time-row {
             display: none;
@@ -134,17 +165,18 @@
         .time-row td {
             padding: 8px 12px;
             font-size: 0.85em;
-            color: #888;
+            color: #aaa;
         }
         .time-buckets {
             display: flex;
-            gap: 20px;
+            gap: 15px;
             flex-wrap: wrap;
         }
         .time-bucket {
-            background: #252525;
-            padding: 5px 10px;
+            background: #2a2a2a;
+            padding: 5px 12px;
             border-radius: 4px;
+            border: 1px solid #333;
         }
         .time-bucket .label {
             color: #888;
@@ -182,32 +214,33 @@
             {% endif %}
         </div>
 
-        <table class="h2h-table">
+        <table class="h2h-table" id="h2h-table">
             <thead>
                 <tr>
-                    <th>Opponent</th>
-                    <th class="color-header" colspan="3">As White</th>
-                    <th class="color-header" colspan="3">As Black</th>
-                    <th>Total</th>
-                    <th>Score</th>
-                    <th></th>
-                </tr>
-                <tr>
-                    <th></th>
-                    <th class="color-header">W</th>
-                    <th class="color-header">L</th>
-                    <th class="color-header">D</th>
-                    <th class="color-header">W</th>
-                    <th class="color-header">L</th>
-                    <th class="color-header">D</th>
-                    <th></th>
-                    <th></th>
+                    <th class="sortable" data-sort="opponent" data-type="string">Opponent <span class="sort-arrow"></span></th>
+                    <th class="sortable color-header" data-sort="white_wins" data-type="number">W<sub>w</sub> <span class="sort-arrow"></span></th>
+                    <th class="sortable color-header" data-sort="white_losses" data-type="number">L<sub>w</sub> <span class="sort-arrow"></span></th>
+                    <th class="sortable color-header" data-sort="white_draws" data-type="number">D<sub>w</sub> <span class="sort-arrow"></span></th>
+                    <th class="sortable color-header" data-sort="black_wins" data-type="number">W<sub>b</sub> <span class="sort-arrow"></span></th>
+                    <th class="sortable color-header" data-sort="black_losses" data-type="number">L<sub>b</sub> <span class="sort-arrow"></span></th>
+                    <th class="sortable color-header" data-sort="black_draws" data-type="number">D<sub>b</sub> <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-sort="total" data-type="number">Total <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-sort="score" data-type="number">Score <span class="sort-arrow"></span></th>
                     <th></th>
                 </tr>
             </thead>
             <tbody>
                 {% for stat in h2h_stats %}
-                <tr class="{% if not stat.opponent_active %}opponent-inactive{% endif %}">
+                <tr class="data-row {% if not stat.opponent_active %}opponent-inactive{% endif %}"
+                    data-opponent="{{ stat.opponent_name }}"
+                    data-white_wins="{{ stat.white_wins }}"
+                    data-white_losses="{{ stat.white_losses }}"
+                    data-white_draws="{{ stat.white_draws }}"
+                    data-black_wins="{{ stat.black_wins }}"
+                    data-black_losses="{{ stat.black_losses }}"
+                    data-black_draws="{{ stat.black_draws }}"
+                    data-total="{{ stat.total_games }}"
+                    data-score="{{ stat.score_pct }}">
                     <td><a href="/engine/{{ stat.opponent_name }}">{{ stat.opponent_name }}</a></td>
                     <td class="color-cell win">{{ stat.white_wins }}</td>
                     <td class="color-cell loss">{{ stat.white_losses }}</td>
@@ -221,12 +254,12 @@
                     </td>
                     <td>
                         {% if stat.time_breakdown %}
-                        <button class="expand-btn" onclick="toggleTimeRow('time-{{ loop.index }}')">times</button>
+                        <button class="expand-btn" onclick="toggleTimeRow(this, 'time-{{ loop.index }}')">times</button>
                         {% endif %}
                     </td>
                 </tr>
                 {% if stat.time_breakdown %}
-                <tr class="time-row" id="time-{{ loop.index }}">
+                <tr class="time-row" id="time-{{ loop.index }}" data-parent="{{ stat.opponent_name }}">
                     <td colspan="10">
                         <div class="time-buckets">
                             {% for tb in stat.time_breakdown %}
@@ -247,10 +280,81 @@
     </div>
 
     <script>
-    function toggleTimeRow(id) {
+    function toggleTimeRow(btn, id) {
         const row = document.getElementById(id);
         row.classList.toggle('visible');
+        btn.textContent = row.classList.contains('visible') ? 'hide' : 'times';
     }
+
+    // Sortable table
+    (function() {
+        const table = document.getElementById('h2h-table');
+        if (!table) return;
+
+        const headers = table.querySelectorAll('th.sortable');
+        let currentSort = { column: null, direction: 'asc' };
+
+        headers.forEach(header => {
+            header.addEventListener('click', () => {
+                const sortKey = header.dataset.sort;
+                const sortType = header.dataset.type;
+
+                // Toggle direction if same column
+                if (currentSort.column === sortKey) {
+                    currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+                } else {
+                    currentSort.column = sortKey;
+                    // Default: desc for numbers, asc for strings
+                    currentSort.direction = sortType === 'number' ? 'desc' : 'asc';
+                }
+
+                sortTable(sortKey, sortType, currentSort.direction);
+                updateSortArrows(header, currentSort.direction);
+            });
+        });
+
+        function sortTable(key, type, direction) {
+            const tbody = table.querySelector('tbody');
+            const dataRows = Array.from(tbody.querySelectorAll('tr.data-row'));
+
+            dataRows.sort((a, b) => {
+                let aVal = a.dataset[key];
+                let bVal = b.dataset[key];
+
+                if (type === 'number') {
+                    aVal = parseFloat(aVal) || 0;
+                    bVal = parseFloat(bVal) || 0;
+                } else {
+                    aVal = (aVal || '').toLowerCase();
+                    bVal = (bVal || '').toLowerCase();
+                }
+
+                let comparison = 0;
+                if (aVal < bVal) comparison = -1;
+                if (aVal > bVal) comparison = 1;
+
+                return direction === 'asc' ? comparison : -comparison;
+            });
+
+            // Re-append rows in sorted order, keeping time-rows with their parents
+            dataRows.forEach(row => {
+                tbody.appendChild(row);
+                // Find and append the associated time-row if it exists
+                const opponentName = row.dataset.opponent;
+                const timeRow = tbody.querySelector(`tr.time-row[data-parent="${opponentName}"]`);
+                if (timeRow) {
+                    tbody.appendChild(timeRow);
+                }
+            });
+        }
+
+        function updateSortArrows(activeHeader, direction) {
+            headers.forEach(h => {
+                h.classList.remove('sort-asc', 'sort-desc');
+            });
+            activeHeader.classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+        }
+    })();
     </script>
 </body>
 </html>
