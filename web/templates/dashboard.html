@@ -57,7 +57,7 @@
                     </div>
 
                     <div class="filter-group">
-                        <form action="/force-recalculate" method="POST" style="display: inline;" onsubmit="return confirm('This will recalculate Elo, BayesElo, and Ordo ratings for the current filter. Continue?');">
+                        <form action="/force-recalculate" method="POST" style="display: inline;">
                             <input type="hidden" name="min_time" value="{{ min_time }}">
                             <input type="hidden" name="max_time" value="{{ max_time }}">
                             <input type="hidden" name="hostname" value="{{ hostname or '' }}">
