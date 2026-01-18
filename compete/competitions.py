@@ -1448,29 +1448,31 @@ def run_epd_solve(engine_names: list[str], engine_dir: Path, epd_file: Path,
         all_results_with_positions[engine_name] = results_with_positions
 
         # Print summary for this engine
+        total = len(results)
         solved = sum(1 for r in results if r.solved)
         solved_with_correct_score = sum(1 for r in results if r.solved and r.score_valid is True)
         solved_with_wrong_score = sum(1 for r in results if r.solved and r.score_valid is False)
         solved_no_score_check = sum(1 for r in results if r.solved and r.score_valid is None)
         failed_wrong_move = sum(1 for r in results if not r.solved and not r.timed_out)
         failed_timeout = sum(1 for r in results if r.timed_out)
+        positions_with_eval = solved_with_correct_score + solved_with_wrong_score
 
         avg_solve_time = total_solve_time / solved if solved > 0 else 0
 
         print(f"\n{'='*70}")
         print(f"RESULTS: {engine_name}")
         print(f"{'='*70}")
-        print(f"Solved: {solved}/{len(results)} ({100*solved/len(results):.1f}%)")
+        print(f"Solved: {solved}/{total} ({100*solved/total:.1f}%)")
         if solved > 0:
             print(f"Average solve time: {avg_solve_time:.2f}s")
             print(f"Total solve time: {total_solve_time:.1f}s")
         print()
         print("Breakdown:")
-        print(f"  - Found correct move with correct eval: {solved_with_correct_score}")
-        print(f"  - Found correct move, wrong eval: {solved_with_wrong_score}")
-        print(f"  - Found correct move, no eval to check: {solved_no_score_check}")
-        print(f"  - Found wrong move: {failed_wrong_move}")
-        print(f"  - Timed out: {failed_timeout}")
+        print(f"  - Found correct move with correct eval: {solved_with_correct_score}/{positions_with_eval}")
+        print(f"  - Found correct move, wrong eval: {solved_with_wrong_score}/{positions_with_eval}")
+        print(f"  - Found correct move, no eval to check: {solved_no_score_check}/{total}")
+        print(f"  - Found wrong move: {failed_wrong_move}/{total}")
+        print(f"  - Timed out: {failed_timeout}/{total}")
         print(f"{'='*70}")
 
     # If multiple engines, print comparison
