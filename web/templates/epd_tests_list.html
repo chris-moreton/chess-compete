@@ -10,9 +10,10 @@
             width: 100%;
             border-collapse: collapse;
             margin-top: 20px;
+            font-size: 13px;
         }
         .epd-table th, .epd-table td {
-            padding: 10px;
+            padding: 8px 10px;
             text-align: left;
             border: 1px solid #ddd;
         }
@@ -48,6 +49,10 @@
             margin-right: 15px;
             color: #0066cc;
         }
+        .run-info {
+            font-size: 12px;
+            color: #666;
+        }
     </style>
 </head>
 <body>
@@ -60,28 +65,32 @@
             <a href="/cups">Cups</a>
         </div>
 
-        {% if epd_files %}
+        {% if runs %}
         <table class="epd-table">
             <thead>
                 <tr>
                     <th>EPD File</th>
+                    <th>Run Date</th>
+                    <th>Timeout</th>
+                    <th>Host</th>
                     <th>Positions</th>
-                    <th>Latest Run</th>
                     {% for engine in engines %}
                     <th>{{ engine.name }}</th>
                     {% endfor %}
                 </tr>
             </thead>
             <tbody>
-                {% for epd in epd_files %}
+                {% for run in runs %}
                 <tr>
-                    <td><a href="/epd-tests/{{ epd.name }}">{{ epd.name }}</a></td>
-                    <td>{{ epd.total_positions }}</td>
-                    <td>{{ epd.latest_run.strftime('%Y-%m-%d %H:%M') if epd.latest_run else '-' }}</td>
+                    <td><a href="/epd-tests/{{ run.epd_file }}?run_id={{ run.id }}">{{ run.epd_file }}</a></td>
+                    <td>{{ run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '-' }}</td>
+                    <td>{{ run.timeout_seconds }}s</td>
+                    <td class="run-info">{{ run.hostname or '-' }}</td>
+                    <td>{{ run.total_positions }}</td>
                     {% for engine in engines %}
-                    <td class="pct-cell {% if engine.name in epd.engine_results %}{% if epd.engine_results[engine.name].pct >= 80 %}pct-high{% elif epd.engine_results[engine.name].pct >= 50 %}pct-mid{% else %}pct-low{% endif %}{% endif %}">
-                        {% if engine.name in epd.engine_results %}
-                            {{ "%.0f"|format(epd.engine_results[engine.name].pct) }}%
+                    <td class="pct-cell {% if engine.name in run.engine_results %}{% if run.engine_results[engine.name].pct >= 80 %}pct-high{% elif run.engine_results[engine.name].pct >= 50 %}pct-mid{% else %}pct-low{% endif %}{% endif %}">
+                        {% if engine.name in run.engine_results %}
+                            {{ "%.0f"|format(run.engine_results[engine.name].pct) }}%
                         {% else %}
                             <span class="no-data">-</span>
                         {% endif %}

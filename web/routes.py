@@ -393,37 +393,35 @@ def register_routes(app):
 
     @app.route('/epd-tests')
     def epd_tests_list():
-        """List all EPD test files with engine performance summary."""
-        # Get all unique EPD files that have been tested
-        epd_files = db.session.query(
-            EpdTestRun.epd_file,
-            func.max(EpdTestRun.id).label('latest_run_id'),
-            func.max(EpdTestRun.total_positions).label('total_positions'),
-            func.max(EpdTestRun.created_at).label('latest_run')
-        ).group_by(EpdTestRun.epd_file).all()
+        """List all EPD test runs with engine performance summary."""
+        # Get all test runs, ordered by most recent first
+        runs = EpdTestRun.query.order_by(EpdTestRun.created_at.desc()).all()
 
-        if not epd_files:
-            return render_template('epd_tests_list.html', epd_files=[], engines=[])
+        if not runs:
+            return render_template('epd_tests_list.html', runs=[], engines=[])
 
         # Get all engines that have EPD test results
         engine_ids = db.session.query(EpdTestResult.engine_id).distinct().all()
         engine_ids = [e[0] for e in engine_ids]
         engines = Engine.query.filter(Engine.id.in_(engine_ids)).order_by(Engine.name).all()
 
-        # Build data for each EPD file
-        epd_data = []
-        for epd_file, latest_run_id, total_positions, latest_run in epd_files:
-            file_data = {
-                'name': epd_file,
-                'total_positions': total_positions,
-                'latest_run': latest_run,
+        # Build data for each run
+        runs_data = []
+        for run in runs:
+            run_data = {
+                'id': run.id,
+                'epd_file': run.epd_file,
+                'total_positions': run.total_positions,
+                'timeout_seconds': run.timeout_seconds,
+                'hostname': run.hostname,
+                'created_at': run.created_at,
                 'engine_results': {}
             }
 
-            # Get results for each engine from the latest run
+            # Get results for each engine from this run
             for engine in engines:
                 results = EpdTestResult.query.filter(
-                    EpdTestResult.run_id == latest_run_id,
+                    EpdTestResult.run_id == run.id,
                     EpdTestResult.engine_id == engine.id
                 ).all()
 
@@ -431,37 +429,38 @@ def register_routes(app):
                     solved = sum(1 for r in results if r.solved)
                     total = len(results)
                     pct = 100 * solved / total if total > 0 else 0
-                    file_data['engine_results'][engine.name] = {
+                    run_data['engine_results'][engine.name] = {
                         'solved': solved,
                         'total': total,
                         'pct': pct
                     }
 
-            epd_data.append(file_data)
-
-        # Sort by EPD file name
-        epd_data.sort(key=lambda x: x['name'])
+            runs_data.append(run_data)
 
         return render_template(
             'epd_tests_list.html',
-            epd_files=epd_data,
+            runs=runs_data,
             engines=engines
         )
 
     @app.route('/epd-tests/<path:epd_file>')
     def epd_test_detail(epd_file):
         """Show detailed results for a specific EPD file."""
-        # Get the latest run for this file
-        latest_run = EpdTestRun.query.filter(
-            EpdTestRun.epd_file == epd_file
-        ).order_by(EpdTestRun.created_at.desc()).first()
+        # Get specific run by ID, or latest run for this file
+        run_id = request.args.get('run_id', type=int)
+        if run_id:
+            run = EpdTestRun.query.get(run_id)
+        else:
+            run = EpdTestRun.query.filter(
+                EpdTestRun.epd_file == epd_file
+            ).order_by(EpdTestRun.created_at.desc()).first()
 
-        if not latest_run:
+        if not run:
             return render_template('epd_test_detail.html', epd_file=epd_file, run=None, positions=[], engines=[])
 
         # Get all engines that have results for this run
         engine_ids = db.session.query(EpdTestResult.engine_id).filter(
-            EpdTestResult.run_id == latest_run.id
+            EpdTestResult.run_id == run.id
         ).distinct().all()
         engine_ids = [e[0] for e in engine_ids]
         engines = Engine.query.filter(Engine.id.in_(engine_ids)).order_by(Engine.name).all()
@@ -474,7 +473,7 @@ def register_routes(app):
             EpdTestResult.test_type,
             EpdTestResult.expected_moves
         ).filter(
-            EpdTestResult.run_id == latest_run.id
+            EpdTestResult.run_id == run.id
         ).group_by(
             EpdTestResult.position_index,
             EpdTestResult.position_id,
@@ -500,7 +499,7 @@ def register_routes(app):
             # Get results for each engine
             for engine in engines:
                 result = EpdTestResult.query.filter(
-                    EpdTestResult.run_id == latest_run.id,
+                    EpdTestResult.run_id == run.id,
                     EpdTestResult.engine_id == engine.id,
                     EpdTestResult.position_index == pos_index
                 ).first()
@@ -524,7 +523,7 @@ def register_routes(app):
         engine_stats = {}
         for engine in engines:
             results = EpdTestResult.query.filter(
-                EpdTestResult.run_id == latest_run.id,
+                EpdTestResult.run_id == run.id,
                 EpdTestResult.engine_id == engine.id
             ).all()
 
@@ -543,7 +542,7 @@ def register_routes(app):
         return render_template(
             'epd_test_detail.html',
             epd_file=epd_file,
-            run=latest_run,
+            run=run,
             positions=positions,
             engines=engines,
             engine_stats=engine_stats

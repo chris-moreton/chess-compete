@@ -273,10 +273,10 @@ def save_epd_test_run(epd_file: str, total_positions: int, timeout_seconds: floa
 
             # Process results for each engine
             for engine_name, results_list in engine_results.items():
-                # Get or create engine
+                # Get or create engine (don't auto-activate if creating)
                 engine = Engine.query.filter_by(name=engine_name).first()
                 if not engine:
-                    engine = Engine(name=engine_name, active=True)
+                    engine = Engine(name=engine_name, active=False)
                     db.session.add(engine)
                     db.session.flush()
 
