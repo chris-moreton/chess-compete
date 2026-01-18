@@ -7,7 +7,7 @@ from web.queries import (
     get_dashboard_data, get_unique_hostnames, get_time_range,
     clear_elo_cache, recalculate_all_and_store
 )
-from web.models import Cup, CupRound, CupMatch, Engine, Game
+from web.models import Cup, CupRound, CupMatch, Engine, Game, EpdTestRun, EpdTestResult
 from web.database import db
 from sqlalchemy import func, case, and_, or_
 
@@ -26,6 +26,10 @@ def register_routes(app):
         max_time = request.args.get('max_time', type=int)
         hostname = request.args.get('hostname') or None  # Empty string -> None
         engine_type = request.args.get('engine_type') or None  # Empty string -> None
+
+        # Get sort parameters (for preserving across refreshes)
+        sort_column = request.args.get('sort') or None
+        sort_direction = request.args.get('sort_dir') or None
 
         # Get actual time range from database for slider defaults
         db_min_time, db_max_time = get_time_range()
@@ -65,7 +69,10 @@ def register_routes(app):
             db_max_time=db_max_time,
             hostname=hostname,
             hostnames=hostnames,
-            engine_type=engine_type
+            engine_type=engine_type,
+            # Sort values (for preserving across refreshes)
+            sort_column=sort_column,
+            sort_direction=sort_direction
         )
 
     @app.route('/force-recalculate', methods=['POST'])
@@ -77,6 +84,8 @@ def register_routes(app):
         hostname = request.form.get('hostname') or None
         engine_type = request.form.get('engine_type') or None
         show_all = request.form.get('all') == '1'
+        sort_column = request.form.get('sort') or None
+        sort_direction = request.form.get('sort_dir') or None
 
         # Get defaults from database
         db_min_time, db_max_time = get_time_range()
@@ -100,6 +109,10 @@ def register_routes(app):
             params.append(f'hostname={hostname}')
         if engine_type:
             params.append(f'engine_type={engine_type}')
+        if sort_column:
+            params.append(f'sort={sort_column}')
+        if sort_direction:
+            params.append(f'sort_dir={sort_direction}')
 
         redirect_url = '/?' + '&'.join(params) if params else '/'
         return redirect(redirect_url)
@@ -377,3 +390,161 @@ def register_routes(app):
     def health():
         """Health check endpoint."""
         return {'status': 'ok'}
+
+    @app.route('/epd-tests')
+    def epd_tests_list():
+        """List all EPD test files with engine performance summary."""
+        # Get all unique EPD files that have been tested
+        epd_files = db.session.query(
+            EpdTestRun.epd_file,
+            func.max(EpdTestRun.id).label('latest_run_id'),
+            func.max(EpdTestRun.total_positions).label('total_positions'),
+            func.max(EpdTestRun.created_at).label('latest_run')
+        ).group_by(EpdTestRun.epd_file).all()
+
+        if not epd_files:
+            return render_template('epd_tests_list.html', epd_files=[], engines=[])
+
+        # Get all engines that have EPD test results
+        engine_ids = db.session.query(EpdTestResult.engine_id).distinct().all()
+        engine_ids = [e[0] for e in engine_ids]
+        engines = Engine.query.filter(Engine.id.in_(engine_ids)).order_by(Engine.name).all()
+
+        # Build data for each EPD file
+        epd_data = []
+        for epd_file, latest_run_id, total_positions, latest_run in epd_files:
+            file_data = {
+                'name': epd_file,
+                'total_positions': total_positions,
+                'latest_run': latest_run,
+                'engine_results': {}
+            }
+
+            # Get results for each engine from the latest run
+            for engine in engines:
+                results = EpdTestResult.query.filter(
+                    EpdTestResult.run_id == latest_run_id,
+                    EpdTestResult.engine_id == engine.id
+                ).all()
+
+                if results:
+                    solved = sum(1 for r in results if r.solved)
+                    total = len(results)
+                    pct = 100 * solved / total if total > 0 else 0
+                    file_data['engine_results'][engine.name] = {
+                        'solved': solved,
+                        'total': total,
+                        'pct': pct
+                    }
+
+            epd_data.append(file_data)
+
+        # Sort by EPD file name
+        epd_data.sort(key=lambda x: x['name'])
+
+        return render_template(
+            'epd_tests_list.html',
+            epd_files=epd_data,
+            engines=engines
+        )
+
+    @app.route('/epd-tests/<path:epd_file>')
+    def epd_test_detail(epd_file):
+        """Show detailed results for a specific EPD file."""
+        # Get the latest run for this file
+        latest_run = EpdTestRun.query.filter(
+            EpdTestRun.epd_file == epd_file
+        ).order_by(EpdTestRun.created_at.desc()).first()
+
+        if not latest_run:
+            return render_template('epd_test_detail.html', epd_file=epd_file, run=None, positions=[], engines=[])
+
+        # Get all engines that have results for this run
+        engine_ids = db.session.query(EpdTestResult.engine_id).filter(
+            EpdTestResult.run_id == latest_run.id
+        ).distinct().all()
+        engine_ids = [e[0] for e in engine_ids]
+        engines = Engine.query.filter(Engine.id.in_(engine_ids)).order_by(Engine.name).all()
+
+        # Get all unique positions from this run
+        positions_query = db.session.query(
+            EpdTestResult.position_index,
+            EpdTestResult.position_id,
+            EpdTestResult.fen,
+            EpdTestResult.test_type,
+            EpdTestResult.expected_moves
+        ).filter(
+            EpdTestResult.run_id == latest_run.id
+        ).group_by(
+            EpdTestResult.position_index,
+            EpdTestResult.position_id,
+            EpdTestResult.fen,
+            EpdTestResult.test_type,
+            EpdTestResult.expected_moves
+        ).order_by(EpdTestResult.position_index).all()
+
+        # Build position data with results for each engine
+        positions = []
+        for pos_index, pos_id, fen, test_type, expected_moves in positions_query:
+            pos_data = {
+                'index': pos_index,
+                'id': pos_id,
+                'fen': fen,
+                'fen_short': fen[:40] + '...' if len(fen) > 40 else fen,
+                'test_type': test_type,
+                'expected_moves': expected_moves,
+                'engine_results': {},
+                'failure_count': 0
+            }
+
+            # Get results for each engine
+            for engine in engines:
+                result = EpdTestResult.query.filter(
+                    EpdTestResult.run_id == latest_run.id,
+                    EpdTestResult.engine_id == engine.id,
+                    EpdTestResult.position_index == pos_index
+                ).first()
+
+                if result:
+                    pos_data['engine_results'][engine.name] = {
+                        'solved': result.solved,
+                        'move_found': result.move_found,
+                        'solve_time_ms': result.solve_time_ms,
+                        'final_depth': result.final_depth,
+                        'timed_out': result.timed_out,
+                        'score_cp': result.score_cp,
+                        'score_mate': result.score_mate
+                    }
+                    if not result.solved:
+                        pos_data['failure_count'] += 1
+
+            positions.append(pos_data)
+
+        # Calculate summary stats for each engine
+        engine_stats = {}
+        for engine in engines:
+            results = EpdTestResult.query.filter(
+                EpdTestResult.run_id == latest_run.id,
+                EpdTestResult.engine_id == engine.id
+            ).all()
+
+            solved = sum(1 for r in results if r.solved)
+            total = len(results)
+            solve_times = [r.solve_time_ms for r in results if r.solved and r.solve_time_ms]
+            avg_time = sum(solve_times) / len(solve_times) / 1000 if solve_times else 0
+
+            engine_stats[engine.name] = {
+                'solved': solved,
+                'total': total,
+                'pct': 100 * solved / total if total > 0 else 0,
+                'avg_time': avg_time
+            }
+
+        return render_template(
+            'epd_test_detail.html',
+            epd_file=epd_file,
+            run=latest_run,
+            positions=positions,
+            engines=engines,
+            engine_stats=engine_stats
+        )

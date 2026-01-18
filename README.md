@@ -303,6 +303,52 @@ python -m compete v1.0.17 sf-2800 --epd eet.epd --time 1.0
 - Play through positions from an EPD file
 - Elo ratings **are NOT updated**
 
+### EPD Solve Mode (Test Suite)
+
+Test an engine's ability to find correct moves with time-to-solution tracking and score validation:
+
+```bash
+# Test all active engines (default)
+python -m compete --epd-solve eet.epd --timeout 30
+
+# Test specific engines
+python -m compete v1.0.17 sf-2400 --epd-solve eet.epd --timeout 30
+
+# Filter by engine type
+python -m compete --epd-solve eet.epd --timeout 30 --enginetype rusty
+python -m compete --epd-solve eet.epd --timeout 30 --enginetype stockfish
+
+# Include inactive engines
+python -m compete --epd-solve eet.epd --timeout 30 --includeinactive
+
+# Single position with verbose output (for debugging)
+python -m compete v1.0.17 --epd-solve eet.epd --position 10 --timeout 30
+python -m compete v1.0.17 --epd-solve eet.epd -p "E_E_T 010" --timeout 30
+
+# Don't save results to database
+python -m compete v1.0.17 --epd-solve eet.epd --timeout 30 --no-store
+
+# With stricter score validation (±30 centipawns tolerance)
+python -m compete v1.0.17 --epd-solve eet.epd --timeout 30 --score-tolerance 30
+```
+
+Features:
+- **Time-to-solution**: Search until the engine finds the expected `bm` (best move)
+- **Avoid moves**: Test that engine does NOT play `am` (avoid move) positions
+- **Score validation**: Verify engine's evaluation matches expected `ce` (centipawn) value
+- **Database storage**: Results saved to database for viewing on web dashboard
+- **Single position mode**: Verbose output showing all engine info lines for debugging
+- Supports EPD operations: `bm` (best moves), `am` (avoid moves), `ce` (centipawn eval), `dm` (direct mate)
+- Reports solve times, success rates, and breakdown statistics
+- Elo ratings **are NOT updated**
+
+EPD File Format:
+```
+8/8/p2p3p/3k2p1/PP6/3K1P1P/8/8 b - - bm Kc6; ce +150; id "Endgame 1";
+r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - bm Qxf7+; dm 2; id "Scholar's Mate";
+4k3/8/3PP1p1/8/3K3p/8/3n2PP/8 b - - am Nf1; id "Avoid move test";
+```
+
 ---
 
 ## Command Reference
@@ -316,13 +362,14 @@ python -m compete v1.0.17 sf-2800 --epd eet.epd --time 1.0
 | `--gauntlet` | Gauntlet mode: test one engine against all others |
 | `--cup` | Cup mode: knockout tournament with seeded brackets |
 | `--epd FILE` | EPD mode: play through positions from file |
+| `--epd-solve FILE` | EPD solve mode: test engine's ability to find correct moves |
 
 ### Engine Filter Options
 
 | Option | Description |
 |--------|-------------|
 | `--enginetype TYPE` | Filter engines by type: `rusty` or `stockfish` |
-| `--includeinactive` | Include inactive engines (for random/gauntlet/cup modes) |
+| `--includeinactive` | Include inactive engines (for random/gauntlet/cup/epd-solve modes) |
 
 ### Cup Mode Options
 
@@ -330,6 +377,15 @@ python -m compete v1.0.17 sf-2800 --epd eet.epd --time 1.0
 |--------|-------------|
 | `--cup-engines N` | Limit cup to top N engines by Ordo rating |
 | `--cup-name NAME` | Custom name for the cup competition |
+
+### EPD Solve Mode Options
+
+| Option | Description |
+|--------|-------------|
+| `--timeout T` | Timeout per position in seconds (default: 30.0) |
+| `--score-tolerance N` | Tolerance for score validation in centipawns (default: 50) |
+| `--position N`, `-p N` | Solve only position N (number or ID) with verbose output |
+| `--no-store` | Don't save results to database |
 
 ### Time Control Options
 
@@ -410,6 +466,8 @@ Access at `http://localhost:5000`
 | `/engine/<name>` | Detailed H2H stats for a specific engine |
 | `/cups` | List of all cup competitions |
 | `/cup/<id>` | Bracket view for a specific cup |
+| `/epd-tests` | EPD test results overview with engine percentages |
+| `/epd-tests/<file>` | Detailed position-by-position results grid |
 
 ### Dashboard Features
 

@@ -232,3 +232,90 @@ def get_initial_elo(engine_name: str) -> float:
 
     # Fall back to name-based derivation
     return derive_elo_from_name(engine_name)
+
+
+@db_retry
+def save_epd_test_run(epd_file: str, total_positions: int, timeout_seconds: float,
+                      score_tolerance: int, hostname: str, engine_results: dict):
+    """
+    Save EPD test run and results to the database.
+
+    Args:
+        epd_file: Name of the EPD file tested
+        total_positions: Number of positions in the test
+        timeout_seconds: Timeout per position
+        score_tolerance: Centipawn tolerance for score validation
+        hostname: Machine that ran the test
+        engine_results: Dict of {engine_name: [(position_data, result), ...]}
+            where position_data is (index, position_id, fen, test_type, expected_moves)
+            and result is a SolveResult object
+    """
+    if not DB_ENABLED:
+        print("Warning: DATABASE_URL not configured, results not saved.")
+        return
+
+    try:
+        from web.database import db
+        from web.models import Engine, EpdTestRun, EpdTestResult
+
+        app = _get_app()
+        with app.app_context():
+            # Create the test run record
+            run = EpdTestRun(
+                epd_file=epd_file,
+                total_positions=total_positions,
+                timeout_seconds=timeout_seconds,
+                score_tolerance=score_tolerance,
+                hostname=hostname
+            )
+            db.session.add(run)
+            db.session.flush()  # Get the run ID
+
+            # Process results for each engine
+            for engine_name, results_list in engine_results.items():
+                # Get or create engine
+                engine = Engine.query.filter_by(name=engine_name).first()
+                if not engine:
+                    engine = Engine(name=engine_name, active=True)
+                    db.session.add(engine)
+                    db.session.flush()
+
+                # Add results for each position
+                for position_data, result in results_list:
+                    pos_index, pos_id, fen, test_type, expected_moves = position_data
+
+                    # Extract score components
+                    score_cp = None
+                    score_mate = None
+                    if result.score:
+                        if result.score.is_mate():
+                            score_mate = result.score.white().mate()
+                        else:
+                            score_cp = result.score.white().score(mate_score=10000)
+
+                    epd_result = EpdTestResult(
+                        run_id=run.id,
+                        engine_id=engine.id,
+                        position_id=pos_id,
+                        position_index=pos_index,
+                        fen=fen,
+                        test_type=test_type,
+                        expected_moves=expected_moves,
+                        solved=result.solved,
+                        move_found=result.move_found,
+                        solve_time_ms=int(result.solve_time * 1000) if result.solve_time else None,
+                        final_depth=result.final_depth,
+                        score_cp=score_cp,
+                        score_mate=score_mate,
+                        score_valid=result.score_valid,
+                        timed_out=result.timed_out
+                    )
+                    db.session.add(epd_result)
+
+            db.session.commit()
+            print(f"\nResults saved to database (run_id={run.id})")
+
+    except Exception as e:
+        print(f"Error: Failed to save EPD test results to database: {e}")
+        traceback.print_exc()
+        print("Warning: Results not saved, but test completed.")

@@ -2,7 +2,10 @@
 Chess opening book and EPD position loading.
 """
 
+import re
 from pathlib import Path
+
+from compete.epd import EpdPosition
 
 
 def load_epd_positions(epd_file: Path) -> list[tuple[str, str]]:
@@ -46,6 +49,113 @@ def load_epd_positions(epd_file: Path) -> list[tuple[str, str]]:
                 pos_id = f"Position {line_num}"
 
             positions.append((fen, pos_id))
+
+    return positions
+
+
+def parse_epd_operations(line: str, fen_end_idx: int) -> dict:
+    """
+    Parse EPD operations from a line.
+
+    Operations supported:
+    - bm: best move(s) - e.g., "bm Kc6;" or "bm Kc6 Kc5;"
+    - am: avoid move(s) - e.g., "am d5;"
+    - ce: centipawn evaluation - e.g., "ce +150;" or "ce -200;"
+    - dm: direct mate in N - e.g., "dm 5;"
+    - id: position identifier - e.g., 'id "Test 1";'
+
+    Returns dict with parsed operations.
+    """
+    operations = {
+        "bm": [],
+        "am": [],
+        "ce": None,
+        "dm": None,
+        "id": None,
+    }
+
+    # Get the operations part (everything after FEN)
+    ops_part = line[fen_end_idx:].strip()
+
+    # Parse 'id' operation (quoted string)
+    id_match = re.search(r'id\s+"([^"]+)"', ops_part)
+    if id_match:
+        operations["id"] = id_match.group(1)
+
+    # Parse 'bm' operation (best moves - space-separated before semicolon)
+    bm_match = re.search(r'bm\s+([^;]+);', ops_part)
+    if bm_match:
+        moves = bm_match.group(1).strip().split()
+        operations["bm"] = moves
+
+    # Parse 'am' operation (avoid moves - space-separated before semicolon)
+    am_match = re.search(r'am\s+([^;]+);', ops_part)
+    if am_match:
+        moves = am_match.group(1).strip().split()
+        operations["am"] = moves
+
+    # Parse 'ce' operation (centipawn evaluation)
+    ce_match = re.search(r'ce\s+([+-]?\d+);', ops_part)
+    if ce_match:
+        operations["ce"] = int(ce_match.group(1))
+
+    # Parse 'dm' operation (direct mate)
+    dm_match = re.search(r'dm\s+(\d+);', ops_part)
+    if dm_match:
+        operations["dm"] = int(dm_match.group(1))
+
+    return operations
+
+
+def load_epd_for_solving(epd_file: Path) -> list[EpdPosition]:
+    """
+    Load EPD file with full operation support for solve testing.
+
+    Returns list of EpdPosition objects with all parsed operations.
+    """
+    positions = []
+    with open(epd_file, "r") as f:
+        for line_num, line in enumerate(f, 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            # EPD has 4 FEN fields (board, side, castling, en passant)
+            # followed by optional operations like bm, id, etc.
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+
+            # Construct FEN with default halfmove/fullmove counts
+            fen = f"{parts[0]} {parts[1]} {parts[2]} {parts[3]} 0 1"
+
+            # Calculate where the FEN ends in the original line
+            # to extract operations
+            fen_end_idx = 0
+            space_count = 0
+            for i, c in enumerate(line):
+                if c == ' ':
+                    space_count += 1
+                    if space_count == 4:
+                        fen_end_idx = i
+                        break
+            if fen_end_idx == 0:
+                fen_end_idx = len(line)
+
+            # Parse operations
+            ops = parse_epd_operations(line, fen_end_idx)
+
+            # Create position ID (use parsed id or generate one)
+            pos_id = ops["id"] if ops["id"] else f"Position {line_num}"
+
+            positions.append(EpdPosition(
+                fen=fen,
+                id=pos_id,
+                best_moves=ops["bm"],
+                avoid_moves=ops["am"],
+                centipawn_eval=ops["ce"],
+                direct_mate=ops["dm"],
+            ))
 
     return positions
 

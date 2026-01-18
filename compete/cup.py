@@ -195,7 +195,7 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
             engine2_points += 0.5
 
         print(f"  Game {games_played}: {engine1_name} vs {engine2_name} -> {result} [{opening}] "
-              f"Score: {engine1_points:.1f} - {engine2_points:.1f}")
+              f"| {engine1_name} {engine1_points:.1f} - {engine2_points:.1f} {engine2_name}")
 
         # Game 2: engine2 as white (different random opening)
         result, opening = play_one_game(engine2_name, engine1_name,
@@ -211,7 +211,7 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
             engine2_points += 0.5
 
         print(f"  Game {games_played}: {engine2_name} vs {engine1_name} -> {result} [{opening}] "
-              f"Score: {engine1_points:.1f} - {engine2_points:.1f}")
+              f"| {engine1_name} {engine1_points:.1f} - {engine2_points:.1f} {engine2_name}")
 
     # Tiebreaker if needed (play pairs until someone pulls ahead)
     max_tiebreaker_pairs = 10  # 20 games max
@@ -236,7 +236,7 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
             engine2_points += 0.5
 
         print(f"  Tiebreaker {games_played}: {engine1_name} vs {engine2_name} -> {result} [{opening}] "
-              f"Score: {engine1_points:.1f} - {engine2_points:.1f}")
+              f"| {engine1_name} {engine1_points:.1f} - {engine2_points:.1f} {engine2_name}")
 
         # Check if decided after game 1
         if engine1_points != engine2_points:
@@ -255,7 +255,7 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
             engine2_points += 0.5
 
         print(f"  Tiebreaker {games_played}: {engine2_name} vs {engine1_name} -> {result} [{opening}] "
-              f"Score: {engine1_points:.1f} - {engine2_points:.1f}")
+              f"| {engine1_name} {engine1_points:.1f} - {engine2_points:.1f} {engine2_name}")
 
     # Coin flip if still tied
     if engine1_points == engine2_points:

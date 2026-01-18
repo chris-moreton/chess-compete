@@ -178,3 +178,57 @@ class CupMatch(db.Model):
         e1 = self.engine1.name if self.engine1 else 'TBD'
         e2 = self.engine2.name if self.engine2 else 'BYE'
         return f'<CupMatch {e1} vs {e2}>'
+
+
+class EpdTestRun(db.Model):
+    """Metadata for an EPD solve test run."""
+    __tablename__ = 'epd_test_runs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    epd_file = db.Column(db.String(255), nullable=False)  # e.g., "eet.epd"
+    total_positions = db.Column(db.Integer, nullable=False)
+    timeout_seconds = db.Column(db.Float, nullable=False)
+    score_tolerance = db.Column(db.Integer, nullable=False)
+    hostname = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # Relationships
+    results = db.relationship('EpdTestResult', backref='run', cascade='all, delete-orphan')
+
+    def __repr__(self):
+        return f'<EpdTestRun {self.epd_file} @ {self.created_at}>'
+
+
+class EpdTestResult(db.Model):
+    """Result for a single position in an EPD solve test."""
+    __tablename__ = 'epd_test_results'
+
+    id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.Integer, db.ForeignKey('epd_test_runs.id', ondelete='CASCADE'), nullable=False)
+    engine_id = db.Column(db.Integer, db.ForeignKey('engines.id', ondelete='CASCADE'), nullable=False)
+    position_id = db.Column(db.String(255), nullable=False)  # e.g., "E_E_T 001"
+    position_index = db.Column(db.Integer, nullable=False)  # 1-based position in EPD file
+    fen = db.Column(db.Text, nullable=False)
+    test_type = db.Column(db.String(10), nullable=False)  # 'bm' or 'am'
+    expected_moves = db.Column(db.String(255), nullable=False)  # comma-separated
+    solved = db.Column(db.Boolean, nullable=False)
+    move_found = db.Column(db.String(20))  # The move the engine played
+    solve_time_ms = db.Column(db.Integer)  # NULL if failed
+    final_depth = db.Column(db.Integer)
+    score_cp = db.Column(db.Integer)  # Centipawn eval (NULL if mate)
+    score_mate = db.Column(db.Integer)  # Mate in N (NULL if not mate)
+    score_valid = db.Column(db.Boolean)  # NULL if no ce check
+    timed_out = db.Column(db.Boolean, nullable=False, default=False)
+
+    # Relationships
+    engine = db.relationship('Engine', backref='epd_test_results')
+
+    __table_args__ = (
+        db.Index('idx_epd_results_run', 'run_id'),
+        db.Index('idx_epd_results_engine', 'engine_id'),
+        db.Index('idx_epd_results_position', 'position_id'),
+    )
+
+    def __repr__(self):
+        status = 'SOLVED' if self.solved else 'FAILED'
+        return f'<EpdTestResult {self.position_id}: {status}>'

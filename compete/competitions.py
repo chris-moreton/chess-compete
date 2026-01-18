@@ -5,16 +5,21 @@ Competition modes: match, league, gauntlet, random, and EPD.
 import os
 import random
 import socket
+import subprocess
 import sys
 import time
 from itertools import combinations
 from pathlib import Path
 
+import chess
+import chess.engine
+
 from compete.constants import PROVISIONAL_GAMES, DEFAULT_ELO
-from compete.database import load_elo_ratings, save_game_to_db, get_initial_elo
+from compete.database import load_elo_ratings, save_game_to_db, get_initial_elo, save_epd_test_run
 from compete.engine_manager import get_engine_info, get_active_engines
 from compete.game import play_game, calculate_elo_difference
-from compete.openings import OPENING_BOOK, load_epd_positions
+from compete.openings import OPENING_BOOK, load_epd_positions, load_epd_for_solving
+from compete.epd import EpdPosition, SolveResult
 
 
 def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
@@ -1001,3 +1006,498 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
         print(f"{rank:<6}{name:<30}{data['elo']:>8.0f}{data['games']:>7}{prov}")
 
     print(f"{'='*70}\n")
+
+
+def solve_position(engine, board: chess.Board, position: EpdPosition,
+                   timeout: float, score_tolerance: int) -> SolveResult:
+    """
+    Analyze position until engine finds expected move or timeout.
+
+    Args:
+        engine: chess.engine.SimpleEngine instance
+        board: chess.Board set to the position
+        position: EpdPosition with expected best moves
+        timeout: Maximum time to search in seconds
+        score_tolerance: Acceptable difference in centipawns for score validation
+
+    Returns:
+        SolveResult with solve status, time, and score validation
+    """
+    start_time = time.time()
+    found_move = None
+    found_time = None
+    final_score = None
+    final_depth = None
+    last_move = None
+
+    # Determine test type: bm (find best move) or am-only (avoid move)
+    is_avoid_only = not position.best_moves and position.avoid_moves
+
+    try:
+        with engine.analysis(board, chess.engine.Limit(time=timeout)) as analysis:
+            for info in analysis:
+                elapsed = time.time() - start_time
+
+                # Check if PV starts with an expected best move
+                if "pv" in info and info["pv"]:
+                    move = info["pv"][0]
+                    move_san = board.san(move)
+                    last_move = move_san
+
+                    # Update score/depth
+                    if "score" in info:
+                        final_score = info["score"]
+                    if "depth" in info:
+                        final_depth = info["depth"]
+
+                    if position.best_moves and move_san in position.best_moves:
+                        # Found the correct move - record time and stop searching
+                        found_move = move_san
+                        found_time = elapsed
+                        break
+    except Exception as e:
+        print(f"  Error during analysis: {e}")
+        return SolveResult(
+            solved=False,
+            move_found=last_move,
+            solve_time=None,
+            final_depth=None,
+            score=None,
+            score_valid=None,
+            timed_out=True
+        )
+
+    elapsed = time.time() - start_time
+
+    # Validate score if 'ce' was specified
+    score_valid = None
+    if position.centipawn_eval is not None and final_score:
+        if final_score.is_mate():
+            # For mate positions, check if dm (direct mate) was specified
+            if position.direct_mate is not None:
+                mate_moves = final_score.white().mate()
+                if mate_moves is not None:
+                    score_valid = abs(mate_moves) <= position.direct_mate
+            else:
+                score_valid = False  # Mate != centipawn
+        else:
+            cp = final_score.white().score(mate_score=10000)
+            if cp is not None:
+                diff = abs(cp - position.centipawn_eval)
+                score_valid = diff <= score_tolerance
+
+    # Determine if solved based on test type
+    if is_avoid_only:
+        # For am-only positions: solved if final move is NOT in avoid_moves
+        solved = last_move is not None and last_move not in position.avoid_moves
+        return SolveResult(
+            solved=solved,
+            move_found=last_move,
+            solve_time=elapsed if solved else None,
+            final_depth=final_depth,
+            score=final_score,
+            score_valid=score_valid,
+            timed_out=False  # am positions always run to completion
+        )
+    else:
+        # For bm positions: solved if we found the expected move
+        return SolveResult(
+            solved=found_move is not None,
+            move_found=found_move if found_move else last_move,
+            solve_time=found_time,
+            final_depth=final_depth,
+            score=final_score,
+            score_valid=score_valid,
+            timed_out=found_move is None and elapsed >= timeout * 0.95
+        )
+
+
+def run_epd_solve_single(engine_names: list[str], engine_dir: Path, epd_file: Path,
+                         position_selector: str, timeout: float, score_tolerance: int = 50):
+    """
+    Solve a single EPD position with verbose output showing all engine info lines.
+
+    Args:
+        engine_names: List of engine names to test
+        engine_dir: Directory containing engine binaries
+        epd_file: Path to EPD file
+        position_selector: Position number (1-based) or position ID
+        timeout: Maximum time in seconds
+        score_tolerance: Acceptable difference in centipawns for score validation
+    """
+    # Load EPD positions
+    positions = load_epd_for_solving(epd_file)
+    if not positions:
+        print(f"Error: No valid positions found in {epd_file}")
+        sys.exit(1)
+
+    # Filter to testable positions
+    testable_positions = [p for p in positions if p.best_moves or p.avoid_moves]
+    if not testable_positions:
+        print(f"Error: No positions with 'bm' or 'am' operations found in {epd_file}")
+        sys.exit(1)
+
+    # Find the requested position
+    target_position = None
+    target_index = None
+
+    # Try to match by position number first
+    try:
+        pos_num = int(position_selector)
+        if 1 <= pos_num <= len(testable_positions):
+            target_position = testable_positions[pos_num - 1]
+            target_index = pos_num
+    except ValueError:
+        pass
+
+    # If not found by number, try to match by ID
+    if target_position is None:
+        for idx, pos in enumerate(testable_positions):
+            if pos.id == position_selector or position_selector in pos.id:
+                target_position = pos
+                target_index = idx + 1
+                break
+
+    if target_position is None:
+        print(f"Error: Position '{position_selector}' not found in {epd_file}")
+        print(f"Available positions: 1-{len(testable_positions)}")
+        print("Position IDs:")
+        for idx, pos in enumerate(testable_positions[:10]):
+            print(f"  {idx + 1}: {pos.id}")
+        if len(testable_positions) > 10:
+            print(f"  ... and {len(testable_positions) - 10} more")
+        sys.exit(1)
+
+    # Determine test type
+    is_avoid_only = not target_position.best_moves and target_position.avoid_moves
+    test_type = 'am' if is_avoid_only else 'bm'
+    expected_moves = target_position.avoid_moves if is_avoid_only else target_position.best_moves
+
+    print(f"\n{'='*70}")
+    print(f"SINGLE POSITION SOLVE: {target_position.id}")
+    print(f"{'='*70}")
+    print(f"FEN: {target_position.fen}")
+    print(f"Expected: {test_type} {' '.join(expected_moves)}")
+    if target_position.centipawn_eval is not None:
+        print(f"Expected eval: {target_position.centipawn_eval:+d} cp")
+    if target_position.direct_mate is not None:
+        print(f"Direct mate: {target_position.direct_mate}")
+    print(f"Timeout: {timeout}s")
+    print(f"{'='*70}")
+
+    board = chess.Board(target_position.fen)
+
+    for engine_name in engine_names:
+        print(f"\nEngine: {engine_name}")
+        print("Searching with verbose output...\n")
+
+        engine_path, engine_uci_options = get_engine_info(engine_name, engine_dir)
+        cmd = engine_path if isinstance(engine_path, list) else str(engine_path)
+        engine = chess.engine.SimpleEngine.popen_uci(cmd, stderr=subprocess.DEVNULL)
+
+        if engine_uci_options:
+            engine.configure(engine_uci_options)
+
+        start_time = time.time()
+        found_move = None
+        found_time = None
+        final_score = None
+        final_depth = None
+        last_move = None
+
+        try:
+            with engine.analysis(board, chess.engine.Limit(time=timeout)) as analysis:
+                for info in analysis:
+                    elapsed = time.time() - start_time
+
+                    # Print verbose info line
+                    parts = []
+                    if "depth" in info:
+                        parts.append(f"depth {info['depth']}")
+                    if "seldepth" in info:
+                        parts.append(f"seldepth {info['seldepth']}")
+                    if "score" in info:
+                        score = info["score"]
+                        if score.is_mate():
+                            parts.append(f"score mate {score.white().mate()}")
+                        else:
+                            cp = score.white().score(mate_score=10000)
+                            parts.append(f"score cp {cp}")
+                    if "nodes" in info:
+                        parts.append(f"nodes {info['nodes']}")
+                    if "nps" in info:
+                        parts.append(f"nps {info['nps']}")
+                    if "pv" in info and info["pv"]:
+                        pv_moves = [board.san(m) for m in info["pv"][:8]]
+                        parts.append(f"pv {' '.join(pv_moves)}")
+
+                    if parts:
+                        print(f"info {' '.join(parts)}")
+
+                    # Check for solution
+                    if "pv" in info and info["pv"]:
+                        move = info["pv"][0]
+                        move_san = board.san(move)
+                        last_move = move_san
+
+                        if "score" in info:
+                            final_score = info["score"]
+                        if "depth" in info:
+                            final_depth = info["depth"]
+
+                        if not is_avoid_only and move_san in expected_moves:
+                            # Found best move - stop
+                            found_move = move_san
+                            found_time = elapsed
+                            break
+
+            # For avoid-move positions, check final result
+            if is_avoid_only:
+                if last_move and last_move not in expected_moves:
+                    found_move = last_move
+                    found_time = time.time() - start_time
+
+        except Exception as e:
+            print(f"\nError during analysis: {e}")
+
+        engine.quit()
+
+        # Print final result
+        print(f"\n{'-'*70}")
+        print("Final result:")
+        if is_avoid_only:
+            if found_move:
+                print(f"  Move: {found_move} (avoided {', '.join(expected_moves)}) - PASS")
+            else:
+                print(f"  Move: {last_move} (should have avoided {', '.join(expected_moves)}) - FAIL")
+        else:
+            if found_move:
+                print(f"  Move: {found_move} - PASS")
+            else:
+                print(f"  Move: {last_move or 'none'} (expected {', '.join(expected_moves)}) - FAIL")
+
+        print(f"  Depth: {final_depth}")
+        if final_score:
+            if final_score.is_mate():
+                print(f"  Score: Mate in {final_score.white().mate()}")
+            else:
+                cp = final_score.white().score(mate_score=10000)
+                print(f"  Score: {cp:+d} cp")
+        print(f"  Time: {found_time:.1f}s" if found_time else f"  Time: {time.time() - start_time:.1f}s (timeout)")
+        print(f"  Status: {'SOLVED' if found_move else 'FAILED'}")
+        print(f"{'='*70}")
+
+
+def run_epd_solve(engine_names: list[str], engine_dir: Path, epd_file: Path,
+                  timeout: float, results_dir: Path, score_tolerance: int = 50,
+                  store_results: bool = True):
+    """
+    Run EPD solve test - measure time for engines to find correct moves.
+
+    For each position:
+    1. Start engine analysis
+    2. Monitor PV until best move matches expected (or timeout)
+    3. Record solve time and final evaluation
+    4. Validate eval against expected 'ce' value if present
+
+    Args:
+        engine_names: List of engine names to test
+        engine_dir: Directory containing engine binaries
+        epd_file: Path to EPD file
+        timeout: Maximum time per position in seconds
+        results_dir: Directory for results (not used currently)
+        score_tolerance: Acceptable difference in centipawns for score validation
+        store_results: Whether to save results to database (default True)
+    """
+    # Load EPD positions
+    positions = load_epd_for_solving(epd_file)
+    if not positions:
+        print(f"Error: No valid positions found in {epd_file}")
+        sys.exit(1)
+
+    # Filter positions that have best moves OR avoid moves defined
+    testable_positions = [p for p in positions if p.best_moves or p.avoid_moves]
+    if not testable_positions:
+        print(f"Error: No positions with 'bm' or 'am' operations found in {epd_file}")
+        print("EPD solve mode requires positions with expected best moves or avoid moves.")
+        sys.exit(1)
+
+    # Count position types
+    bm_count = sum(1 for p in testable_positions if p.best_moves)
+    am_only_count = sum(1 for p in testable_positions if not p.best_moves and p.avoid_moves)
+
+    print(f"\n{'='*70}")
+    print(f"EPD SOLVE TEST: {epd_file.name}")
+    print(f"{'='*70}")
+    print(f"Engines: {', '.join(engine_names)}")
+    print(f"Positions: {len(testable_positions)} ({bm_count} with 'bm', {am_only_count} with 'am' only)")
+    print(f"Timeout: {timeout}s/position")
+    print(f"Score tolerance: +/-{score_tolerance} centipawns")
+    print(f"{'='*70}")
+
+    # Results per engine: {engine_name: [(position_data, result), ...]}
+    # position_data = (index, position_id, fen, test_type, expected_moves)
+    all_results = {}
+    all_results_with_positions = {}
+
+    for engine_name in engine_names:
+        print(f"\n{'='*70}")
+        print(f"Testing: {engine_name}")
+        print(f"{'='*70}")
+
+        engine_path, engine_uci_options = get_engine_info(engine_name, engine_dir)
+
+        # Open engine
+        cmd = engine_path if isinstance(engine_path, list) else str(engine_path)
+        engine = chess.engine.SimpleEngine.popen_uci(cmd, stderr=subprocess.DEVNULL)
+
+        if engine_uci_options:
+            engine.configure(engine_uci_options)
+
+        results = []
+        results_with_positions = []
+        total_solve_time = 0.0
+
+        for idx, position in enumerate(testable_positions):
+            pos_num = idx + 1
+            is_avoid_only = not position.best_moves and position.avoid_moves
+            print(f"\nPosition {pos_num}/{len(testable_positions)}: {position.id}")
+            print(f"  FEN: {position.fen[:60]}...")
+
+            # Determine test type and expected moves for storage
+            if position.best_moves:
+                test_type = 'bm'
+                expected_moves = ','.join(position.best_moves)
+            else:
+                test_type = 'am'
+                expected_moves = ','.join(position.avoid_moves)
+
+            # Show expected
+            expected_parts = []
+            if position.best_moves:
+                expected_parts.append(f"bm {' '.join(position.best_moves)}")
+            if position.avoid_moves:
+                expected_parts.append(f"am {' '.join(position.avoid_moves)}")
+            if position.centipawn_eval is not None:
+                expected_parts.append(f"ce {position.centipawn_eval:+d}")
+            if position.direct_mate is not None:
+                expected_parts.append(f"dm {position.direct_mate}")
+            print(f"  Expected: {'; '.join(expected_parts)}")
+
+            # Set up board
+            board = chess.Board(position.fen)
+
+            # Solve
+            print(f"  Searching...", end="", flush=True)
+            result = solve_position(engine, board, position, timeout, score_tolerance)
+            results.append(result)
+
+            # Store position data with result for database
+            position_data = (pos_num, position.id, position.fen, test_type, expected_moves)
+            results_with_positions.append((position_data, result))
+
+            # Report result
+            if result.solved:
+                if is_avoid_only:
+                    print(f" played {result.move_found} (avoided: {', '.join(position.avoid_moves)}) at {result.solve_time:.1f}s (depth {result.final_depth})")
+                else:
+                    print(f" found {result.move_found} at {result.solve_time:.1f}s (depth {result.final_depth})")
+                total_solve_time += result.solve_time if result.solve_time else 0
+
+                # Score validation
+                if result.score:
+                    if result.score.is_mate():
+                        mate_moves = result.score.white().mate()
+                        score_str = f"M{mate_moves}" if mate_moves else "M?"
+                    else:
+                        cp = result.score.white().score(mate_score=10000)
+                        score_str = f"{cp:+d}" if cp is not None else "?"
+
+                    if position.centipawn_eval is not None:
+                        diff = None
+                        if not result.score.is_mate():
+                            cp = result.score.white().score(mate_score=10000)
+                            if cp is not None:
+                                diff = cp - position.centipawn_eval
+                        valid_mark = "OK" if result.score_valid else "MISMATCH"
+                        if diff is not None:
+                            print(f"  Engine score: {score_str} (expected {position.centipawn_eval:+d}, diff: {diff:+d}) {valid_mark}")
+                        else:
+                            print(f"  Engine score: {score_str} (expected {position.centipawn_eval:+d}) {valid_mark}")
+
+                print(f"  Status: SOLVED ({result.solve_time:.1f}s)")
+            else:
+                if is_avoid_only:
+                    print(f" played {result.move_found} (depth {result.final_depth})")
+                    print(f"  Should have avoided: {', '.join(position.avoid_moves)}")
+                    print(f"  Status: FAILED (played avoid move)")
+                elif result.timed_out:
+                    print(f" timeout ({timeout}s)")
+                    print(f"  Last move considered: {result.move_found or 'none'}")
+                    print(f"  Status: FAILED (timeout)")
+                else:
+                    print(f" did not find expected move")
+                    print(f"  Move found: {result.move_found or 'none'}")
+                    print(f"  Status: FAILED (wrong move)")
+
+        # Close engine
+        engine.quit()
+
+        # Store results
+        all_results[engine_name] = results
+        all_results_with_positions[engine_name] = results_with_positions
+
+        # Print summary for this engine
+        solved = sum(1 for r in results if r.solved)
+        solved_with_correct_score = sum(1 for r in results if r.solved and r.score_valid is True)
+        solved_with_wrong_score = sum(1 for r in results if r.solved and r.score_valid is False)
+        solved_no_score_check = sum(1 for r in results if r.solved and r.score_valid is None)
+        failed_wrong_move = sum(1 for r in results if not r.solved and not r.timed_out)
+        failed_timeout = sum(1 for r in results if r.timed_out)
+
+        avg_solve_time = total_solve_time / solved if solved > 0 else 0
+
+        print(f"\n{'='*70}")
+        print(f"RESULTS: {engine_name}")
+        print(f"{'='*70}")
+        print(f"Solved: {solved}/{len(results)} ({100*solved/len(results):.1f}%)")
+        if solved > 0:
+            print(f"Average solve time: {avg_solve_time:.2f}s")
+            print(f"Total solve time: {total_solve_time:.1f}s")
+        print()
+        print("Breakdown:")
+        print(f"  - Found correct move with correct eval: {solved_with_correct_score}")
+        print(f"  - Found correct move, wrong/no eval check: {solved_with_wrong_score + solved_no_score_check}")
+        print(f"  - Found wrong move: {failed_wrong_move}")
+        print(f"  - Timed out: {failed_timeout}")
+        print(f"{'='*70}")
+
+    # If multiple engines, print comparison
+    if len(engine_names) > 1:
+        print(f"\n{'='*70}")
+        print("ENGINE COMPARISON")
+        print(f"{'='*70}")
+        print(f"{'Engine':<30} {'Solved':>8} {'%':>8} {'Avg Time':>10}")
+        print("-" * 58)
+
+        for engine_name in engine_names:
+            results = all_results[engine_name]
+            solved = sum(1 for r in results if r.solved)
+            total_time = sum(r.solve_time for r in results if r.solved and r.solve_time)
+            avg_time = total_time / solved if solved > 0 else 0
+            pct = 100 * solved / len(results)
+            print(f"{engine_name:<30} {solved:>5}/{len(results):<2} {pct:>7.1f}% {avg_time:>9.2f}s")
+
+        print(f"{'='*70}")
+
+    # Save results to database
+    if store_results:
+        hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
+        save_epd_test_run(
+            epd_file=epd_file.name,
+            total_positions=len(testable_positions),
+            timeout_seconds=timeout,
+            score_tolerance=score_tolerance,
+            hostname=hostname,
+            engine_results=all_results_with_positions
+        )

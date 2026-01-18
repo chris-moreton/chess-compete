@@ -23,6 +23,8 @@ from compete.competitions import (
     run_gauntlet,
     run_random,
     run_epd,
+    run_epd_solve,
+    run_epd_solve_single,
 )
 from compete.cup import run_cup
 
@@ -53,6 +55,16 @@ def main():
                         help="With --random: weight selection by inverse game count (fewer games = higher chance)")
     parser.add_argument("--epd", type=str, default=None,
                         help="EPD file mode: play through positions from an EPD file sequentially")
+    parser.add_argument("--epd-solve", type=str, default=None, metavar="FILE",
+                        help="EPD solve mode: test engine's ability to find correct moves")
+    parser.add_argument("--timeout", type=float, default=30.0,
+                        help="Timeout per position in seconds for --epd-solve (default: 30.0)")
+    parser.add_argument("--score-tolerance", type=int, default=50,
+                        help="Tolerance for score validation in centipawns (default: 50)")
+    parser.add_argument("--no-store", action="store_true",
+                        help="Don't save EPD solve results to database")
+    parser.add_argument("--position", "-p", type=str, default=None,
+                        help="With --epd-solve: solve only this position (number or ID) with verbose output")
     parser.add_argument("--enable", type=str, nargs="+", metavar="ENGINE",
                         help="Enable one or more engines (set active=True)")
     parser.add_argument("--disable", type=str, nargs="+", metavar="ENGINE",
@@ -192,8 +204,8 @@ def main():
             print(f"Resolved '{orig}' -> '{resolved}'")
 
     # Auto-initialize missing engines
-    if args.random or args.gauntlet or args.cup:
-        # For random/gauntlet/cup: ensure all matching engines from database are initialized
+    if args.random or args.gauntlet or args.cup or (args.epd_solve and not resolved_engines):
+        # For random/gauntlet/cup/epd-solve (no engines specified): ensure all matching engines from database are initialized
         engines_to_init = get_active_engines(engine_dir, args.enginetype, args.includeinactive)
         if engines_to_init:
             filter_desc = []
@@ -219,6 +231,47 @@ def main():
         run_cup(engine_dir, args.cup_engines, args.games, time_per_move or 1.0,
                 args.cup_name, time_low, time_high,
                 engine_type=args.enginetype, include_inactive=args.includeinactive)
+    elif args.epd_solve:
+        # EPD solve mode: test engine's ability to find correct moves
+        epd_path = Path(args.epd_solve)
+        if not epd_path.exists():
+            # Try looking in openings directory
+            epd_path = script_dir / "openings" / args.epd_solve
+            if not epd_path.exists():
+                print(f"Error: EPD file not found: {args.epd_solve}")
+                print(f"Searched: {Path(args.epd_solve).absolute()} and {epd_path}")
+                sys.exit(1)
+
+        # If no engines specified, use all active engines (with optional filters)
+        epd_engines = resolved_engines
+        if not epd_engines:
+            epd_engines = get_active_engines(engine_dir, args.enginetype, args.includeinactive)
+            if not epd_engines:
+                filter_desc = []
+                if args.enginetype:
+                    filter_desc.append(f"type={args.enginetype}")
+                if not args.includeinactive:
+                    filter_desc.append("active only")
+                filter_str = f" ({', '.join(filter_desc)})" if filter_desc else ""
+                print(f"Error: No engines found{filter_str}")
+                sys.exit(1)
+            filter_desc = []
+            if args.enginetype:
+                filter_desc.append(f"type={args.enginetype}")
+            if args.includeinactive:
+                filter_desc.append("including inactive")
+            filter_str = f" ({', '.join(filter_desc)})" if filter_desc else ""
+            print(f"Using {len(epd_engines)} engines{filter_str}")
+
+        if args.position:
+            # Single position verbose mode
+            run_epd_solve_single(epd_engines, engine_dir, epd_path,
+                                 args.position, args.timeout, args.score_tolerance)
+        else:
+            # Full test suite mode
+            run_epd_solve(epd_engines, engine_dir, epd_path,
+                          args.timeout, results_dir, args.score_tolerance,
+                          store_results=not args.no_store)
     elif args.epd:
         # EPD mode: play through positions from an EPD file
         epd_path = Path(args.epd)

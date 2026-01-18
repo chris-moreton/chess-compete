@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EPD Test Results</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .epd-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .epd-table th, .epd-table td {
+            padding: 10px;
+            text-align: left;
+            border: 1px solid #ddd;
+        }
+        .epd-table th {
+            background-color: #f5f5f5;
+            font-weight: bold;
+        }
+        .epd-table tr:hover {
+            background-color: #f9f9f9;
+        }
+        .epd-table a {
+            color: #0066cc;
+            text-decoration: none;
+        }
+        .epd-table a:hover {
+            text-decoration: underline;
+        }
+        .pct-cell {
+            text-align: center;
+            font-weight: bold;
+        }
+        .pct-high { background-color: #90EE90; }
+        .pct-mid { background-color: #FFFFE0; }
+        .pct-low { background-color: #FFB6C1; }
+        .no-data {
+            color: #999;
+            text-align: center;
+        }
+        .nav-links {
+            margin-bottom: 20px;
+        }
+        .nav-links a {
+            margin-right: 15px;
+            color: #0066cc;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>EPD Test Results</h1>
+
+        <div class="nav-links">
+            <a href="/">Dashboard</a>
+            <a href="/engines">Engines</a>
+            <a href="/cups">Cups</a>
+        </div>
+
+        {% if epd_files %}
+        <table class="epd-table">
+            <thead>
+                <tr>
+                    <th>EPD File</th>
+                    <th>Positions</th>
+                    <th>Latest Run</th>
+                    {% for engine in engines %}
+                    <th>{{ engine.name }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for epd in epd_files %}
+                <tr>
+                    <td><a href="/epd-tests/{{ epd.name }}">{{ epd.name }}</a></td>
+                    <td>{{ epd.total_positions }}</td>
+                    <td>{{ epd.latest_run.strftime('%Y-%m-%d %H:%M') if epd.latest_run else '-' }}</td>
+                    {% for engine in engines %}
+                    <td class="pct-cell {% if engine.name in epd.engine_results %}{% if epd.engine_results[engine.name].pct >= 80 %}pct-high{% elif epd.engine_results[engine.name].pct >= 50 %}pct-mid{% else %}pct-low{% endif %}{% endif %}">
+                        {% if engine.name in epd.engine_results %}
+                            {{ "%.0f"|format(epd.engine_results[engine.name].pct) }}%
+                        {% else %}
+                            <span class="no-data">-</span>
+                        {% endif %}
+                    </td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="no-data">No EPD test results yet. Run an EPD solve test to see results here.</p>
+        <pre>python -m compete v1.0.17 --epd-solve eet.epd --timeout 30</pre>
+        {% endif %}
+    </div>
+</body>
+</html>

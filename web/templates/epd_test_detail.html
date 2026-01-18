@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EPD Results: {{ epd_file }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .epd-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            font-size: 13px;
+        }
+        .epd-table th, .epd-table td {
+            padding: 8px 10px;
+            text-align: left;
+            border: 1px solid #ddd;
+        }
+        .epd-table th {
+            background-color: #f5f5f5;
+            font-weight: bold;
+            cursor: pointer;
+            user-select: none;
+        }
+        .epd-table th:hover {
+            background-color: #e8e8e8;
+        }
+        .epd-table th .sort-arrow {
+            margin-left: 5px;
+            opacity: 0.3;
+        }
+        .epd-table th.sort-asc .sort-arrow::after { content: "▲"; opacity: 1; }
+        .epd-table th.sort-desc .sort-arrow::after { content: "▼"; opacity: 1; }
+        .epd-table tr:hover {
+            background-color: #f9f9f9;
+        }
+        .result-cell {
+            text-align: center;
+            font-weight: bold;
+            cursor: help;
+        }
+        .result-solved {
+            background-color: #90EE90;
+            color: #006400;
+        }
+        .result-failed {
+            background-color: #FFB6C1;
+            color: #8B0000;
+        }
+        .result-timeout {
+            background-color: #FFFFE0;
+            color: #8B8B00;
+        }
+        .fen-cell {
+            font-family: monospace;
+            font-size: 11px;
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .expected-cell {
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .nav-links {
+            margin-bottom: 20px;
+        }
+        .nav-links a {
+            margin-right: 15px;
+            color: #0066cc;
+        }
+        .run-info {
+            background-color: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .run-info span {
+            margin-right: 20px;
+        }
+        .summary-table {
+            margin-top: 30px;
+            width: auto;
+        }
+        .summary-table th, .summary-table td {
+            padding: 8px 15px;
+        }
+        .filter-controls {
+            margin: 15px 0;
+        }
+        .filter-controls label {
+            margin-right: 10px;
+        }
+        .filter-controls select {
+            margin-right: 20px;
+            padding: 5px;
+        }
+        .copy-btn {
+            cursor: pointer;
+            color: #0066cc;
+            font-size: 11px;
+            margin-left: 5px;
+        }
+        .copy-btn:hover {
+            text-decoration: underline;
+        }
+        .no-data {
+            color: #999;
+            padding: 40px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>EPD Results: {{ epd_file }}</h1>
+
+        <div class="nav-links">
+            <a href="/">Dashboard</a>
+            <a href="/epd-tests">EPD Tests</a>
+            <a href="/engines">Engines</a>
+            <a href="/cups">Cups</a>
+        </div>
+
+        {% if run %}
+        <div class="run-info">
+            <span><strong>Run:</strong> {{ run.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+            <span><strong>Timeout:</strong> {{ run.timeout_seconds }}s</span>
+            <span><strong>Score Tolerance:</strong> +/-{{ run.score_tolerance }}cp</span>
+            <span><strong>Hostname:</strong> {{ run.hostname or 'unknown' }}</span>
+            <span><strong>Positions:</strong> {{ run.total_positions }}</span>
+        </div>
+
+        <div class="filter-controls">
+            <label>Filter:</label>
+            <select id="filter-result">
+                <option value="all">All positions</option>
+                <option value="failed">Failed only</option>
+                <option value="solved">Solved only</option>
+            </select>
+            <label>Engine:</label>
+            <select id="filter-engine">
+                <option value="all">All engines</option>
+                {% for engine in engines %}
+                <option value="{{ engine.name }}">{{ engine.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <table class="epd-table" id="results-table">
+            <thead>
+                <tr>
+                    <th data-sort="index"># <span class="sort-arrow"></span></th>
+                    <th data-sort="id">Position ID <span class="sort-arrow"></span></th>
+                    <th>FEN</th>
+                    <th data-sort="type">Type <span class="sort-arrow"></span></th>
+                    <th>Expected</th>
+                    {% for engine in engines %}
+                    <th data-sort="engine-{{ engine.name }}" data-engine="{{ engine.name }}">{{ engine.name }} <span class="sort-arrow"></span></th>
+                    {% endfor %}
+                    <th data-sort="failures">Fails <span class="sort-arrow"></span></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for pos in positions %}
+                <tr data-index="{{ pos.index }}" data-id="{{ pos.id }}" data-type="{{ pos.test_type }}" data-failures="{{ pos.failure_count }}"
+                    {% for engine in engines %}
+                    data-engine-{{ engine.name }}="{{ 1 if pos.engine_results.get(engine.name, {}).get('solved') else 0 }}"
+                    data-time-{{ engine.name }}="{{ pos.engine_results.get(engine.name, {}).get('solve_time_ms', 999999) }}"
+                    {% endfor %}
+                >
+                    <td>{{ pos.index }}</td>
+                    <td>{{ pos.id }} <span class="copy-btn" onclick="copyToClipboard('{{ pos.id }}')" title="Copy position ID">[copy]</span></td>
+                    <td class="fen-cell" title="{{ pos.fen }}">{{ pos.fen_short }} <span class="copy-btn" onclick="copyToClipboard('{{ pos.fen }}')" title="Copy FEN">[copy]</span></td>
+                    <td>{{ pos.test_type }}</td>
+                    <td class="expected-cell">{{ pos.expected_moves }}</td>
+                    {% for engine in engines %}
+                    {% set result = pos.engine_results.get(engine.name, {}) %}
+                    <td class="result-cell {% if result.get('solved') %}result-solved{% elif result.get('timed_out') %}result-timeout{% else %}result-failed{% endif %}"
+                        title="{% if result %}Move: {{ result.get('move_found', '?') }} | Depth: {{ result.get('final_depth', '?') }} | {% if result.get('score_mate') %}Mate in {{ result.get('score_mate') }}{% elif result.get('score_cp') is not none %}{{ result.get('score_cp') }}cp{% else %}?{% endif %}{% endif %}">
+                        {% if result.get('solved') %}
+                            &#10003; {{ "%.1f"|format(result.get('solve_time_ms', 0) / 1000) }}s
+                        {% elif result.get('timed_out') %}
+                            &#10007; T/O
+                        {% elif result %}
+                            &#10007;
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    {% endfor %}
+                    <td>{{ pos.failure_count }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <h3>Summary</h3>
+        <table class="epd-table summary-table">
+            <thead>
+                <tr>
+                    <th>Engine</th>
+                    <th>Solved</th>
+                    <th>%</th>
+                    <th>Avg Time</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for engine in engines %}
+                {% set stats = engine_stats.get(engine.name, {}) %}
+                <tr>
+                    <td>{{ engine.name }}</td>
+                    <td>{{ stats.get('solved', 0) }}/{{ stats.get('total', 0) }}</td>
+                    <td class="{% if stats.get('pct', 0) >= 80 %}result-solved{% elif stats.get('pct', 0) >= 50 %}result-timeout{% else %}result-failed{% endif %}">
+                        {{ "%.1f"|format(stats.get('pct', 0)) }}%
+                    </td>
+                    <td>{{ "%.2f"|format(stats.get('avg_time', 0)) }}s</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        {% else %}
+        <p class="no-data">No test results found for {{ epd_file }}.</p>
+        {% endif %}
+    </div>
+
+    <script>
+    function copyToClipboard(text) {
+        navigator.clipboard.writeText(text).then(function() {
+            // Could show a toast notification here
+        });
+    }
+
+    (function() {
+        const table = document.getElementById('results-table');
+        if (!table) return;
+
+        const headers = table.querySelectorAll('th[data-sort]');
+        let currentSort = { column: null, direction: 'asc' };
+
+        headers.forEach(header => {
+            header.addEventListener('click', () => {
+                const sortKey = header.dataset.sort;
+
+                if (currentSort.column === sortKey) {
+                    currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+                } else {
+                    currentSort.column = sortKey;
+                    currentSort.direction = sortKey === 'id' ? 'asc' : 'desc';
+                }
+
+                sortTable(sortKey, currentSort.direction);
+                updateSortArrows(header, currentSort.direction);
+            });
+        });
+
+        function sortTable(key, direction) {
+            const tbody = table.querySelector('tbody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+
+            rows.sort((a, b) => {
+                let aVal, bVal;
+
+                if (key === 'index' || key === 'failures') {
+                    aVal = parseInt(a.dataset[key]);
+                    bVal = parseInt(b.dataset[key]);
+                } else if (key === 'id' || key === 'type') {
+                    aVal = a.dataset[key].toLowerCase();
+                    bVal = b.dataset[key].toLowerCase();
+                } else if (key.startsWith('engine-')) {
+                    const engineName = key.replace('engine-', '');
+                    // Sort by solved (1) vs not solved (0), then by time
+                    const aSolved = parseInt(a.dataset['engine-' + engineName] || '0');
+                    const bSolved = parseInt(b.dataset['engine-' + engineName] || '0');
+                    if (aSolved !== bSolved) {
+                        aVal = aSolved;
+                        bVal = bSolved;
+                    } else {
+                        aVal = parseInt(a.dataset['time-' + engineName] || '999999');
+                        bVal = parseInt(b.dataset['time-' + engineName] || '999999');
+                    }
+                }
+
+                let comparison = 0;
+                if (aVal < bVal) comparison = -1;
+                if (aVal > bVal) comparison = 1;
+
+                return direction === 'asc' ? comparison : -comparison;
+            });
+
+            rows.forEach(row => tbody.appendChild(row));
+        }
+
+        function updateSortArrows(activeHeader, direction) {
+            headers.forEach(h => {
+                h.classList.remove('sort-asc', 'sort-desc');
+            });
+            activeHeader.classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+        }
+
+        // Filtering
+        const filterResult = document.getElementById('filter-result');
+        const filterEngine = document.getElementById('filter-engine');
+
+        function applyFilters() {
+            const resultFilter = filterResult.value;
+            const engineFilter = filterEngine.value;
+            const tbody = table.querySelector('tbody');
+            const rows = tbody.querySelectorAll('tr');
+
+            rows.forEach(row => {
+                let show = true;
+
+                if (resultFilter !== 'all') {
+                    const failures = parseInt(row.dataset.failures);
+                    const totalEngines = {{ engines|length }};
+                    if (resultFilter === 'failed' && failures === 0) show = false;
+                    if (resultFilter === 'solved' && failures === totalEngines) show = false;
+                }
+
+                if (engineFilter !== 'all') {
+                    const engineSolved = row.dataset['engine-' + engineFilter];
+                    if (resultFilter === 'failed' && engineSolved === '1') show = false;
+                    if (resultFilter === 'solved' && engineSolved === '0') show = false;
+                }
+
+                row.style.display = show ? '' : 'none';
+            });
+        }
+
+        filterResult.addEventListener('change', applyFilters);
+        filterEngine.addEventListener('change', applyFilters);
+    })();
+    </script>
+</body>
+</html>

@@ -63,6 +63,8 @@
                             <input type="hidden" name="hostname" value="{{ hostname or '' }}">
                             <input type="hidden" name="engine_type" value="{{ engine_type or '' }}">
                             <input type="hidden" name="all" value="{{ '1' if not active_only else '' }}">
+                            <input type="hidden" name="sort" value="{{ sort_column or '' }}">
+                            <input type="hidden" name="sort_dir" value="{{ sort_direction or '' }}">
                             <button type="submit" class="reset-btn">Force Recalculate</button>
                         </form>
                     </div>
@@ -70,13 +72,14 @@
 
                 <div class="filter-status">
                     {% if active_only %}
-                        Showing active engines only. <a href="?all=1{% if min_time != db_min_time %}&min_time={{ min_time }}{% endif %}{% if max_time != db_max_time %}&max_time={{ max_time }}{% endif %}{% if hostname %}&hostname={{ hostname }}{% endif %}{% if engine_type %}&engine_type={{ engine_type }}{% endif %}">Show all engines</a>
+                        Showing active engines only. <a href="?all=1{% if min_time != db_min_time %}&min_time={{ min_time }}{% endif %}{% if max_time != db_max_time %}&max_time={{ max_time }}{% endif %}{% if hostname %}&hostname={{ hostname }}{% endif %}{% if engine_type %}&engine_type={{ engine_type }}{% endif %}{% if sort_column %}&sort={{ sort_column }}{% endif %}{% if sort_direction %}&sort_dir={{ sort_direction }}{% endif %}">Show all engines</a>
                     {% else %}
-                        Showing all engines. <a href="/?{% if min_time != db_min_time %}min_time={{ min_time }}&{% endif %}{% if max_time != db_max_time %}max_time={{ max_time }}&{% endif %}{% if hostname %}hostname={{ hostname }}&{% endif %}{% if engine_type %}engine_type={{ engine_type }}{% endif %}">Show active only</a>
+                        Showing all engines. <a href="/?{% if min_time != db_min_time %}min_time={{ min_time }}&{% endif %}{% if max_time != db_max_time %}max_time={{ max_time }}&{% endif %}{% if hostname %}hostname={{ hostname }}&{% endif %}{% if engine_type %}engine_type={{ engine_type }}{% endif %}{% if sort_column %}sort={{ sort_column }}&{% endif %}{% if sort_direction %}sort_dir={{ sort_direction }}&{% endif %}">Show active only</a>
                     {% endif %}
                     | {{ total_engines }} engines
                     | <a href="/engines">Manage Engines</a>
                     | <a href="/cups">Cup Competitions</a>
+                    | <a href="/epd-tests">EPD Tests</a>
                     | Auto-refresh: 30s
                     {% if hostname or engine_type or min_time != db_min_time or max_time != db_max_time %}
                     | <span class="filter-active">Filters active</span>
@@ -178,10 +181,24 @@
 
         window.resetFilters = function() {
             const params = new URLSearchParams();
-            const showAll = new URLSearchParams(window.location.search).get('all');
+            const currentParams = new URLSearchParams(window.location.search);
+
+            // Preserve 'all' parameter
+            const showAll = currentParams.get('all');
             if (showAll) {
                 params.set('all', showAll);
             }
+
+            // Preserve sort parameters
+            const sort = currentParams.get('sort');
+            const sortDir = currentParams.get('sort_dir');
+            if (sort) {
+                params.set('sort', sort);
+                if (sortDir) {
+                    params.set('sort_dir', sortDir);
+                }
+            }
+
             const queryString = params.toString();
             window.location.href = queryString ? '?' + queryString : '/';
         };
@@ -191,7 +208,22 @@
         if (!table) return;
 
         const headers = table.querySelectorAll('th.sortable');
-        let currentSort = { column: null, direction: 'asc' };
+
+        // Read initial sort from URL params
+        const urlParams = new URLSearchParams(window.location.search);
+        let currentSort = {
+            column: urlParams.get('sort') || null,
+            direction: urlParams.get('sort_dir') || 'asc'
+        };
+
+        // Apply initial sort from URL if present
+        if (currentSort.column) {
+            sortTable(currentSort.column, currentSort.direction);
+            const activeHeader = document.querySelector(`th[data-sort="${currentSort.column}"]`);
+            if (activeHeader) {
+                updateSortArrows(activeHeader, currentSort.direction);
+            }
+        }
 
         headers.forEach(header => {
             header.addEventListener('click', () => {
@@ -207,6 +239,13 @@
 
                 sortTable(sortKey, currentSort.direction);
                 updateSortArrows(header, currentSort.direction);
+
+                // Update URL with sort params (without page reload)
+                const params = new URLSearchParams(window.location.search);
+                params.set('sort', currentSort.column);
+                params.set('sort_dir', currentSort.direction);
+                const newUrl = '?' + params.toString();
+                window.history.replaceState({}, '', newUrl);
             });
         });
 
