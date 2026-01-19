@@ -4,11 +4,10 @@ SPSA Master Controller
 Orchestrates the SPSA parameter tuning process:
 1. Reads current parameters from params.toml
 2. Generates perturbed parameter sets (plus/minus)
-3. Builds engine binaries
-4. Creates iteration record in database
-5. Waits for workers to complete games
-6. Calculates gradient and updates parameters
-7. Repeats
+3. Creates iteration record in database (workers build engines from params)
+4. Waits for workers to complete games
+5. Calculates gradient and updates parameters
+6. Repeats
 
 Usage:
     cd chess-compete
@@ -34,8 +33,6 @@ try:
     import tomllib
 except ImportError:
     import tomli as tomllib
-
-from compete.spsa.build import build_spsa_engines, get_rusty_rival_path
 
 
 def load_params() -> dict:
@@ -295,10 +292,6 @@ def run_master():
     print(f"Games per iteration: {config['games']['games_per_iteration']}")
     print(f"Time control: {config['time_control']['timelow']}-{config['time_control']['timehigh']}s/move")
     print(f"Max iterations: {config['spsa']['max_iterations']}")
-
-    # Get rusty-rival path from config
-    src_path = get_rusty_rival_path(config)
-    print(f"Rusty-rival source: {src_path}")
     print(f"{'='*60}")
 
     # SPSA hyperparameters
@@ -345,22 +338,12 @@ def run_master():
             sign = '+' if signs[name] > 0 else '-'
             print(f"  {name}: {base:.2f} -> {sign} [{minus:.2f}, {plus:.2f}]")
 
-        # Build engines
-        print("\nBuilding engines...")
-        try:
-            plus_path, minus_path = build_spsa_engines(
-                src_path, output_base,
-                plus_params, minus_params,
-                config['build']['plus_engine_name'],
-                config['build']['minus_engine_name']
-            )
-        except Exception as e:
-            print(f"ERROR: Build failed: {e}")
-            print("Skipping iteration...")
-            continue
-
-        print(f"  Plus:  {plus_path}")
-        print(f"  Minus: {minus_path}")
+        # Compute expected engine paths (workers will build from params)
+        binary_name = 'rusty-rival.exe' if os.name == 'nt' else 'rusty-rival'
+        plus_dir = output_base / config['build']['plus_engine_name']
+        minus_dir = output_base / config['build']['minus_engine_name']
+        plus_path = plus_dir / binary_name
+        minus_path = minus_dir / binary_name
 
         # Create iteration record
         print("\nCreating iteration record...")
