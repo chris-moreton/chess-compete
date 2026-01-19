@@ -703,32 +703,35 @@ def get_dashboard_data(active_only=True, min_time_ms=0, max_time_ms=999999999, h
         engine_type=engine_type
     )
 
-    # Build grid first (needs engines in ELO order for stability calculation)
-    grid = build_h2h_grid(engines, h2h_raw)
-
-    # Now apply requested sort to both engines and grid together
-    if sort_column and sort_column != 'elo':
-        # Create combined list for sorting
-        combined = list(zip(engines, grid))
-
+    # Apply requested sort to engines BEFORE building grid
+    # (Grid cells must be built with engines in final display order)
+    # Exception: stability is calculated during grid build, so handle specially
+    if sort_column == 'stability':
+        # Build grid first to get stability values
+        temp_grid = build_h2h_grid(engines, h2h_raw)
+        # Create engine->stability mapping
+        stability_map = {e['engine'].id: temp_grid[i].get('stability', 0) for i, e in enumerate(engines)}
+        # Sort engines by stability
+        reverse = sort_direction != 'asc'
+        engines.sort(key=lambda x: stability_map.get(x['engine'].id, 0), reverse=reverse)
+        # Now rebuild grid with sorted engines
+        grid = build_h2h_grid(engines, h2h_raw)
+    elif sort_column and sort_column != 'elo':
         # Define sort key based on column
         if sort_column == 'name':
-            key_func = lambda x: x[0]['engine'].name.lower()
+            key_func = lambda x: x['engine'].name.lower()
             default_reverse = False
         elif sort_column == 'bayes':
-            key_func = lambda x: x[1].get('bayes_elo') or 0
+            key_func = lambda x: x.get('bayes_elo') or 0
             default_reverse = True
         elif sort_column == 'ordo':
-            key_func = lambda x: x[1].get('ordo') or 0
-            default_reverse = True
-        elif sort_column == 'stability':
-            key_func = lambda x: x[1].get('stability', 0)
+            key_func = lambda x: x.get('ordo') or 0
             default_reverse = True
         elif sort_column == 'games':
-            key_func = lambda x: x[1].get('games_played', 0)
+            key_func = lambda x: x.get('games_played') or 0
             default_reverse = True
         else:
-            key_func = lambda x: x[0]['elo']
+            key_func = lambda x: x['elo']
             default_reverse = True
 
         # Determine sort direction
@@ -738,23 +741,16 @@ def get_dashboard_data(active_only=True, min_time_ms=0, max_time_ms=999999999, h
         elif sort_direction == 'desc':
             reverse = True
 
-        combined.sort(key=key_func, reverse=reverse)
-        engines, grid = zip(*combined)
-        engines = list(engines)
-        grid = list(grid)
-
-        # Update ranks in grid
-        for i, row in enumerate(grid):
-            row['rank'] = i + 1
+        engines.sort(key=key_func, reverse=reverse)
+        # Build grid with sorted engines
+        grid = build_h2h_grid(engines, h2h_raw)
     elif sort_direction == 'asc':
-        # ELO column with ascending order (reverse the default)
-        combined = list(zip(engines, grid))
-        combined.sort(key=lambda x: x[0]['elo'], reverse=False)
-        engines, grid = zip(*combined)
-        engines = list(engines)
-        grid = list(grid)
-        for i, row in enumerate(grid):
-            row['rank'] = i + 1
+        # ELO column with ascending order (reverse the default descending)
+        engines.sort(key=lambda x: x['elo'], reverse=False)
+        grid = build_h2h_grid(engines, h2h_raw)
+    else:
+        # Default: ELO descending (engines already sorted this way)
+        grid = build_h2h_grid(engines, h2h_raw)
 
     column_headers = [(i + 1, e['engine'].name) for i, e in enumerate(engines)]
     last_played = get_last_played_engines()
