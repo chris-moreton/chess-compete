@@ -167,9 +167,10 @@ def build_engine(src_path: Path, output_path: Path, params: dict = None) -> bool
             modified_content = apply_parameters(original_content, params)
             write_engine_constants(src_path, modified_content)
 
-        # Build with native optimizations
+        # Build with native optimizations and sufficient stack size
         env = os.environ.copy()
         env['RUSTFLAGS'] = '-C target-cpu=native'
+        env['RUST_MIN_STACK'] = '4097152'
 
         result = subprocess.run(
             ['cargo', 'build', '--release'],
