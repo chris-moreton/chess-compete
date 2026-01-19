@@ -3,8 +3,17 @@ Command-line interface for the chess engine competition harness.
 """
 
 import argparse
+import multiprocessing
 import sys
 from pathlib import Path
+
+# Fix for macOS: use 'fork' start method for multiprocessing
+# macOS switched to 'spawn' in Python 3.8 which causes issues with ProcessPoolExecutor
+if sys.platform == 'darwin':
+    try:
+        multiprocessing.set_start_method('fork')
+    except RuntimeError:
+        pass  # Already set
 
 from compete.engine_manager import (
     get_engines_dir,
