@@ -157,12 +157,13 @@ def wait_for_completion(iteration_id: int, poll_interval: int = 30) -> dict:
     Returns the completed iteration data.
     """
     from web.app import create_app
+    from web.database import db
     from web.models import SpsaIteration
 
     while True:
         app = create_app()
         with app.app_context():
-            iteration = SpsaIteration.query.get(iteration_id)
+            iteration = db.session.get(SpsaIteration, iteration_id)
             if not iteration:
                 raise RuntimeError(f"Iteration {iteration_id} not found!")
 
@@ -259,7 +260,7 @@ def mark_iteration_complete(iteration_id: int, gradient: dict, elo_diff: float):
 
     app = create_app()
     with app.app_context():
-        iteration = SpsaIteration.query.get(iteration_id)
+        iteration = db.session.get(SpsaIteration, iteration_id)
         iteration.status = 'complete'
         iteration.gradient_estimate = gradient
         iteration.elo_diff = elo_diff
