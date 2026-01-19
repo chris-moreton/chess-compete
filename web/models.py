@@ -232,3 +232,51 @@ class EpdTestResult(db.Model):
     def __repr__(self):
         status = 'SOLVED' if self.solved else 'FAILED'
         return f'<EpdTestResult {self.position_id}: {status}>'
+
+
+class SpsaIteration(db.Model):
+    """A single SPSA tuning iteration tracking games between perturbed engine pairs."""
+    __tablename__ = 'spsa_iterations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    iteration_number = db.Column(db.Integer, nullable=False)
+
+    # Engine binaries (paths to shared location, not registered engines)
+    plus_engine_path = db.Column(db.String(500), nullable=False)
+    minus_engine_path = db.Column(db.String(500), nullable=False)
+
+    # Time control (consistent with other compete modes: timelow/timehigh)
+    timelow_ms = db.Column(db.Integer, nullable=False)   # e.g., 250 (0.25s)
+    timehigh_ms = db.Column(db.Integer, nullable=False)  # e.g., 1000 (1.0s)
+
+    # Game tracking (workers increment these atomically)
+    target_games = db.Column(db.Integer, nullable=False, default=150)
+    games_played = db.Column(db.Integer, nullable=False, default=0)
+    plus_wins = db.Column(db.Integer, nullable=False, default=0)
+    minus_wins = db.Column(db.Integer, nullable=False, default=0)
+    draws = db.Column(db.Integer, nullable=False, default=0)
+
+    # Status: pending (waiting for workers), in_progress, complete
+    status = db.Column(db.String(20), nullable=False, default='pending')
+
+    # Parameter snapshot (JSON for reproducibility and analysis)
+    base_parameters = db.Column(db.JSON)       # θ values before perturbation
+    plus_parameters = db.Column(db.JSON)       # θ + δ values
+    minus_parameters = db.Column(db.JSON)      # θ - δ values
+    perturbation_signs = db.Column(db.JSON)    # +1 or -1 for each parameter
+
+    # Results (filled when complete)
+    gradient_estimate = db.Column(db.JSON)     # Calculated gradient per parameter
+    elo_diff = db.Column(db.Numeric(7, 2))     # Plus vs minus Elo difference
+
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    completed_at = db.Column(db.DateTime)
+
+    __table_args__ = (
+        db.Index('idx_spsa_iteration_number', 'iteration_number'),
+        db.Index('idx_spsa_status', 'status'),
+    )
+
+    def __repr__(self):
+        return f'<SpsaIteration {self.iteration_number}: {self.status} ({self.games_played}/{self.target_games})>'

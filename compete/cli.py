@@ -89,6 +89,10 @@ def main():
                         help="Filter engines by type (rusty or stockfish)")
     parser.add_argument("--includeinactive", action="store_true",
                         help="Include inactive engines in cup competition")
+    parser.add_argument("--spsa", action="store_true",
+                        help="SPSA worker mode: poll for iterations and run games")
+    parser.add_argument("--spsa-batch", type=int, default=10, metavar="N",
+                        help="SPSA: games per batch before database update (default: 10)")
 
     args = parser.parse_args()
 
@@ -226,7 +230,15 @@ def main():
             print("Error: Failed to initialize some engines")
             sys.exit(1)
 
-    if args.cup:
+    if args.spsa:
+        # SPSA worker mode: poll for iterations and run games
+        from compete.spsa import run_spsa_worker
+        run_spsa_worker(
+            concurrency=args.concurrency,
+            batch_size=args.spsa_batch,
+            poll_interval=10
+        )
+    elif args.cup:
         # Cup mode: knockout tournament with seeded brackets
         if args.engines:
             print("Warning: Engine arguments ignored in cup mode (uses active engines by Ordo rating)")
