@@ -965,6 +965,8 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
     else:
         print(f"Time: {time_per_move}s/move")
     print(f"Opening book: {len(OPENING_BOOK)} positions (random selection)")
+    if concurrency > 1:
+        print(f"Concurrency: {concurrency} games in parallel")
     print(f"{'='*70}")
 
     game_num = 0
@@ -975,17 +977,18 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
     session_points = {}  # engine -> points this session
     session_start_elo = {}  # engine -> Elo at start of session
 
-    for match_idx in range(num_matches):
-        # Re-fetch engines before each match (allows live enable/disable)
+    hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
+
+    def refresh_engines_and_check():
+        """Re-fetch engines and handle changes. Returns current engine list or None if < 2."""
+        nonlocal all_engines
         current_engines = get_active_engines(engine_dir, engine_type, include_inactive)
 
-        # Check if engine list changed
         if set(current_engines) != set(all_engines):
             added = set(current_engines) - set(all_engines)
             removed = set(all_engines) - set(current_engines)
             if added:
                 print(f"\n[Engine(s) enabled: {', '.join(sorted(added))}]")
-                # Initialize newly added engines in elo_ratings
                 for engine in added:
                     if engine not in elo_ratings:
                         initial_elo = get_initial_elo(engine)
@@ -994,106 +997,257 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
                 print(f"\n[Engine(s) disabled: {', '.join(sorted(removed))}]")
             all_engines = current_engines
 
-        # Skip if not enough engines
         if len(all_engines) < 2:
-            print(f"\nWarning: Only {len(all_engines)} active engine(s), need at least 2. Waiting...")
-            time.sleep(5)
-            continue
+            return None
+        return all_engines
 
-        # Pick two engines (weighted or uniform random)
+    def pick_engines():
+        """Pick two engines based on weighted or uniform random selection."""
         if weighted:
-            # Weight = 1 / (games + 1) - fewer games means higher weight
             weights = [1.0 / (elo_ratings[e]["games"] + 1) for e in all_engines]
             engine1 = random.choices(all_engines, weights=weights, k=1)[0]
-            # Pick engine2 purely at random (not weighted) for better Elo calibration
             remaining = [e for e in all_engines if e != engine1]
             engine2 = random.choice(remaining)
         else:
             engine1, engine2 = random.sample(all_engines, 2)
-        engine1_path, engine1_uci = get_engine_info(engine1, engine_dir)
-        engine2_path, engine2_uci = get_engine_info(engine2, engine_dir)
+        return engine1, engine2
 
-        # Select time for this match (random from range, or fixed)
-        if use_time_range:
-            match_time = random.uniform(time_low, time_high)
-        else:
-            match_time = time_per_move
+    def process_game_result(game_result, engine1, engine2):
+        """Process a completed game result and update session stats."""
+        nonlocal game_num
 
-        print(f"\n--- Match {match_idx + 1}/{num_matches}: {engine1} vs {engine2} ({match_time:.2f}s/move) ---\n")
-
-        # Game 1: engine1 as white
         game_num += 1
-        opening_fen, opening_name = random.choice(OPENING_BOOK)
-
-        # Capture starting ELO before first game for each engine
-        for eng in [engine1, engine2]:
-            if eng not in session_start_elo:
-                ratings = load_elo_ratings()
-                session_start_elo[eng] = ratings.get(eng, {"elo": get_initial_elo(eng)})["elo"]
-
-        result, game = play_game(engine1_path, engine2_path,
-                                  engine1, engine2,
-                                  match_time, opening_fen, opening_name,
-                                  engine1_uci, engine2_uci)
-
-        # Save to database with full PGN
-        hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
-        save_game_to_db(engine1, engine2, result, f"{match_time:.2f}s/move",
-                        opening_name, opening_fen, str(game),
-                        time_per_move_ms=int(match_time * 1000),
-                        hostname=hostname)
+        white = game_result.white_name
+        black = game_result.black_name
+        result = game_result.result
 
         # Track session stats
         for eng in [engine1, engine2]:
             session_engines.add(eng)
-            session_games[eng] = session_games.get(eng, 0) + 1
+            if eng not in session_games:
+                session_games[eng] = 0
+            session_games[eng] += 1
             if eng not in session_points:
                 session_points[eng] = 0.0
 
         if result == "1-0":
-            session_points[engine1] += 1.0
+            session_points[white] += 1.0
         elif result == "0-1":
-            session_points[engine2] += 1.0
+            session_points[black] += 1.0
         elif result == "1/2-1/2":
-            session_points[engine1] += 0.5
-            session_points[engine2] += 0.5
+            session_points[white] += 0.5
+            session_points[black] += 0.5
 
-        print(f"Game {game_num:3d}/{total_games}: {engine1} (W) vs {engine2} -> {result}  [{opening_name}]")
-        print_league_table(session_engines, session_games, session_points,
-                           0, competitors_only=True, game_num=game_num, total_games=total_games,
-                           session_start_elo=session_start_elo)
+        # NPS info
+        nps_info = ""
+        if game_result.white_nps or game_result.black_nps:
+            w_nps = f"{game_result.white_nps // 1000}k" if game_result.white_nps else "?"
+            b_nps = f"{game_result.black_nps // 1000}k" if game_result.black_nps else "?"
+            nps_info = f" [NPS: {w_nps}/{b_nps}]"
 
-        # Game 2: engine2 as white (same time control as game 1)
-        game_num += 1
-        opening_fen, opening_name = random.choice(OPENING_BOOK)
+        print(f"Game {game_num:3d}/{total_games}: {white} vs {black} -> {result}{nps_info}")
 
-        result, game = play_game(engine2_path, engine1_path,
-                                  engine2, engine1,
-                                  match_time, opening_fen, opening_name,
-                                  engine2_uci, engine1_uci)
+    if concurrency > 1:
+        # Parallel execution: batch matches and run games concurrently
+        match_idx = 0
+        while match_idx < num_matches:
+            # Refresh engine list periodically
+            engines = refresh_engines_and_check()
+            if engines is None:
+                print(f"\nWarning: Only {len(all_engines)} active engine(s), need at least 2. Waiting...")
+                time.sleep(5)
+                continue
 
-        # Save to database with full PGN
-        hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
-        save_game_to_db(engine2, engine1, result, f"{match_time:.2f}s/move",
-                        opening_name, opening_fen, str(game),
-                        time_per_move_ms=int(match_time * 1000),
-                        hostname=hostname)
+            # Determine batch size (number of matches to run in parallel)
+            # Each match = 2 games, so batch_size matches = batch_size * 2 games
+            batch_size = min(concurrency // 2 or 1, num_matches - match_idx)
+            game_configs = []
 
-        # Track session stats
-        for eng in [engine1, engine2]:
-            session_games[eng] = session_games.get(eng, 0) + 1
-        if result == "1-0":
-            session_points[engine2] += 1.0
-        elif result == "0-1":
-            session_points[engine1] += 1.0
-        elif result == "1/2-1/2":
-            session_points[engine1] += 0.5
-            session_points[engine2] += 0.5
+            print(f"\n--- Batch: Matches {match_idx + 1}-{match_idx + batch_size} of {num_matches} ---\n")
 
-        print(f"Game {game_num:3d}/{total_games}: {engine2} (W) vs {engine1} -> {result}  [{opening_name}]")
-        print_league_table(session_engines, session_games, session_points,
-                           0, competitors_only=True, game_num=game_num, total_games=total_games,
-                           session_start_elo=session_start_elo)
+            # Generate configs for this batch
+            for i in range(batch_size):
+                engine1, engine2 = pick_engines()
+                engine1_path, engine1_uci = get_engine_info(engine1, engine_dir)
+                engine2_path, engine2_uci = get_engine_info(engine2, engine_dir)
+
+                if use_time_range:
+                    match_time = random.uniform(time_low, time_high)
+                else:
+                    match_time = time_per_move
+
+                # Capture starting ELO
+                for eng in [engine1, engine2]:
+                    if eng not in session_start_elo:
+                        ratings = load_elo_ratings()
+                        session_start_elo[eng] = ratings.get(eng, {"elo": get_initial_elo(eng)})["elo"]
+
+                # Convert paths to strings for pickling
+                e1_path_str = str(engine1_path) if not isinstance(engine1_path, list) else engine1_path
+                e2_path_str = str(engine2_path) if not isinstance(engine2_path, list) else engine2_path
+
+                # Game 1: engine1 as white
+                opening_fen1, opening_name1 = random.choice(OPENING_BOOK)
+                config1 = GameConfig(
+                    game_index=len(game_configs),
+                    white_name=engine1, black_name=engine2,
+                    white_path=e1_path_str, black_path=e2_path_str,
+                    white_uci_options=engine1_uci, black_uci_options=engine2_uci,
+                    time_per_move=match_time,
+                    opening_fen=opening_fen1, opening_name=opening_name1,
+                    is_engine1_white=True
+                )
+                game_configs.append((config1, engine1, engine2))
+
+                # Game 2: engine2 as white
+                opening_fen2, opening_name2 = random.choice(OPENING_BOOK)
+                config2 = GameConfig(
+                    game_index=len(game_configs),
+                    white_name=engine2, black_name=engine1,
+                    white_path=e2_path_str, black_path=e1_path_str,
+                    white_uci_options=engine2_uci, black_uci_options=engine1_uci,
+                    time_per_move=match_time,
+                    opening_fen=opening_fen2, opening_name=opening_name2,
+                    is_engine1_white=False
+                )
+                game_configs.append((config2, engine1, engine2))
+
+            # Run games in parallel
+            with ProcessPoolExecutor(max_workers=concurrency) as executor:
+                futures = {executor.submit(play_game_from_config, cfg): (cfg, e1, e2)
+                           for cfg, e1, e2 in game_configs}
+
+                for future in as_completed(futures):
+                    try:
+                        game_result = future.result()
+                        cfg, engine1, engine2 = futures[future]
+
+                        # Save to database
+                        save_game_to_db(
+                            game_result.white_name, game_result.black_name,
+                            game_result.result, f"{game_result.time_per_move:.2f}s/move",
+                            game_result.opening_name, game_result.opening_fen,
+                            game_result.pgn,
+                            time_per_move_ms=int(game_result.time_per_move * 1000),
+                            hostname=hostname
+                        )
+
+                        process_game_result(game_result, engine1, engine2)
+
+                    except Exception as e:
+                        print(f"  Error in game: {e}", flush=True)
+                        game_num += 1
+
+            # Print standings after batch
+            print_league_table(session_engines, session_games, session_points,
+                               0, competitors_only=True, game_num=game_num, total_games=total_games,
+                               session_start_elo=session_start_elo)
+
+            match_idx += batch_size
+
+    else:
+        # Sequential execution (original behavior)
+        for match_idx in range(num_matches):
+            engines = refresh_engines_and_check()
+            if engines is None:
+                print(f"\nWarning: Only {len(all_engines)} active engine(s), need at least 2. Waiting...")
+                time.sleep(5)
+                continue
+
+            engine1, engine2 = pick_engines()
+            engine1_path, engine1_uci = get_engine_info(engine1, engine_dir)
+            engine2_path, engine2_uci = get_engine_info(engine2, engine_dir)
+
+            if use_time_range:
+                match_time = random.uniform(time_low, time_high)
+            else:
+                match_time = time_per_move
+
+            print(f"\n--- Match {match_idx + 1}/{num_matches}: {engine1} vs {engine2} ({match_time:.2f}s/move) ---\n")
+
+            # Capture starting ELO
+            for eng in [engine1, engine2]:
+                if eng not in session_start_elo:
+                    ratings = load_elo_ratings()
+                    session_start_elo[eng] = ratings.get(eng, {"elo": get_initial_elo(eng)})["elo"]
+
+            # Game 1: engine1 as white
+            opening_fen, opening_name = random.choice(OPENING_BOOK)
+            result, game = play_game(engine1_path, engine2_path,
+                                      engine1, engine2,
+                                      match_time, opening_fen, opening_name,
+                                      engine1_uci, engine2_uci)
+
+            save_game_to_db(engine1, engine2, result, f"{match_time:.2f}s/move",
+                            opening_name, opening_fen, str(game),
+                            time_per_move_ms=int(match_time * 1000),
+                            hostname=hostname)
+
+            game_num += 1
+            for eng in [engine1, engine2]:
+                session_engines.add(eng)
+                session_games[eng] = session_games.get(eng, 0) + 1
+                if eng not in session_points:
+                    session_points[eng] = 0.0
+
+            if result == "1-0":
+                session_points[engine1] += 1.0
+            elif result == "0-1":
+                session_points[engine2] += 1.0
+            elif result == "1/2-1/2":
+                session_points[engine1] += 0.5
+                session_points[engine2] += 0.5
+
+            # NPS from game
+            white_nps = int(game.headers.get("WhiteNPS", 0)) or None
+            black_nps = int(game.headers.get("BlackNPS", 0)) or None
+            nps_info = ""
+            if white_nps or black_nps:
+                w_nps = f"{white_nps // 1000}k" if white_nps else "?"
+                b_nps = f"{black_nps // 1000}k" if black_nps else "?"
+                nps_info = f" [NPS: {w_nps}/{b_nps}]"
+
+            print(f"Game {game_num:3d}/{total_games}: {engine1} (W) vs {engine2} -> {result}{nps_info}  [{opening_name}]")
+            print_league_table(session_engines, session_games, session_points,
+                               0, competitors_only=True, game_num=game_num, total_games=total_games,
+                               session_start_elo=session_start_elo)
+
+            # Game 2: engine2 as white
+            opening_fen, opening_name = random.choice(OPENING_BOOK)
+            result, game = play_game(engine2_path, engine1_path,
+                                      engine2, engine1,
+                                      match_time, opening_fen, opening_name,
+                                      engine2_uci, engine1_uci)
+
+            save_game_to_db(engine2, engine1, result, f"{match_time:.2f}s/move",
+                            opening_name, opening_fen, str(game),
+                            time_per_move_ms=int(match_time * 1000),
+                            hostname=hostname)
+
+            game_num += 1
+            for eng in [engine1, engine2]:
+                session_games[eng] = session_games.get(eng, 0) + 1
+            if result == "1-0":
+                session_points[engine2] += 1.0
+            elif result == "0-1":
+                session_points[engine1] += 1.0
+            elif result == "1/2-1/2":
+                session_points[engine1] += 0.5
+                session_points[engine2] += 0.5
+
+            # NPS from game
+            white_nps = int(game.headers.get("WhiteNPS", 0)) or None
+            black_nps = int(game.headers.get("BlackNPS", 0)) or None
+            nps_info = ""
+            if white_nps or black_nps:
+                w_nps = f"{white_nps // 1000}k" if white_nps else "?"
+                b_nps = f"{black_nps // 1000}k" if black_nps else "?"
+                nps_info = f" [NPS: {w_nps}/{b_nps}]"
+
+            print(f"Game {game_num:3d}/{total_games}: {engine2} (W) vs {engine1} -> {result}{nps_info}  [{opening_name}]")
+            print_league_table(session_engines, session_games, session_points,
+                               0, competitors_only=True, game_num=game_num, total_games=total_games,
+                               session_start_elo=session_start_elo)
 
     # Print final standings
     print(f"\n{'='*70}")
