@@ -265,17 +265,44 @@ def mark_iteration_complete(iteration_id: int, gradient: dict, elo_diff: float):
         db.session.commit()
 
 
-def get_last_iteration_number() -> int:
-    """Get the last completed iteration number, or 0 if none."""
+def get_last_complete_iteration_number() -> int:
+    """Get the last COMPLETED iteration number, or 0 if none."""
     from web.app import create_app
     from web.models import SpsaIteration
 
     app = create_app()
     with app.app_context():
-        last = SpsaIteration.query.order_by(SpsaIteration.iteration_number.desc()).first()
+        last = SpsaIteration.query.filter(
+            SpsaIteration.status == 'complete'
+        ).order_by(SpsaIteration.iteration_number.desc()).first()
         if last:
             return last.iteration_number
         return 0
+
+
+def get_incomplete_iteration() -> dict | None:
+    """Get an incomplete iteration that needs to be resumed, or None."""
+    from web.app import create_app
+    from web.models import SpsaIteration
+
+    app = create_app()
+    with app.app_context():
+        iteration = SpsaIteration.query.filter(
+            SpsaIteration.status.in_(['pending', 'in_progress']),
+            SpsaIteration.games_played < SpsaIteration.target_games
+        ).order_by(SpsaIteration.iteration_number.desc()).first()
+
+        if not iteration:
+            return None
+
+        return {
+            'id': iteration.id,
+            'iteration_number': iteration.iteration_number,
+            'games_played': iteration.games_played,
+            'target_games': iteration.target_games,
+            'base_parameters': iteration.base_parameters,
+            'perturbation_signs': iteration.perturbation_signs,
+        }
 
 
 def run_master():
@@ -308,13 +335,20 @@ def run_master():
     if not output_base.is_absolute():
         output_base = CHESS_COMPETE_DIR / output_base
 
-    # Get starting iteration
-    start_iteration = get_last_iteration_number() + 1
-    print(f"\nStarting from iteration {start_iteration}")
-
     print("\nCurrent parameter values:")
     for name, cfg in params.items():
         print(f"  {name}: {cfg['value']} (range: {cfg['min']}-{cfg['max']}, step: {cfg['step']})")
+
+    # Check for incomplete iteration to resume
+    incomplete = get_incomplete_iteration()
+    if incomplete:
+        print(f"\nResuming incomplete iteration {incomplete['iteration_number']} ({incomplete['games_played']}/{incomplete['target_games']} games)")
+        start_iteration = incomplete['iteration_number']
+        resume_iteration_id = incomplete['id']
+    else:
+        start_iteration = get_last_complete_iteration_number() + 1
+        resume_iteration_id = None
+        print(f"\nStarting from iteration {start_iteration}")
 
     # Main loop
     for k in range(start_iteration, max_iterations + 1):
@@ -327,31 +361,38 @@ def run_master():
         c_k = c / (k ** gamma)
         print(f"Coefficients: a_k={a_k:.4f}, c_k={c_k:.4f}")
 
-        # Generate perturbed parameters
-        plus_params, minus_params, signs = generate_perturbations(params, c_k)
+        # Check if we're resuming this iteration or creating new
+        if resume_iteration_id is not None and k == start_iteration:
+            # Resuming - just wait for completion
+            iteration_id = resume_iteration_id
+            print(f"\nResuming iteration ID: {iteration_id}")
+            resume_iteration_id = None  # Clear so next iteration creates new
+        else:
+            # Generate perturbed parameters
+            plus_params, minus_params, signs = generate_perturbations(params, c_k)
 
-        print("\nPerturbations:")
-        for name in params:
-            base = params[name]['value']
-            plus = plus_params[name]
-            minus = minus_params[name]
-            sign = '+' if signs[name] > 0 else '-'
-            print(f"  {name}: {base:.2f} -> {sign} [{minus:.2f}, {plus:.2f}]")
+            print("\nPerturbations:")
+            for name in params:
+                base = params[name]['value']
+                plus = plus_params[name]
+                minus = minus_params[name]
+                sign = '+' if signs[name] > 0 else '-'
+                print(f"  {name}: {base:.2f} -> {sign} [{minus:.2f}, {plus:.2f}]")
 
-        # Compute expected engine paths (workers will build from params)
-        binary_name = 'rusty-rival.exe' if os.name == 'nt' else 'rusty-rival'
-        plus_dir = output_base / config['build']['plus_engine_name']
-        minus_dir = output_base / config['build']['minus_engine_name']
-        plus_path = plus_dir / binary_name
-        minus_path = minus_dir / binary_name
+            # Compute expected engine paths (workers will build from params)
+            binary_name = 'rusty-rival.exe' if os.name == 'nt' else 'rusty-rival'
+            plus_dir = output_base / config['build']['plus_engine_name']
+            minus_dir = output_base / config['build']['minus_engine_name']
+            plus_path = plus_dir / binary_name
+            minus_path = minus_dir / binary_name
 
-        # Create iteration record
-        print("\nCreating iteration record...")
-        iteration_id = create_iteration(
-            k, str(plus_path), str(minus_path),
-            config, params, plus_params, minus_params, signs
-        )
-        print(f"  Iteration ID: {iteration_id}")
+            # Create iteration record
+            print("\nCreating iteration record...")
+            iteration_id = create_iteration(
+                k, str(plus_path), str(minus_path),
+                config, params, plus_params, minus_params, signs
+            )
+            print(f"  Iteration ID: {iteration_id}")
 
         # Wait for workers
         print("\nWaiting for workers to complete games...")
