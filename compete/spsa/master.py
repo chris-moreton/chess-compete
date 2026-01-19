@@ -287,9 +287,9 @@ def get_incomplete_iteration() -> dict | None:
 
     app = create_app()
     with app.app_context():
+        # Find any iteration that's not marked complete
         iteration = SpsaIteration.query.filter(
-            SpsaIteration.status.in_(['pending', 'in_progress']),
-            SpsaIteration.games_played < SpsaIteration.target_games
+            SpsaIteration.status.in_(['pending', 'in_progress'])
         ).order_by(SpsaIteration.iteration_number.desc()).first()
 
         if not iteration:
@@ -300,6 +300,9 @@ def get_incomplete_iteration() -> dict | None:
             'iteration_number': iteration.iteration_number,
             'games_played': iteration.games_played,
             'target_games': iteration.target_games,
+            'plus_wins': iteration.plus_wins,
+            'minus_wins': iteration.minus_wins,
+            'draws': iteration.draws,
             'base_parameters': iteration.base_parameters,
             'perturbation_signs': iteration.perturbation_signs,
         }
@@ -363,10 +366,43 @@ def run_master():
 
         # Check if we're resuming this iteration or creating new
         if resume_iteration_id is not None and k == start_iteration:
-            # Resuming - just wait for completion
             iteration_id = resume_iteration_id
-            print(f"\nResuming iteration ID: {iteration_id}")
             resume_iteration_id = None  # Clear so next iteration creates new
+
+            # Check if games are already complete (crash after games but before marking complete)
+            if incomplete['games_played'] >= incomplete['target_games']:
+                print(f"\nIteration {k} games already complete ({incomplete['games_played']}/{incomplete['target_games']})")
+                print("Finalizing interrupted iteration...")
+                results = {
+                    'id': iteration_id,
+                    'games_played': incomplete['games_played'],
+                    'plus_wins': incomplete['plus_wins'],
+                    'minus_wins': incomplete['minus_wins'],
+                    'draws': incomplete['draws'],
+                    'base_parameters': incomplete['base_parameters'],
+                    'perturbation_signs': incomplete['perturbation_signs'],
+                }
+                # Skip to gradient calculation (don't wait for games)
+                gradient, elo_diff = calculate_gradient(results, params, c_k)
+                print(f"\nResults: Elo diff = {elo_diff:+.1f}")
+                print("\nGradient estimates:")
+                for name, g in gradient.items():
+                    print(f"  {name}: {g:+.4f}")
+                # Update and save params
+                print("\nUpdating parameters:")
+                old_values = {name: cfg['value'] for name, cfg in params.items()}
+                params = update_parameters(params, gradient, a_k)
+                for name, cfg in params.items():
+                    old = old_values[name]
+                    new = cfg['value']
+                    delta = new - old
+                    print(f"  {name}: {old:.2f} -> {new:.2f} ({delta:+.4f})")
+                save_params(params)
+                print("\nSaved updated parameters to params.toml")
+                mark_iteration_complete(iteration_id, gradient, elo_diff)
+                continue  # Move to next iteration
+            else:
+                print(f"\nResuming iteration ID: {iteration_id} ({incomplete['games_played']}/{incomplete['target_games']} games)")
         else:
             # Generate perturbed parameters
             plus_params, minus_params, signs = generate_perturbations(params, c_k)
