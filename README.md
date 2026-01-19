@@ -10,11 +10,13 @@ A comprehensive engine vs engine testing harness with Elo tracking, automatic en
 2. [Setup](#setup)
 3. [Engine Management](#engine-management)
 4. [Competition Modes](#competition-modes)
-5. [Command Reference](#command-reference)
-6. [Elo Rating System](#elo-rating-system)
-7. [Web Dashboard](#web-dashboard)
-8. [Development](#development)
-9. [Troubleshooting](#troubleshooting)
+5. [Parallel Execution](#parallel-execution)
+6. [SPSA Tuning](#spsa-tuning)
+7. [Command Reference](#command-reference)
+8. [Elo Rating System](#elo-rating-system)
+9. [Web Dashboard](#web-dashboard)
+10. [Development](#development)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -351,6 +353,107 @@ r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - bm Qxf7+; dm 2; 
 
 ---
 
+## Parallel Execution
+
+All competition modes support parallel game execution using the `--concurrency` / `-c` flag:
+
+```bash
+# Run 8 games in parallel
+python -m compete --random --games 1000 --timelow 0.25 --timehigh 1.0 -c 8
+
+# Gauntlet with 6 parallel games
+python -m compete v1.0.17 --gauntlet --games 50 -c 6
+
+# Cup tournament with parallel games within each match
+python -m compete --cup --games 10 -c 4
+
+# League with parallel execution
+python -m compete v1.0.17 sf-2400 sf-2600 --games 50 -c 8
+```
+
+### Why Parallelization Works
+
+Chess engines are single-threaded, so on an 8-core machine:
+- 1 game uses 1 core, 7 cores idle
+- 8 parallel games use 8 cores, each at ~85-95% NPS
+- Total throughput: ~7x improvement
+
+### NPS Impact
+
+| Parallel Games | NPS per Game | Notes |
+|----------------|--------------|-------|
+| 1 | 100% | Full turbo boost |
+| 4 | 95-98% | Minor cache pressure |
+| 8 | 85-95% | Turbo reduction, shared L3 |
+
+The slight per-game slowdown is vastly outweighed by throughput gains.
+
+---
+
+## SPSA Tuning
+
+SPSA (Simultaneous Perturbation Stochastic Approximation) mode enables distributed parameter tuning for chess engines.
+
+### Architecture
+
+- **Master** (in engine repo): Generates perturbed engine pairs, creates iteration records, calculates gradients
+- **Workers** (chess-compete): Poll database for work, run games, update aggregate results
+- **Database**: Coordinates between master and workers via `spsa_iterations` table
+
+### Running Workers
+
+```bash
+# Start SPSA worker with 8 parallel games
+python -m compete --spsa -c 8
+
+# With custom batch size (games per database update)
+python -m compete --spsa -c 8 --spsa-batch 20
+```
+
+Workers will:
+1. Poll the database for pending iterations
+2. Load engine binaries from paths in the iteration record
+3. Run games with random openings and time controls (from iteration settings)
+4. Update aggregate results atomically (no individual game saves)
+5. Continue until iteration is complete, then fetch next
+
+### Key Features
+
+- **No game saves**: Only aggregate results (wins/losses/draws) stored in `spsa_iterations`
+- **No engine registration**: SPSA engines are ephemeral, loaded directly from path
+- **Random openings**: Each game uses a random opening from the standard book
+- **Time variety**: Random time per game within the iteration's `timelow`-`timehigh` range
+- **Distributed**: Multiple workers can contribute to the same iteration
+
+### Database Migration
+
+Run the SPSA migration before first use:
+
+```bash
+python -c "
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+import psycopg
+
+load_dotenv()
+db_url = os.getenv('DATABASE_URL')
+migration = Path('migrations/002_spsa_iterations.sql').read_text()
+
+with psycopg.connect(db_url) as conn:
+    with conn.cursor() as cur:
+        cur.execute(migration)
+    conn.commit()
+    print('Migration completed!')
+"
+```
+
+### Master Setup
+
+The SPSA master runs from the engine repository (e.g., `rusty-rival/spsa/master.py`). See the engine's documentation for master configuration.
+
+---
+
 ## Command Reference
 
 ### Competition Mode Options
@@ -363,6 +466,7 @@ r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - bm Qxf7+; dm 2; 
 | `--cup` | Cup mode: knockout tournament with seeded brackets |
 | `--epd FILE` | EPD mode: play through positions from file |
 | `--epd-solve FILE` | EPD solve mode: test engine's ability to find correct moves |
+| `--spsa` | SPSA worker mode: poll for iterations and run games |
 
 ### Engine Filter Options
 
@@ -396,6 +500,19 @@ r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - bm Qxf7+; dm 2; 
 | `--timehigh T` | Maximum time per move (use with `--timelow`) |
 
 When using `--timelow` and `--timehigh`, a random time is selected for each match/round.
+
+### Parallel Execution Options
+
+| Option | Description |
+|--------|-------------|
+| `--concurrency N`, `-c N` | Number of games to run in parallel (default: 1) |
+
+### SPSA Mode Options
+
+| Option | Description |
+|--------|-------------|
+| `--spsa` | Enter SPSA worker mode (poll for iterations) |
+| `--spsa-batch N` | Games per batch before database update (default: 10) |
 
 ### Game Options
 
@@ -438,6 +555,7 @@ When using `--timelow` and `--timehigh`, a random time is selected for each matc
 | Random | Yes |
 | Cup | Yes |
 | EPD | **No** |
+| SPSA | **No** |
 
 ---
 
@@ -507,7 +625,10 @@ compete/
 ├── game.py            # play_game(), calculate_elo_difference()
 ├── competitions.py    # run_match, run_league, run_gauntlet, run_random, run_epd
 ├── cup.py             # run_cup() knockout tournament
-└── openings.py        # OPENING_BOOK data, load_epd_positions()
+├── openings.py        # OPENING_BOOK data, load_epd_positions()
+└── spsa/
+    ├── __init__.py    # SPSA module exports
+    └── worker.py      # SPSA worker mode implementation
 
 web/
 ├── app.py             # Flask application factory
