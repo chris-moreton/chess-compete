@@ -7,13 +7,14 @@ import os
 import random
 import socket
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
 from compete.constants import PROVISIONAL_GAMES
 from compete.database import load_elo_ratings, save_game_to_db, get_initial_elo
 from compete.engine_manager import get_engine_info, ensure_engines_initialized
-from compete.game import play_game
+from compete.game import play_game, GameConfig, GameResult, play_game_from_config
 from compete.openings import OPENING_BOOK
 
 
@@ -125,12 +126,13 @@ def get_round_name(remaining_participants: int) -> str:
 def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
                    games_per_match: int, time_per_move: float,
                    time_low: float = None, time_high: float = None,
-                   cup_id: int = None) -> tuple[str, float, float, int, bool, bool]:
+                   cup_id: int = None, concurrency: int = 1) -> tuple[str, float, float, int, bool, bool]:
     """
     Play a cup match between two engines.
 
     Args:
         games_per_match: Number of game PAIRS (so total games = games_per_match * 2)
+        concurrency: Number of games to run in parallel (default: 1 = sequential)
 
     Returns: (winner_name, engine1_points, engine2_points, games_played, is_tiebreaker, decided_by_coin_flip)
 
@@ -144,6 +146,7 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
     engine2_path, engine2_uci = get_engine_info(engine2_name, engine_dir)
 
     use_time_range = time_low is not None and time_high is not None
+    hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
 
     engine1_points = 0.0
     engine2_points = 0.0
@@ -165,7 +168,6 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
                                  white_uci, black_uci)
 
         # Save to database
-        hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
         save_game_to_db(white_name, black_name, result, f"{game_time:.2f}s/move",
                         opening_name, opening_fen, str(game),
                         time_per_move_ms=int(game_time * 1000),
@@ -174,44 +176,136 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
         return result, opening_name
 
     # Play regular game pairs
-    for pair_idx in range(games_per_match):
-        # Select time for this pair
-        if use_time_range:
-            pair_time = random.uniform(time_low, time_high)
-        else:
-            pair_time = time_per_move
+    if concurrency > 1:
+        # Parallel execution: prepare all games upfront
+        all_configs = []
+        for pair_idx in range(games_per_match):
+            # Select time for this pair
+            if use_time_range:
+                pair_time = random.uniform(time_low, time_high)
+            else:
+                pair_time = time_per_move
 
-        # Game 1: engine1 as white
-        result, opening = play_one_game(engine1_name, engine2_name,
-                                        engine1_path, engine2_path,
-                                        engine1_uci, engine2_uci, pair_time)
+            opening_fen1, opening_name1 = random.choice(OPENING_BOOK)
+            opening_fen2, opening_name2 = random.choice(OPENING_BOOK)
 
-        if result == "1-0":
-            engine1_points += 1
-        elif result == "0-1":
-            engine2_points += 1
-        elif result == "1/2-1/2":
-            engine1_points += 0.5
-            engine2_points += 0.5
+            # Game 1: engine1 as white
+            config1 = GameConfig(
+                game_index=pair_idx * 2,
+                white_name=engine1_name,
+                black_name=engine2_name,
+                white_path=str(engine1_path),
+                black_path=str(engine2_path),
+                white_uci_options=engine1_uci,
+                black_uci_options=engine2_uci,
+                time_per_move=pair_time,
+                opening_fen=opening_fen1,
+                opening_name=opening_name1,
+                is_engine1_white=True
+            )
 
-        print(f"  Game {games_played}: {engine1_name} vs {engine2_name} -> {result} [{opening}] "
-              f"| {engine1_name} {engine1_points:.1f} - {engine2_points:.1f} {engine2_name}")
+            # Game 2: engine2 as white
+            config2 = GameConfig(
+                game_index=pair_idx * 2 + 1,
+                white_name=engine2_name,
+                black_name=engine1_name,
+                white_path=str(engine2_path),
+                black_path=str(engine1_path),
+                white_uci_options=engine2_uci,
+                black_uci_options=engine1_uci,
+                time_per_move=pair_time,
+                opening_fen=opening_fen2,
+                opening_name=opening_name2,
+                is_engine1_white=False
+            )
 
-        # Game 2: engine2 as white (different random opening)
-        result, opening = play_one_game(engine2_name, engine1_name,
-                                        engine2_path, engine1_path,
-                                        engine2_uci, engine1_uci, pair_time)
+            all_configs.append(config1)
+            all_configs.append(config2)
 
-        if result == "1-0":
-            engine2_points += 1
-        elif result == "0-1":
-            engine1_points += 1
-        elif result == "1/2-1/2":
-            engine1_points += 0.5
-            engine2_points += 0.5
+        # Run all games in parallel and collect results
+        results_by_index = {}
+        with ProcessPoolExecutor(max_workers=concurrency) as executor:
+            future_to_config = {executor.submit(play_game_from_config, c): c for c in all_configs}
 
-        print(f"  Game {games_played}: {engine2_name} vs {engine1_name} -> {result} [{opening}] "
-              f"| {engine1_name} {engine1_points:.1f} - {engine2_points:.1f} {engine2_name}")
+            for future in as_completed(future_to_config):
+                config = future_to_config[future]
+                game_result = future.result()
+                results_by_index[game_result.game_index] = (config, game_result)
+
+        # Process results in order
+        for idx in sorted(results_by_index.keys()):
+            config, game_result = results_by_index[idx]
+            games_played += 1
+
+            # Save to database
+            save_game_to_db(game_result.white_name, game_result.black_name, game_result.result,
+                            f"{game_result.time_per_move:.2f}s/move", game_result.opening_name,
+                            game_result.opening_fen, game_result.pgn,
+                            time_per_move_ms=int(game_result.time_per_move * 1000),
+                            hostname=hostname)
+
+            # Update points
+            if config.is_engine1_white:
+                if game_result.result == "1-0":
+                    engine1_points += 1
+                elif game_result.result == "0-1":
+                    engine2_points += 1
+                elif game_result.result == "1/2-1/2":
+                    engine1_points += 0.5
+                    engine2_points += 0.5
+                print(f"  Game {games_played}: {engine1_name} vs {engine2_name} -> {game_result.result} [{game_result.opening_name}] "
+                      f"| {engine1_name} {engine1_points:.1f} - {engine2_points:.1f} {engine2_name}")
+            else:
+                if game_result.result == "1-0":
+                    engine2_points += 1
+                elif game_result.result == "0-1":
+                    engine1_points += 1
+                elif game_result.result == "1/2-1/2":
+                    engine1_points += 0.5
+                    engine2_points += 0.5
+                print(f"  Game {games_played}: {engine2_name} vs {engine1_name} -> {game_result.result} [{game_result.opening_name}] "
+                      f"| {engine1_name} {engine1_points:.1f} - {engine2_points:.1f} {engine2_name}")
+
+    else:
+        # Sequential execution (original code)
+        for pair_idx in range(games_per_match):
+            # Select time for this pair
+            if use_time_range:
+                pair_time = random.uniform(time_low, time_high)
+            else:
+                pair_time = time_per_move
+
+            # Game 1: engine1 as white
+            result, opening = play_one_game(engine1_name, engine2_name,
+                                            engine1_path, engine2_path,
+                                            engine1_uci, engine2_uci, pair_time)
+
+            if result == "1-0":
+                engine1_points += 1
+            elif result == "0-1":
+                engine2_points += 1
+            elif result == "1/2-1/2":
+                engine1_points += 0.5
+                engine2_points += 0.5
+
+            print(f"  Game {games_played}: {engine1_name} vs {engine2_name} -> {result} [{opening}] "
+                  f"| {engine1_name} {engine1_points:.1f} - {engine2_points:.1f} {engine2_name}")
+
+            # Game 2: engine2 as white (different random opening)
+            result, opening = play_one_game(engine2_name, engine1_name,
+                                            engine2_path, engine1_path,
+                                            engine2_uci, engine1_uci, pair_time)
+
+            if result == "1-0":
+                engine2_points += 1
+            elif result == "0-1":
+                engine1_points += 1
+            elif result == "1/2-1/2":
+                engine1_points += 0.5
+                engine2_points += 0.5
+
+            print(f"  Game {games_played}: {engine2_name} vs {engine1_name} -> {result} [{opening}] "
+                  f"| {engine1_name} {engine1_points:.1f} - {engine2_points:.1f} {engine2_name}")
 
     # Tiebreaker if needed (play pairs until someone pulls ahead)
     max_tiebreaker_pairs = 10  # 20 games max
@@ -338,6 +432,8 @@ def run_cup(engine_dir: Path, num_engines: int = None, games_per_match: int = 10
         print(f"Time: {time_low}-{time_high}s/move (random)")
     else:
         print(f"Time: {time_per_move}s/move")
+    if concurrency > 1:
+        print(f"Concurrency: {concurrency} games in parallel")
     print(f"{'='*70}")
 
     # Print seedings
@@ -476,7 +572,7 @@ def run_cup(engine_dir: Path, num_engines: int = None, games_per_match: int = 10
             winner_name, e1_points, e2_points, games, is_tb, coin_flip = play_cup_match(
                 engine1_name, engine2_name, engine_dir,
                 games_per_match, time_per_move,
-                time_low, time_high, cup_id
+                time_low, time_high, cup_id, concurrency
             )
 
             winner_seed = match_data['engine1_seed'] if winner_name == engine1_name else match_data['engine2_seed']

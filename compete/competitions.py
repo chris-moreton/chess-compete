@@ -597,6 +597,8 @@ def run_league(engine_names: list[str], engine_dir: Path,
         print(f"Time: {time_per_move}s/move")
     if use_opening_book:
         print(f"Opening book: {len(OPENING_BOOK)} positions")
+    if concurrency > 1:
+        print(f"Concurrency: {concurrency} games in parallel")
     print(f"{'='*95}")
 
     # Show starting Elo ratings
@@ -629,6 +631,7 @@ def run_league(engine_names: list[str], engine_dir: Path,
     engine_info = {name: get_engine_info(name, engine_dir) for name in engine_names}
 
     game_num = 0
+    hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
 
     # Play rounds
     for round_idx in range(num_rounds):
@@ -642,13 +645,18 @@ def run_league(engine_names: list[str], engine_dir: Path,
 
         print(f"\n--- Round {round_idx + 1}/{num_rounds}: {opening_name or 'Starting position'} ({round_time:.2f}s/move) ---\n")
 
-        # Play each pairing twice (once per color) for this opening
-        for pairing_idx, (engine1, engine2) in enumerate(pairings):
-            match_label = f"Match {pairing_idx + 1}/{num_pairings}"
+        if concurrency > 1:
+            # Parallel execution: batch all games in this round
+            round_games = []  # List of (pairing_idx, engine1, engine2, color_swap, match_label)
 
-            for color_swap in [False, True]:
-                game_num += 1
+            for pairing_idx, (engine1, engine2) in enumerate(pairings):
+                match_label = f"Match {pairing_idx + 1}/{num_pairings}"
+                for color_swap in [False, True]:
+                    round_games.append((pairing_idx, engine1, engine2, color_swap, match_label))
 
+            # Create GameConfig objects
+            configs = []
+            for idx, (pairing_idx, engine1, engine2, color_swap, match_label) in enumerate(round_games):
                 if color_swap:
                     white, black = engine2, engine1
                 else:
@@ -657,55 +665,150 @@ def run_league(engine_names: list[str], engine_dir: Path,
                 white_path, white_uci = engine_info[white]
                 black_path, black_uci = engine_info[black]
 
-                result, game = play_game(white_path, black_path, white, black,
-                                         round_time, opening_fen, opening_name,
-                                         white_uci, black_uci)
+                config = GameConfig(
+                    game_index=idx,
+                    white_name=white,
+                    black_name=black,
+                    white_path=str(white_path),
+                    black_path=str(black_path),
+                    white_uci_options=white_uci,
+                    black_uci_options=black_uci,
+                    time_per_move=round_time,
+                    opening_fen=opening_fen,
+                    opening_name=opening_name,
+                    is_engine1_white=not color_swap
+                )
+                configs.append((config, pairing_idx, engine1, engine2, color_swap, match_label))
 
-                # Save to database with full PGN
-                hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
-                save_game_to_db(white, black, result, f"{round_time:.2f}s/move",
-                                opening_name, opening_fen, str(game),
-                                time_per_move_ms=int(round_time * 1000),
-                                hostname=hostname)
+            # Run games in parallel
+            with ProcessPoolExecutor(max_workers=concurrency) as executor:
+                future_to_config = {executor.submit(play_game_from_config, c[0]): c for c in configs}
 
-                # Update games and points for this competition
-                games_this_comp[white] += 1
-                games_this_comp[black] += 1
+                for future in as_completed(future_to_config):
+                    config, pairing_idx, engine1, engine2, color_swap, match_label = future_to_config[future]
+                    game_result = future.result()
+                    game_num += 1
 
-                if result == "1-0":
-                    points_this_comp[white] += 1.0
-                elif result == "0-1":
-                    points_this_comp[black] += 1.0
-                elif result == "1/2-1/2":
-                    points_this_comp[white] += 0.5
-                    points_this_comp[black] += 0.5
+                    white = game_result.white_name
+                    black = game_result.black_name
+                    result = game_result.result
 
-                # Update head-to-head tracking
-                key = (engine1, engine2) if engine1 < engine2 else (engine2, engine1)
-                e1_wins, e2_wins, draws = head_to_head[key]
+                    # Save to database
+                    save_game_to_db(white, black, result, f"{round_time:.2f}s/move",
+                                    game_result.opening_name, game_result.opening_fen,
+                                    game_result.pgn, time_per_move_ms=int(round_time * 1000),
+                                    hostname=hostname)
 
-                if result == "1-0":
-                    if white == key[0]:
-                        e1_wins += 1
+                    # Update games and points for this competition
+                    games_this_comp[white] += 1
+                    games_this_comp[black] += 1
+
+                    if result == "1-0":
+                        points_this_comp[white] += 1.0
+                    elif result == "0-1":
+                        points_this_comp[black] += 1.0
+                    elif result == "1/2-1/2":
+                        points_this_comp[white] += 0.5
+                        points_this_comp[black] += 0.5
+
+                    # Update head-to-head tracking
+                    key = (engine1, engine2) if engine1 < engine2 else (engine2, engine1)
+                    e1_wins, e2_wins, draws = head_to_head[key]
+
+                    if result == "1-0":
+                        if white == key[0]:
+                            e1_wins += 1
+                        else:
+                            e2_wins += 1
+                    elif result == "0-1":
+                        if black == key[0]:
+                            e1_wins += 1
+                        else:
+                            e2_wins += 1
+                    elif result == "1/2-1/2":
+                        draws += 1
+
+                    head_to_head[key] = (e1_wins, e2_wins, draws)
+
+                    # NPS output
+                    nps_str = ""
+                    if game_result.white_nps or game_result.black_nps:
+                        w_nps = f"{game_result.white_nps // 1000}k" if game_result.white_nps else "?"
+                        b_nps = f"{game_result.black_nps // 1000}k" if game_result.black_nps else "?"
+                        nps_str = f" [NPS: {w_nps}/{b_nps}]"
+
+                    # Print game result
+                    color_label = "(colors swapped)" if color_swap else ""
+                    print(f"Game {game_num:3d}/{total_games} {match_label}: {white} vs {black} -> {result} {color_label}{nps_str}")
+
+            # Print standings after each round (for parallel mode)
+            print_league_table(competitors, games_this_comp, points_this_comp,
+                               round_idx + 1, competitors_only=True, game_num=game_num, total_games=total_games)
+
+        else:
+            # Sequential execution (original code)
+            for pairing_idx, (engine1, engine2) in enumerate(pairings):
+                match_label = f"Match {pairing_idx + 1}/{num_pairings}"
+
+                for color_swap in [False, True]:
+                    game_num += 1
+
+                    if color_swap:
+                        white, black = engine2, engine1
                     else:
-                        e2_wins += 1
-                elif result == "0-1":
-                    if black == key[0]:
-                        e1_wins += 1
-                    else:
-                        e2_wins += 1
-                elif result == "1/2-1/2":
-                    draws += 1
+                        white, black = engine1, engine2
 
-                head_to_head[key] = (e1_wins, e2_wins, draws)
+                    white_path, white_uci = engine_info[white]
+                    black_path, black_uci = engine_info[black]
 
-                # Print game result
-                color_label = "(colors swapped)" if color_swap else ""
-                print(f"Game {game_num:3d}/{total_games} {match_label}: {white} vs {black} -> {result} {color_label}")
+                    result, game = play_game(white_path, black_path, white, black,
+                                             round_time, opening_fen, opening_name,
+                                             white_uci, black_uci)
 
-                # Print compact standings after each game
-                print_league_table(competitors, games_this_comp, points_this_comp,
-                                   round_idx + 1, competitors_only=True, game_num=game_num, total_games=total_games)
+                    # Save to database with full PGN
+                    save_game_to_db(white, black, result, f"{round_time:.2f}s/move",
+                                    opening_name, opening_fen, str(game),
+                                    time_per_move_ms=int(round_time * 1000),
+                                    hostname=hostname)
+
+                    # Update games and points for this competition
+                    games_this_comp[white] += 1
+                    games_this_comp[black] += 1
+
+                    if result == "1-0":
+                        points_this_comp[white] += 1.0
+                    elif result == "0-1":
+                        points_this_comp[black] += 1.0
+                    elif result == "1/2-1/2":
+                        points_this_comp[white] += 0.5
+                        points_this_comp[black] += 0.5
+
+                    # Update head-to-head tracking
+                    key = (engine1, engine2) if engine1 < engine2 else (engine2, engine1)
+                    e1_wins, e2_wins, draws = head_to_head[key]
+
+                    if result == "1-0":
+                        if white == key[0]:
+                            e1_wins += 1
+                        else:
+                            e2_wins += 1
+                    elif result == "0-1":
+                        if black == key[0]:
+                            e1_wins += 1
+                        else:
+                            e2_wins += 1
+                    elif result == "1/2-1/2":
+                        draws += 1
+
+                    head_to_head[key] = (e1_wins, e2_wins, draws)
+
+                    # Print game result
+                    color_label = "(colors swapped)" if color_swap else ""
+                    print(f"Game {game_num:3d}/{total_games} {match_label}: {white} vs {black} -> {result} {color_label}")
+
+                    # Print compact standings after each game
+                    print_league_table(competitors, games_this_comp, points_this_comp,
+                                       round_idx + 1, competitors_only=True, game_num=game_num, total_games=total_games)
 
     # Print final standings (full table)
     print_league_table(competitors, games_this_comp, points_this_comp, num_rounds, is_final=True)
@@ -778,6 +881,8 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
     else:
         print(f"Time: {time_per_move}s/move")
     print(f"Opening book: {len(OPENING_BOOK)} positions (random selection)")
+    if concurrency > 1:
+        print(f"Concurrency: {concurrency} games in parallel")
     print(f"{'='*70}")
 
     # Show starting Elo
@@ -796,6 +901,7 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
     # Track results per opponent
     results_per_opponent = {opp: {"wins": 0, "losses": 0, "draws": 0} for opp in opponents}
     game_num = 0
+    hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
 
     # Play in rounds
     for round_idx in range(num_rounds):
@@ -807,58 +913,149 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
 
         print(f"\n--- Round {round_idx + 1}/{num_rounds} ({round_time:.2f}s/move) ---\n")
 
-        for opponent in opponents:
-            opponent_path, opponent_uci = opponent_info[opponent]
+        if concurrency > 1:
+            # Parallel execution: batch all games in this round
+            round_games = []  # List of (game_idx, opponent, is_challenger_white, opening_fen, opening_name)
 
-            # Game 1: Challenger as white
-            game_num += 1
-            opening_fen, opening_name = random.choice(OPENING_BOOK)
+            for opponent in opponents:
+                # Game 1: Challenger as white
+                opening_fen1, opening_name1 = random.choice(OPENING_BOOK)
+                round_games.append((opponent, True, opening_fen1, opening_name1))
 
-            result, game = play_game(challenger_path, opponent_path,
-                                      challenger_name, opponent,
-                                      round_time, opening_fen, opening_name,
-                                      challenger_uci, opponent_uci)
+                # Game 2: Challenger as black
+                opening_fen2, opening_name2 = random.choice(OPENING_BOOK)
+                round_games.append((opponent, False, opening_fen2, opening_name2))
 
-            # Save to database with full PGN
-            hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
-            save_game_to_db(challenger_name, opponent, result, f"{round_time:.2f}s/move",
-                            opening_name, opening_fen, str(game),
-                            time_per_move_ms=int(round_time * 1000),
-                            hostname=hostname)
+            # Create GameConfig objects
+            configs = []
+            for idx, (opponent, is_challenger_white, opening_fen, opening_name) in enumerate(round_games):
+                opponent_path, opponent_uci = opponent_info[opponent]
+                if is_challenger_white:
+                    config = GameConfig(
+                        game_index=idx,
+                        white_name=challenger_name,
+                        black_name=opponent,
+                        white_path=str(challenger_path),
+                        black_path=str(opponent_path),
+                        white_uci_options=challenger_uci,
+                        black_uci_options=opponent_uci,
+                        time_per_move=round_time,
+                        opening_fen=opening_fen,
+                        opening_name=opening_name,
+                        is_engine1_white=True
+                    )
+                else:
+                    config = GameConfig(
+                        game_index=idx,
+                        white_name=opponent,
+                        black_name=challenger_name,
+                        white_path=str(opponent_path),
+                        black_path=str(challenger_path),
+                        white_uci_options=opponent_uci,
+                        black_uci_options=challenger_uci,
+                        time_per_move=round_time,
+                        opening_fen=opening_fen,
+                        opening_name=opening_name,
+                        is_engine1_white=False
+                    )
+                configs.append((config, opponent, is_challenger_white))
 
-            if result == "1-0":
-                results_per_opponent[opponent]["wins"] += 1
-            elif result == "0-1":
-                results_per_opponent[opponent]["losses"] += 1
-            elif result == "1/2-1/2":
-                results_per_opponent[opponent]["draws"] += 1
+            # Run games in parallel
+            with ProcessPoolExecutor(max_workers=concurrency) as executor:
+                future_to_config = {executor.submit(play_game_from_config, c[0]): c for c in configs}
 
-            print(f"Game {game_num:3d}/{total_games}: {challenger_name} (W) vs {opponent} -> {result}  [{opening_name}]")
+                for future in as_completed(future_to_config):
+                    config, opponent, is_challenger_white = future_to_config[future]
+                    game_result = future.result()
+                    game_num += 1
 
-            # Game 2: Challenger as black
-            game_num += 1
-            opening_fen, opening_name = random.choice(OPENING_BOOK)
+                    # Save to database
+                    save_game_to_db(game_result.white_name, game_result.black_name, game_result.result,
+                                    f"{round_time:.2f}s/move", game_result.opening_name, game_result.opening_fen,
+                                    game_result.pgn, time_per_move_ms=int(round_time * 1000), hostname=hostname)
 
-            result, game = play_game(opponent_path, challenger_path,
-                                      opponent, challenger_name,
-                                      round_time, opening_fen, opening_name,
-                                      opponent_uci, challenger_uci)
+                    # Update results based on challenger's perspective
+                    if is_challenger_white:
+                        if game_result.result == "1-0":
+                            results_per_opponent[opponent]["wins"] += 1
+                        elif game_result.result == "0-1":
+                            results_per_opponent[opponent]["losses"] += 1
+                        elif game_result.result == "1/2-1/2":
+                            results_per_opponent[opponent]["draws"] += 1
+                        color_label = "(W)"
+                    else:
+                        if game_result.result == "0-1":
+                            results_per_opponent[opponent]["wins"] += 1
+                        elif game_result.result == "1-0":
+                            results_per_opponent[opponent]["losses"] += 1
+                        elif game_result.result == "1/2-1/2":
+                            results_per_opponent[opponent]["draws"] += 1
+                        color_label = "(B)"
 
-            # Save to database with full PGN
-            hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
-            save_game_to_db(opponent, challenger_name, result, f"{round_time:.2f}s/move",
-                            opening_name, opening_fen, str(game),
-                            time_per_move_ms=int(round_time * 1000),
-                            hostname=hostname)
+                    # NPS output
+                    nps_str = ""
+                    if game_result.white_nps or game_result.black_nps:
+                        w_nps = f"{game_result.white_nps // 1000}k" if game_result.white_nps else "?"
+                        b_nps = f"{game_result.black_nps // 1000}k" if game_result.black_nps else "?"
+                        nps_str = f" [NPS: {w_nps}/{b_nps}]"
 
-            if result == "0-1":
-                results_per_opponent[opponent]["wins"] += 1
-            elif result == "1-0":
-                results_per_opponent[opponent]["losses"] += 1
-            elif result == "1/2-1/2":
-                results_per_opponent[opponent]["draws"] += 1
+                    if is_challenger_white:
+                        print(f"Game {game_num:3d}/{total_games}: {challenger_name} {color_label} vs {opponent} -> {game_result.result}  [{game_result.opening_name}]{nps_str}")
+                    else:
+                        print(f"Game {game_num:3d}/{total_games}: {opponent} vs {challenger_name} {color_label} -> {game_result.result}  [{game_result.opening_name}]{nps_str}")
 
-            print(f"Game {game_num:3d}/{total_games}: {opponent} vs {challenger_name} (B) -> {result}  [{opening_name}]")
+        else:
+            # Sequential execution (original code)
+            for opponent in opponents:
+                opponent_path, opponent_uci = opponent_info[opponent]
+
+                # Game 1: Challenger as white
+                game_num += 1
+                opening_fen, opening_name = random.choice(OPENING_BOOK)
+
+                result, game = play_game(challenger_path, opponent_path,
+                                          challenger_name, opponent,
+                                          round_time, opening_fen, opening_name,
+                                          challenger_uci, opponent_uci)
+
+                # Save to database with full PGN
+                save_game_to_db(challenger_name, opponent, result, f"{round_time:.2f}s/move",
+                                opening_name, opening_fen, str(game),
+                                time_per_move_ms=int(round_time * 1000),
+                                hostname=hostname)
+
+                if result == "1-0":
+                    results_per_opponent[opponent]["wins"] += 1
+                elif result == "0-1":
+                    results_per_opponent[opponent]["losses"] += 1
+                elif result == "1/2-1/2":
+                    results_per_opponent[opponent]["draws"] += 1
+
+                print(f"Game {game_num:3d}/{total_games}: {challenger_name} (W) vs {opponent} -> {result}  [{opening_name}]")
+
+                # Game 2: Challenger as black
+                game_num += 1
+                opening_fen, opening_name = random.choice(OPENING_BOOK)
+
+                result, game = play_game(opponent_path, challenger_path,
+                                          opponent, challenger_name,
+                                          round_time, opening_fen, opening_name,
+                                          opponent_uci, challenger_uci)
+
+                # Save to database with full PGN
+                save_game_to_db(opponent, challenger_name, result, f"{round_time:.2f}s/move",
+                                opening_name, opening_fen, str(game),
+                                time_per_move_ms=int(round_time * 1000),
+                                hostname=hostname)
+
+                if result == "0-1":
+                    results_per_opponent[opponent]["wins"] += 1
+                elif result == "1-0":
+                    results_per_opponent[opponent]["losses"] += 1
+                elif result == "1/2-1/2":
+                    results_per_opponent[opponent]["draws"] += 1
+
+                print(f"Game {game_num:3d}/{total_games}: {opponent} vs {challenger_name} (B) -> {result}  [{opening_name}]")
 
         # Show standings after each round
         print(f"\n--- Standings after round {round_idx + 1} ---")
