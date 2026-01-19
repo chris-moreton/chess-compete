@@ -272,7 +272,8 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
 def run_cup(engine_dir: Path, num_engines: int = None, games_per_match: int = 10,
             time_per_move: float = 1.0, cup_name: str = None,
             time_low: float = None, time_high: float = None,
-            engine_type: str = None, include_inactive: bool = False):
+            engine_type: str = None, include_inactive: bool = False,
+            concurrency: int = 1):
     """
     Run a complete knockout cup competition.
 

@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import combinations
 from pathlib import Path
 
@@ -17,7 +18,7 @@ import chess.engine
 from compete.constants import PROVISIONAL_GAMES, DEFAULT_ELO
 from compete.database import load_elo_ratings, save_game_to_db, get_initial_elo, save_epd_test_run
 from compete.engine_manager import get_engine_info, get_active_engines
-from compete.game import play_game, calculate_elo_difference
+from compete.game import play_game, calculate_elo_difference, GameConfig, GameResult, play_game_from_config
 from compete.openings import OPENING_BOOK, load_epd_positions, load_epd_for_solving
 from compete.epd import EpdPosition, SolveResult
 
@@ -25,8 +26,13 @@ from compete.epd import EpdPosition, SolveResult
 def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
               num_games: int, time_per_move: float,
               use_opening_book: bool = True,
-              time_low: float = None, time_high: float = None) -> dict:
-    """Run a match between two engines, alternating colors."""
+              time_low: float = None, time_high: float = None,
+              concurrency: int = 1) -> dict:
+    """Run a match between two engines, alternating colors.
+
+    Args:
+        concurrency: Number of games to run in parallel (default: 1 = sequential)
+    """
 
     engine1_path, engine1_uci_options = get_engine_info(engine1_name, engine_dir)
     engine2_path, engine2_uci_options = get_engine_info(engine2_name, engine_dir)
@@ -81,6 +87,8 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
         print(f"Opening book: {len(OPENING_BOOK)} positions (randomized)")
     else:
         print("Opening book: disabled")
+    if concurrency > 1:
+        print(f"Concurrency: {concurrency} games in parallel")
     print(f"{'='*70}")
 
     # Show starting Elo
@@ -91,7 +99,8 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
         print(f"  {name}: {data['elo']:.0f} ({data['games']} games){prov}")
     print(flush=True)
 
-    # Track time for game pairs when using time range
+    # Prepare game configurations
+    game_configs = []
     pair_time = None
 
     for i in range(num_games):
@@ -122,39 +131,129 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
             white_uci, black_uci = engine2_uci_options, engine1_uci_options
             is_engine1_white = False
 
-        result, game = play_game(white_path, black_path, white, black,
-                                  game_time, opening_fen, opening_name,
-                                  white_uci, black_uci)
-        results[result] += 1
+        # Convert Path to string for pickling
+        white_path_str = str(white_path) if not isinstance(white_path, list) else white_path
+        black_path_str = str(black_path) if not isinstance(black_path, list) else black_path
 
-        # Save to database with full PGN
-        hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
-        save_game_to_db(white, black, result, f"{game_time:.2f}s/move",
-                        opening_name, opening_fen, str(game),
-                        time_per_move_ms=int(game_time * 1000),
-                        hostname=hostname)
+        config = GameConfig(
+            game_index=i,
+            white_name=white,
+            black_name=black,
+            white_path=white_path_str,
+            black_path=black_path_str,
+            white_uci_options=white_uci,
+            black_uci_options=black_uci,
+            time_per_move=game_time,
+            opening_fen=opening_fen,
+            opening_name=opening_name,
+            is_engine1_white=is_engine1_white
+        )
+        game_configs.append(config)
 
-        # Calculate points
-        if result == "1-0":
-            if is_engine1_white:
-                engine1_points += 1
-            else:
-                engine2_points += 1
-        elif result == "0-1":
-            if is_engine1_white:
-                engine2_points += 1
-            else:
-                engine1_points += 1
-        elif result == "1/2-1/2":
-            engine1_points += 0.5
-            engine2_points += 0.5
+    # Run games (parallel or sequential)
+    hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
+    completed_games = 0
 
-        # Live update
-        game_num = i + 1
-        opening_info = f" [{opening_name}]" if opening_name else ""
-        print(f"Game {game_num:3d}/{num_games}: {white} vs {black} -> {result}{opening_info}  "
-              f"| Score: {engine1_name} {engine1_points:.1f} - {engine2_points:.1f} {engine2_name}",
-              flush=True)
+    if concurrency > 1:
+        # Parallel execution
+        with ProcessPoolExecutor(max_workers=concurrency) as executor:
+            futures = {executor.submit(play_game_from_config, cfg): cfg for cfg in game_configs}
+
+            for future in as_completed(futures):
+                try:
+                    game_result = future.result()
+                    completed_games += 1
+
+                    # Update results
+                    results[game_result.result] += 1
+
+                    # Calculate points
+                    if game_result.result == "1-0":
+                        if game_result.is_engine1_white:
+                            engine1_points += 1
+                        else:
+                            engine2_points += 1
+                    elif game_result.result == "0-1":
+                        if game_result.is_engine1_white:
+                            engine2_points += 1
+                        else:
+                            engine1_points += 1
+                    elif game_result.result == "1/2-1/2":
+                        engine1_points += 0.5
+                        engine2_points += 0.5
+
+                    # Save to database
+                    save_game_to_db(
+                        game_result.white_name, game_result.black_name,
+                        game_result.result, f"{game_result.time_per_move:.2f}s/move",
+                        game_result.opening_name, game_result.opening_fen,
+                        game_result.pgn,
+                        time_per_move_ms=int(game_result.time_per_move * 1000),
+                        hostname=hostname
+                    )
+
+                    # Progress update with NPS
+                    nps_info = ""
+                    if game_result.white_nps or game_result.black_nps:
+                        w_nps = f"{game_result.white_nps // 1000}k" if game_result.white_nps else "?"
+                        b_nps = f"{game_result.black_nps // 1000}k" if game_result.black_nps else "?"
+                        nps_info = f" [NPS: {w_nps}/{b_nps}]"
+                    print(f"Game {completed_games:3d}/{num_games}: "
+                          f"{game_result.white_name} vs {game_result.black_name} -> {game_result.result}{nps_info}  "
+                          f"| Score: {engine1_name} {engine1_points:.1f} - {engine2_points:.1f} {engine2_name}",
+                          flush=True)
+
+                except Exception as e:
+                    print(f"  Error in game: {e}", flush=True)
+                    results["*"] += 1
+                    completed_games += 1
+    else:
+        # Sequential execution (original behavior)
+        for config in game_configs:
+            result, game = play_game(
+                config.white_path, config.black_path,
+                config.white_name, config.black_name,
+                config.time_per_move, config.opening_fen, config.opening_name,
+                config.white_uci_options, config.black_uci_options
+            )
+            results[result] += 1
+
+            # Save to database with full PGN
+            save_game_to_db(config.white_name, config.black_name, result,
+                            f"{config.time_per_move:.2f}s/move",
+                            config.opening_name, config.opening_fen, str(game),
+                            time_per_move_ms=int(config.time_per_move * 1000),
+                            hostname=hostname)
+
+            # Calculate points
+            if result == "1-0":
+                if config.is_engine1_white:
+                    engine1_points += 1
+                else:
+                    engine2_points += 1
+            elif result == "0-1":
+                if config.is_engine1_white:
+                    engine2_points += 1
+                else:
+                    engine1_points += 1
+            elif result == "1/2-1/2":
+                engine1_points += 0.5
+                engine2_points += 0.5
+
+            # Live update with NPS
+            completed_games += 1
+            opening_info = f" [{config.opening_name}]" if config.opening_name else ""
+            # Extract NPS from game headers
+            white_nps = int(game.headers.get("WhiteNPS", 0)) or None
+            black_nps = int(game.headers.get("BlackNPS", 0)) or None
+            nps_info = ""
+            if white_nps or black_nps:
+                w_nps = f"{white_nps // 1000}k" if white_nps else "?"
+                b_nps = f"{black_nps // 1000}k" if black_nps else "?"
+                nps_info = f" [NPS: {w_nps}/{b_nps}]"
+            print(f"Game {completed_games:3d}/{num_games}: {config.white_name} vs {config.black_name} -> {result}{nps_info}{opening_info}  "
+                  f"| Score: {engine1_name} {engine1_points:.1f} - {engine2_points:.1f} {engine2_name}",
+                  flush=True)
 
     # Calculate Elo difference for this match
     # From engine1's perspective: wins are when engine1 won
@@ -453,7 +552,8 @@ def run_epd(engine_names: list[str], engine_dir: Path, epd_file: Path,
 def run_league(engine_names: list[str], engine_dir: Path,
                games_per_pairing: int, time_per_move: float, results_dir: Path,
                use_opening_book: bool = True,
-               time_low: float = None, time_high: float = None):
+               time_low: float = None, time_high: float = None,
+               concurrency: int = 1):
     """Run a round-robin league with interleaved pairings."""
 
     pairings = list(combinations(engine_names, 2))
@@ -625,7 +725,8 @@ def run_league(engine_names: list[str], engine_dir: Path,
 def run_gauntlet(challenger_name: str, engine_dir: Path,
                  num_rounds: int, time_per_move: float, results_dir: Path,
                  time_low: float = None, time_high: float = None,
-                 engine_type: str = None, include_inactive: bool = False):
+                 engine_type: str = None, include_inactive: bool = False,
+                 concurrency: int = 1):
     """
     Test a challenger engine against all other engines in the engines directory.
     Plays in rounds: each round consists of 2 games (1 as white, 1 as black) against each opponent.
@@ -812,7 +913,8 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
 
 def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results_dir: Path, weighted: bool = False,
                time_low: float = None, time_high: float = None,
-               engine_type: str = None, include_inactive: bool = False):
+               engine_type: str = None, include_inactive: bool = False,
+               concurrency: int = 1):
     """
     Randomly select pairs of engines and play 2-game matches (1 white, 1 black).
     Each game uses a random opening.

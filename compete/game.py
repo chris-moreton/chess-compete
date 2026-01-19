@@ -9,10 +9,77 @@ import subprocess
 import traceback
 from datetime import datetime
 from pathlib import Path
+from dataclasses import dataclass
+from typing import Optional
 
 import chess
 import chess.engine
 import chess.pgn
+
+
+@dataclass
+class GameConfig:
+    """Configuration for a single game, used for parallel execution."""
+    game_index: int
+    white_name: str
+    black_name: str
+    white_path: str  # String path for pickling
+    black_path: str
+    white_uci_options: Optional[dict]
+    black_uci_options: Optional[dict]
+    time_per_move: float
+    opening_fen: Optional[str]
+    opening_name: Optional[str]
+    is_engine1_white: bool  # Track which engine is white for result attribution
+
+
+@dataclass
+class GameResult:
+    """Result of a single game, returned from parallel execution."""
+    game_index: int
+    result: str  # "1-0", "0-1", "1/2-1/2", "*"
+    pgn: str
+    is_engine1_white: bool
+    white_name: str
+    black_name: str
+    time_per_move: float
+    opening_name: Optional[str]
+    opening_fen: Optional[str]
+    white_nps: Optional[int] = None
+    black_nps: Optional[int] = None
+
+
+def play_game_from_config(config: GameConfig) -> GameResult:
+    """Play a game from a GameConfig - suitable for ProcessPoolExecutor."""
+    result, game = play_game(
+        engine1_cmd=config.white_path,
+        engine2_cmd=config.black_path,
+        engine1_name=config.white_name,
+        engine2_name=config.black_name,
+        time_per_move=config.time_per_move,
+        start_fen=config.opening_fen,
+        opening_name=config.opening_name,
+        engine1_uci_options=config.white_uci_options,
+        engine2_uci_options=config.black_uci_options
+    )
+
+    # Extract NPS from game headers
+    white_nps = int(game.headers.get("WhiteNPS", 0)) or None
+    black_nps = int(game.headers.get("BlackNPS", 0)) or None
+
+    return GameResult(
+        game_index=config.game_index,
+        result=result,
+        pgn=str(game),
+        is_engine1_white=config.is_engine1_white,
+        white_name=config.white_name,
+        black_name=config.black_name,
+        time_per_move=config.time_per_move,
+        opening_name=config.opening_name,
+        opening_fen=config.opening_fen,
+        white_nps=white_nps,
+        black_nps=black_nps
+    )
 
 
 def calculate_elo_difference(wins: int, losses: int, draws: int) -> tuple[float, float]:
