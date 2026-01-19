@@ -49,7 +49,9 @@ def register_routes(app):
             min_time_ms=min_time,
             max_time_ms=max_time,
             hostname=hostname,
-            engine_type=engine_type
+            engine_type=engine_type,
+            sort_column=sort_column,
+            sort_direction=sort_direction
         )
 
         # Get list of unique hostnames for dropdown

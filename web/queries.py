@@ -668,7 +668,8 @@ def get_time_range():
     return min_time, max_time
 
 
-def get_dashboard_data(active_only=True, min_time_ms=0, max_time_ms=999999999, hostname=None, engine_type=None):
+def get_dashboard_data(active_only=True, min_time_ms=0, max_time_ms=999999999, hostname=None, engine_type=None,
+                       sort_column=None, sort_direction=None):
     """
     Get all data needed for the dashboard.
 
@@ -678,6 +679,8 @@ def get_dashboard_data(active_only=True, min_time_ms=0, max_time_ms=999999999, h
         max_time_ms: Maximum time per move filter
         hostname: Hostname filter (None = any)
         engine_type: Engine type filter (None = all, 'rusty' = v*, 'stockfish' = sf*)
+        sort_column: Column to sort by ('name', 'elo', 'bayes', 'ordo', 'stability', 'games')
+        sort_direction: Sort direction ('asc' or 'desc')
 
     Returns:
         (engines, grid, column_headers, last_played_engines)
@@ -699,7 +702,60 @@ def get_dashboard_data(active_only=True, min_time_ms=0, max_time_ms=999999999, h
         hostname=hostname,
         engine_type=engine_type
     )
+
+    # Build grid first (needs engines in ELO order for stability calculation)
     grid = build_h2h_grid(engines, h2h_raw)
+
+    # Now apply requested sort to both engines and grid together
+    if sort_column and sort_column != 'elo':
+        # Create combined list for sorting
+        combined = list(zip(engines, grid))
+
+        # Define sort key based on column
+        if sort_column == 'name':
+            key_func = lambda x: x[0]['engine'].name.lower()
+            default_reverse = False
+        elif sort_column == 'bayes':
+            key_func = lambda x: x[1].get('bayes_elo') or 0
+            default_reverse = True
+        elif sort_column == 'ordo':
+            key_func = lambda x: x[1].get('ordo') or 0
+            default_reverse = True
+        elif sort_column == 'stability':
+            key_func = lambda x: x[1].get('stability', 0)
+            default_reverse = True
+        elif sort_column == 'games':
+            key_func = lambda x: x[1].get('games_played', 0)
+            default_reverse = True
+        else:
+            key_func = lambda x: x[0]['elo']
+            default_reverse = True
+
+        # Determine sort direction
+        reverse = default_reverse
+        if sort_direction == 'asc':
+            reverse = False
+        elif sort_direction == 'desc':
+            reverse = True
+
+        combined.sort(key=key_func, reverse=reverse)
+        engines, grid = zip(*combined)
+        engines = list(engines)
+        grid = list(grid)
+
+        # Update ranks in grid
+        for i, row in enumerate(grid):
+            row['rank'] = i + 1
+    elif sort_direction == 'asc':
+        # ELO column with ascending order (reverse the default)
+        combined = list(zip(engines, grid))
+        combined.sort(key=lambda x: x[0]['elo'], reverse=False)
+        engines, grid = zip(*combined)
+        engines = list(engines)
+        grid = list(grid)
+        for i, row in enumerate(grid):
+            row['rank'] = i + 1
+
     column_headers = [(i + 1, e['engine'].name) for i, e in enumerate(engines)]
     last_played = get_last_played_engines()
 
