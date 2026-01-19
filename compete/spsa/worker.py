@@ -1,8 +1,9 @@
 """
 SPSA worker implementation.
 
-Polls the database for pending SPSA iterations and runs games between
-perturbed engine pairs. Results are aggregated (no individual game saves).
+Polls the database for pending SPSA iterations, builds engines from
+database parameters if needed, and runs games between perturbed engine pairs.
+Results are aggregated (no individual game saves).
 """
 
 import os
@@ -13,8 +14,21 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib
+
 from compete.game import play_game, GameConfig, play_game_from_config
 from compete.openings import OPENING_BOOK
+from compete.spsa.build import build_spsa_engines, get_rusty_rival_path
+
+
+def load_config() -> dict:
+    """Load SPSA configuration."""
+    config_file = Path(__file__).parent / 'config.toml'
+    with open(config_file, 'rb') as f:
+        return tomllib.load(f)
 
 
 def get_pending_iteration():
@@ -48,6 +62,8 @@ def get_pending_iteration():
             'iteration_number': iteration.iteration_number,
             'plus_engine_path': iteration.plus_engine_path,
             'minus_engine_path': iteration.minus_engine_path,
+            'plus_parameters': iteration.plus_parameters,
+            'minus_parameters': iteration.minus_parameters,
             'timelow_ms': iteration.timelow_ms,
             'timehigh_ms': iteration.timehigh_ms,
             'target_games': iteration.target_games,
@@ -85,6 +101,50 @@ def update_iteration_results(iteration_id: int, games: int, plus_wins: int, minu
             }
         )
         db.session.commit()
+
+
+def ensure_engines_built(iteration: dict, config: dict) -> tuple[str, str]:
+    """
+    Ensure engine binaries exist, building from database parameters if needed.
+
+    Args:
+        iteration: Iteration data from database
+        config: SPSA configuration
+
+    Returns:
+        (plus_path, minus_path) - paths to engine binaries
+    """
+    plus_path = Path(iteration['plus_engine_path'])
+    minus_path = Path(iteration['minus_engine_path'])
+
+    # Check if both binaries exist
+    if plus_path.exists() and minus_path.exists():
+        return str(plus_path), str(minus_path)
+
+    # Need to build engines from parameters
+    print(f"\n  Building engines for iteration {iteration['iteration_number']}...")
+
+    src_path = get_rusty_rival_path(config)
+    output_base = Path(config['build']['engines_output_path'])
+    if not output_base.is_absolute():
+        chess_compete_dir = Path(__file__).parent.parent.parent
+        output_base = chess_compete_dir / output_base
+
+    # Build with parameters from database
+    plus_params = iteration['plus_parameters']
+    minus_params = iteration['minus_parameters']
+
+    try:
+        new_plus_path, new_minus_path = build_spsa_engines(
+            src_path, output_base,
+            plus_params, minus_params,
+            config['build']['plus_engine_name'],
+            config['build']['minus_engine_name']
+        )
+        print(f"  Built engines: {new_plus_path}, {new_minus_path}")
+        return str(new_plus_path), str(new_minus_path)
+    except Exception as e:
+        raise RuntimeError(f"Failed to build engines: {e}")
 
 
 def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_ms: int,
@@ -223,8 +283,8 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
     """
     Run the SPSA worker loop.
 
-    Continuously polls for pending SPSA iterations and runs games.
-    Results are aggregated and saved to the database (no individual game saves).
+    Continuously polls for pending SPSA iterations, builds engines if needed,
+    and runs games. Results are aggregated and saved to the database.
 
     Args:
         concurrency: Number of games to run in parallel
@@ -232,6 +292,9 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
         poll_interval: Seconds to wait when no work is available
     """
     hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
+
+    # Load config for build settings
+    config = load_config()
 
     print(f"\n{'='*60}")
     print("SPSA WORKER MODE")
@@ -241,6 +304,7 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
     print(f"Batch size: {batch_size} games per update")
     print(f"Poll interval: {poll_interval}s when idle")
     print(f"Opening book: {len(OPENING_BOOK)} positions")
+    print(f"Rusty-rival source: {get_rusty_rival_path(config)}")
     print(f"{'='*60}")
     print("\nWaiting for work...")
 
@@ -261,9 +325,19 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
             if current_iteration != iteration['iteration_number']:
                 current_iteration = iteration['iteration_number']
                 print(f"\n\nIteration {current_iteration}: {iteration['games_played']}/{iteration['target_games']} games")
-                print(f"  Plus:  {iteration['plus_engine_path']}")
-                print(f"  Minus: {iteration['minus_engine_path']}")
                 print(f"  Time:  {iteration['timelow_ms']}-{iteration['timehigh_ms']}ms/move")
+
+            # Ensure engines are built (will build from params if needed)
+            try:
+                plus_path, minus_path = ensure_engines_built(iteration, config)
+            except RuntimeError as e:
+                print(f"\n  ERROR: {e}")
+                print("  Waiting before retry...")
+                time.sleep(poll_interval * 2)
+                continue
+
+            print(f"  Plus:  {plus_path}")
+            print(f"  Minus: {minus_path}")
 
             # Check if iteration is complete
             remaining = iteration['target_games'] - iteration['games_played']
@@ -279,8 +353,8 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
             # Play batch of games
             print(f"\n  Playing {actual_batch} games...", end=" ", flush=True)
             plus_wins, minus_wins, draws = play_spsa_batch(
-                iteration['plus_engine_path'],
-                iteration['minus_engine_path'],
+                plus_path,
+                minus_path,
                 iteration['timelow_ms'],
                 iteration['timehigh_ms'],
                 actual_batch,
