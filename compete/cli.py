@@ -4,8 +4,12 @@ Command-line interface for the chess engine competition harness.
 
 import argparse
 import multiprocessing
+import os
 import sys
 from pathlib import Path
+
+# Set stack size for Rust engines (rusty-rival requires this)
+os.environ['RUST_MIN_STACK'] = '4097152'
 
 # Fix for macOS: use 'fork' start method for multiprocessing
 # macOS switched to 'spawn' in Python 3.8 which causes issues with ProcessPoolExecutor
