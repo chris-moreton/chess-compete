@@ -598,6 +598,8 @@ def resolve_engine_name(shorthand: str, engine_dir: Path) -> str:
     """
     Resolve a shorthand engine name to the full engine name.
     E.g., 'v1' -> 'v001-baseline', 'v10' -> 'v010-arrayvec-movelist'
+
+    If engine is not found locally, attempts to download/initialize it first.
     """
     engines = discover_engines(engine_dir)
 
@@ -628,6 +630,17 @@ def resolve_engine_name(shorthand: str, engine_dir: Path) -> str:
     if len(matches) == 1:
         return matches[0]
     elif len(matches) == 0:
+        # Engine not found locally - try to initialize it
+        if ensure_engine_initialized(shorthand, engine_dir):
+            # Re-discover engines after initialization
+            engines = discover_engines(engine_dir)
+            if shorthand in engines:
+                return shorthand
+            # Check for matches again (in case initialization created a differently-named engine)
+            matches = [name for name in engines.keys() if name.startswith(f"{shorthand}")]
+            if len(matches) == 1:
+                return matches[0]
+
         print(f"Error: No engine found matching '{shorthand}'")
         print(f"Available engines: {', '.join(sorted(engines.keys()))}")
         sys.exit(1)
