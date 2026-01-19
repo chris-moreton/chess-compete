@@ -148,7 +148,7 @@ def ensure_engines_built(iteration: dict, config: dict) -> tuple[str, str]:
 
 
 def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_ms: int,
-                    batch_size: int, concurrency: int) -> tuple[int, int, int]:
+                    batch_size: int, concurrency: int) -> tuple[int, int, int, int]:
     """
     Play a batch of games between plus and minus engines.
 
@@ -161,11 +161,12 @@ def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_m
         concurrency: Number of parallel games
 
     Returns:
-        (plus_wins, minus_wins, draws)
+        (plus_wins, minus_wins, draws, errors) - errors are NOT counted as games
     """
     plus_wins = 0
     minus_wins = 0
     draws = 0
+    errors = 0
 
     if concurrency > 1:
         # Parallel execution
@@ -234,8 +235,7 @@ def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_m
                             draws += 1
                 except Exception as e:
                     print(f"  Error in game: {e}")
-                    # Count as draw on error to avoid bias
-                    draws += 1
+                    errors += 1
 
     else:
         # Sequential execution
@@ -274,9 +274,9 @@ def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_m
                         draws += 1
             except Exception as e:
                 print(f"  Error in game: {e}")
-                draws += 1
+                errors += 1
 
-    return plus_wins, minus_wins, draws
+    return plus_wins, minus_wins, draws, errors
 
 
 def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: int = 10):
@@ -352,7 +352,7 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
 
             # Play batch of games
             print(f"\n  Playing {actual_batch} games...", end=" ", flush=True)
-            plus_wins, minus_wins, draws = play_spsa_batch(
+            plus_wins, minus_wins, draws, errors = play_spsa_batch(
                 plus_path,
                 minus_path,
                 iteration['timelow_ms'],
@@ -361,11 +361,18 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                 concurrency
             )
 
-            # Update database
-            update_iteration_results(iteration['id'], actual_batch, plus_wins, minus_wins, draws)
+            # Only count successful games (errors don't count toward total)
+            completed_games = plus_wins + minus_wins + draws
 
-            games_total += actual_batch
-            print(f"+{plus_wins} -{minus_wins} ={draws} (total: {games_total})")
+            if completed_games > 0:
+                # Update database with actual completed games
+                update_iteration_results(iteration['id'], completed_games, plus_wins, minus_wins, draws)
+                games_total += completed_games
+
+            if errors > 0:
+                print(f"+{plus_wins} -{minus_wins} ={draws} errors={errors} (total: {games_total})")
+            else:
+                print(f"+{plus_wins} -{minus_wins} ={draws} (total: {games_total})")
 
         except KeyboardInterrupt:
             print(f"\n\nWorker stopped. Total games played: {games_total}")
