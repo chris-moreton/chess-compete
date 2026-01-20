@@ -195,7 +195,7 @@ def wait_for_completion(iteration_id: int, poll_interval: int = 30) -> dict:
                 total = iteration.games_played or 1
                 pct = plus_score / total * 100
 
-                print(f"\r  Progress: {progress} games | Plus: +{iteration.plus_wins} -{iteration.minus_wins} ={iteration.draws} ({pct:.1f}%)", end='', flush=True)
+                print(f"\r  Progress: {progress} games | Plus: {iteration.plus_wins}W-{iteration.minus_wins}L-{iteration.draws}D ({pct:.1f}%)", end='', flush=True)
 
                 if iteration.games_played >= iteration.target_games:
                     print()  # Newline after progress
