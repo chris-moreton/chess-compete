@@ -103,32 +103,38 @@ def update_iteration_results(iteration_id: int, games: int, plus_wins: int, minu
         db.session.commit()
 
 
-def ensure_engines_built(iteration: dict, config: dict) -> tuple[str, str]:
+def ensure_engines_built(iteration: dict, config: dict, force_rebuild: bool = False) -> tuple[str, str]:
     """
     Ensure engine binaries exist, building from database parameters if needed.
 
     Args:
         iteration: Iteration data from database
         config: SPSA configuration
+        force_rebuild: If True, rebuild even if binaries exist (for new iterations)
 
     Returns:
         (plus_path, minus_path) - paths to engine binaries
     """
-    plus_path = Path(iteration['plus_engine_path'])
-    minus_path = Path(iteration['minus_engine_path'])
+    # Compute LOCAL paths (don't use database paths which may be from another OS)
+    output_base = Path(config['build']['engines_output_path'])
+    if not output_base.is_absolute():
+        chess_compete_dir = Path(__file__).parent.parent.parent
+        output_base = chess_compete_dir / output_base
 
-    # Check if both binaries exist
-    if plus_path.exists() and minus_path.exists():
+    binary_name = 'rusty-rival.exe' if os.name == 'nt' else 'rusty-rival'
+    plus_dir = output_base / config['build']['plus_engine_name']
+    minus_dir = output_base / config['build']['minus_engine_name']
+    plus_path = plus_dir / binary_name
+    minus_path = minus_dir / binary_name
+
+    # Check if both binaries exist locally (skip if force_rebuild)
+    if not force_rebuild and plus_path.exists() and minus_path.exists():
         return str(plus_path), str(minus_path)
 
     # Need to build engines from parameters
     print(f"\n  Building engines for iteration {iteration['iteration_number']}...")
 
     src_path = get_rusty_rival_path(config)
-    output_base = Path(config['build']['engines_output_path'])
-    if not output_base.is_absolute():
-        chess_compete_dir = Path(__file__).parent.parent.parent
-        output_base = chess_compete_dir / output_base
 
     # Build with parameters from database
     plus_params = iteration['plus_parameters']
@@ -334,6 +340,7 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
 
     games_total = 0
     current_iteration = None
+    engines_built_for_iteration = None  # Track which iteration we built engines for
 
     while True:
         try:
@@ -346,14 +353,17 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                 continue
 
             # Check if we switched to a new iteration
-            if current_iteration != iteration['iteration_number']:
+            iteration_changed = current_iteration != iteration['iteration_number']
+            if iteration_changed:
                 current_iteration = iteration['iteration_number']
                 print(f"\n\nIteration {current_iteration}: {iteration['games_played']}/{iteration['target_games']} games")
                 print(f"  Time:  {iteration['timelow_ms']}-{iteration['timehigh_ms']}ms/move")
 
-            # Ensure engines are built (will build from params if needed)
+            # Ensure engines are built (force rebuild if iteration changed)
+            need_rebuild = iteration_changed or engines_built_for_iteration != current_iteration
             try:
-                plus_path, minus_path = ensure_engines_built(iteration, config)
+                plus_path, minus_path = ensure_engines_built(iteration, config, force_rebuild=need_rebuild)
+                engines_built_for_iteration = current_iteration
             except RuntimeError as e:
                 print(f"\n  ERROR: {e}")
                 print("  Waiting before retry...")
