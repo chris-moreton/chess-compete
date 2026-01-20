@@ -404,6 +404,9 @@ def run_master():
         print(f"ITERATION {k}/{max_iterations}")
         print(f"{'='*60}")
 
+        # Reload params each iteration to pick up any bound changes
+        params = load_params()
+
         # Calculate SPSA coefficients for this iteration
         a_k = a / ((k + A) ** alpha)
         c_k = c / (k ** gamma)
