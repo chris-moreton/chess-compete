@@ -35,6 +35,23 @@ except ImportError:
     import tomli as tomllib
 
 
+def with_db_retry(func, max_retries=5, retry_delay=10):
+    """Execute a database operation with retry logic."""
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                print(f"\n  DB error (attempt {attempt + 1}/{max_retries}): {e}")
+                print(f"  Retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+            else:
+                print(f"\n  DB error (attempt {attempt + 1}/{max_retries}): {e}")
+    raise RuntimeError(f"Database operation failed after {max_retries} attempts: {last_error}")
+
+
 def load_params() -> dict:
     """
     Load parameters from params.toml.
@@ -127,24 +144,27 @@ def create_iteration(iteration_number: int, plus_path: str, minus_path: str,
     from web.database import db
     from web.models import SpsaIteration
 
-    app = create_app()
-    with app.app_context():
-        iteration = SpsaIteration(
-            iteration_number=iteration_number,
-            plus_engine_path=plus_path,
-            minus_engine_path=minus_path,
-            timelow_ms=int(config['time_control']['timelow'] * 1000),
-            timehigh_ms=int(config['time_control']['timehigh'] * 1000),
-            target_games=config['games']['games_per_iteration'],
-            status='pending',
-            base_parameters={k: v['value'] for k, v in base_params.items()},
-            plus_parameters=plus_params,
-            minus_parameters=minus_params,
-            perturbation_signs=signs,
-        )
-        db.session.add(iteration)
-        db.session.commit()
-        return iteration.id
+    def _create():
+        app = create_app()
+        with app.app_context():
+            iteration = SpsaIteration(
+                iteration_number=iteration_number,
+                plus_engine_path=plus_path,
+                minus_engine_path=minus_path,
+                timelow_ms=int(config['time_control']['timelow'] * 1000),
+                timehigh_ms=int(config['time_control']['timehigh'] * 1000),
+                target_games=config['games']['games_per_iteration'],
+                status='pending',
+                base_parameters={k: v['value'] for k, v in base_params.items()},
+                plus_parameters=plus_params,
+                minus_parameters=minus_params,
+                perturbation_signs=signs,
+            )
+            db.session.add(iteration)
+            db.session.commit()
+            return iteration.id
+
+    return with_db_retry(_create)
 
 
 def wait_for_completion(iteration_id: int, poll_interval: int = 30) -> dict:
@@ -157,31 +177,47 @@ def wait_for_completion(iteration_id: int, poll_interval: int = 30) -> dict:
     from web.database import db
     from web.models import SpsaIteration
 
+    db_errors = 0
+    max_db_errors = 10
+
     while True:
-        app = create_app()
-        with app.app_context():
-            iteration = db.session.get(SpsaIteration, iteration_id)
-            if not iteration:
-                raise RuntimeError(f"Iteration {iteration_id} not found!")
+        try:
+            app = create_app()
+            with app.app_context():
+                iteration = db.session.get(SpsaIteration, iteration_id)
+                if not iteration:
+                    raise RuntimeError(f"Iteration {iteration_id} not found!")
 
-            progress = f"{iteration.games_played}/{iteration.target_games}"
-            plus_score = iteration.plus_wins + iteration.draws * 0.5
-            total = iteration.games_played or 1
-            pct = plus_score / total * 100
+                progress = f"{iteration.games_played}/{iteration.target_games}"
+                plus_score = iteration.plus_wins + iteration.draws * 0.5
+                total = iteration.games_played or 1
+                pct = plus_score / total * 100
 
-            print(f"\r  Progress: {progress} games | Plus: +{iteration.plus_wins} -{iteration.minus_wins} ={iteration.draws} ({pct:.1f}%)", end='', flush=True)
+                print(f"\r  Progress: {progress} games | Plus: +{iteration.plus_wins} -{iteration.minus_wins} ={iteration.draws} ({pct:.1f}%)", end='', flush=True)
 
-            if iteration.games_played >= iteration.target_games:
-                print()  # Newline after progress
-                return {
-                    'id': iteration.id,
-                    'games_played': iteration.games_played,
-                    'plus_wins': iteration.plus_wins,
-                    'minus_wins': iteration.minus_wins,
-                    'draws': iteration.draws,
-                    'base_parameters': iteration.base_parameters,
-                    'perturbation_signs': iteration.perturbation_signs,
-                }
+                if iteration.games_played >= iteration.target_games:
+                    print()  # Newline after progress
+                    return {
+                        'id': iteration.id,
+                        'games_played': iteration.games_played,
+                        'plus_wins': iteration.plus_wins,
+                        'minus_wins': iteration.minus_wins,
+                        'draws': iteration.draws,
+                        'base_parameters': iteration.base_parameters,
+                        'perturbation_signs': iteration.perturbation_signs,
+                    }
+
+                # Reset error counter on success
+                db_errors = 0
+
+        except Exception as e:
+            db_errors += 1
+            print(f"\n  DB error ({db_errors}/{max_db_errors}): {e}")
+            if db_errors >= max_db_errors:
+                raise RuntimeError(f"Too many database errors, giving up")
+            # Wait a bit longer before retry on error
+            time.sleep(poll_interval * 2)
+            continue
 
         time.sleep(poll_interval)
 
@@ -255,14 +291,17 @@ def mark_iteration_complete(iteration_id: int, gradient: dict, elo_diff: float):
     from web.database import db
     from web.models import SpsaIteration
 
-    app = create_app()
-    with app.app_context():
-        iteration = db.session.get(SpsaIteration, iteration_id)
-        iteration.status = 'complete'
-        iteration.gradient_estimate = gradient
-        iteration.elo_diff = elo_diff
-        iteration.completed_at = datetime.utcnow()
-        db.session.commit()
+    def _mark():
+        app = create_app()
+        with app.app_context():
+            iteration = db.session.get(SpsaIteration, iteration_id)
+            iteration.status = 'complete'
+            iteration.gradient_estimate = gradient
+            iteration.elo_diff = elo_diff
+            iteration.completed_at = datetime.utcnow()
+            db.session.commit()
+
+    with_db_retry(_mark)
 
 
 def get_last_complete_iteration_number() -> int:
@@ -270,14 +309,17 @@ def get_last_complete_iteration_number() -> int:
     from web.app import create_app
     from web.models import SpsaIteration
 
-    app = create_app()
-    with app.app_context():
-        last = SpsaIteration.query.filter(
-            SpsaIteration.status == 'complete'
-        ).order_by(SpsaIteration.iteration_number.desc()).first()
-        if last:
-            return last.iteration_number
-        return 0
+    def _get():
+        app = create_app()
+        with app.app_context():
+            last = SpsaIteration.query.filter(
+                SpsaIteration.status == 'complete'
+            ).order_by(SpsaIteration.iteration_number.desc()).first()
+            if last:
+                return last.iteration_number
+            return 0
+
+    return with_db_retry(_get)
 
 
 def get_incomplete_iteration() -> dict | None:
@@ -285,27 +327,30 @@ def get_incomplete_iteration() -> dict | None:
     from web.app import create_app
     from web.models import SpsaIteration
 
-    app = create_app()
-    with app.app_context():
-        # Find any iteration that's not marked complete
-        iteration = SpsaIteration.query.filter(
-            SpsaIteration.status.in_(['pending', 'in_progress'])
-        ).order_by(SpsaIteration.iteration_number.desc()).first()
+    def _get():
+        app = create_app()
+        with app.app_context():
+            # Find any iteration that's not marked complete
+            iteration = SpsaIteration.query.filter(
+                SpsaIteration.status.in_(['pending', 'in_progress'])
+            ).order_by(SpsaIteration.iteration_number.desc()).first()
 
-        if not iteration:
-            return None
+            if not iteration:
+                return None
 
-        return {
-            'id': iteration.id,
-            'iteration_number': iteration.iteration_number,
-            'games_played': iteration.games_played,
-            'target_games': iteration.target_games,
-            'plus_wins': iteration.plus_wins,
-            'minus_wins': iteration.minus_wins,
-            'draws': iteration.draws,
-            'base_parameters': iteration.base_parameters,
-            'perturbation_signs': iteration.perturbation_signs,
-        }
+            return {
+                'id': iteration.id,
+                'iteration_number': iteration.iteration_number,
+                'games_played': iteration.games_played,
+                'target_games': iteration.target_games,
+                'plus_wins': iteration.plus_wins,
+                'minus_wins': iteration.minus_wins,
+                'draws': iteration.draws,
+                'base_parameters': iteration.base_parameters,
+                'perturbation_signs': iteration.perturbation_signs,
+            }
+
+    return with_db_retry(_get)
 
 
 def run_master():
