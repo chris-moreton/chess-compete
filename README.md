@@ -1,6 +1,13 @@
 # Chess Engine Competition Framework
 
-A comprehensive engine vs engine testing harness with Elo tracking, automatic engine management, and multiple competition modes.
+A comprehensive engine vs engine testing harness with Elo tracking, automatic engine management, multiple competition modes, and distributed SPSA parameter tuning.
+
+**Key Features:**
+- **Competition Modes**: Head-to-head matches, round-robin leagues, gauntlet testing, knockout cups, random pairings
+- **Elo Tracking**: Automatic rating updates with BayesElo and Ordo calculations
+- **SPSA Tuning**: Distributed parameter optimization across multiple machines
+- **Web Dashboard**: Live statistics, H2H grids, cup brackets, EPD test results
+- **Engine Management**: Auto-download engines, enable/disable, filter by type
 
 ---
 
@@ -35,6 +42,10 @@ python -m compete --random --games 100 --time 0.5
 
 # Cup mode (knockout tournament)
 python -m compete --cup --games 10 --time 1.0
+
+# SPSA tuning (run master on one machine, workers on many)
+python -m compete.spsa.master          # Master: orchestrates iterations
+python -m compete --spsa -c 8          # Worker: plays games (run on multiple machines)
 ```
 
 ---
@@ -45,6 +56,7 @@ python -m compete --cup --games 10 --time 1.0
 
 - Python 3.10+
 - PostgreSQL database
+- Rust toolchain (only required for SPSA tuning - to compile engine variants)
 
 ### Step 1: Clone and Install Dependencies
 
@@ -174,6 +186,13 @@ python -m compete --enable java-rival-38 v1.0.17
 
 ```
 chess-compete/
+  compete/
+    spsa/
+      config.toml     # Tuning hyperparameters
+      params.toml     # Parameter values (updated by SPSA)
+      master.py       # Master orchestration
+      worker.py       # Worker game playing
+      build.py        # Engine building
   engines/
     stockfish/
       stockfish-windows-x86-64-avx2.exe   # Auto-downloaded
@@ -181,10 +200,17 @@ chess-compete/
       rusty-rival-v1.0.17-windows-x86_64.exe
     java-rival-38.0.0/
       rivalchess-v38.0.0.jar
+    spsa/             # SPSA-built engines (ephemeral)
+      spsa-plus/
+        rusty-rival.exe
+      spsa-minus/
+        rusty-rival.exe
   openings/
     eet.epd    # EPD test files
   results/
     competitions/   # PGN output
+  migrations/
+    002_spsa_iterations.sql   # SPSA database schema
 ```
 
 ### Engine Discovery
@@ -392,15 +418,79 @@ The slight per-game slowdown is vastly outweighed by throughput gains.
 
 ## SPSA Tuning
 
-SPSA (Simultaneous Perturbation Stochastic Approximation) mode enables distributed parameter tuning for chess engines.
+SPSA (Simultaneous Perturbation Stochastic Approximation) mode enables distributed parameter tuning for chess engines. It perturbs all parameters simultaneously and estimates gradients from game results.
+
+### How SPSA Works
+
+1. **Perturbation**: For each iteration, randomly perturb ALL parameters by ±delta
+2. **Build**: Compile two engine versions: one with +delta params ("plus"), one with -delta ("minus")
+3. **Play**: Workers play games between plus and minus engines
+4. **Gradient**: Estimate gradient from win rate difference: `g = (plus_wins - minus_wins) / delta`
+5. **Update**: Move parameters in the gradient direction: `param += step_size * g`
+6. **Repeat**: Continue for N iterations, with step size decreasing over time
 
 ### Architecture
 
-- **Master** (in engine repo): Generates perturbed engine pairs, creates iteration records, calculates gradients
-- **Workers** (chess-compete): Poll database for work, run games, update aggregate results
-- **Database**: Coordinates between master and workers via `spsa_iterations` table
+All SPSA tooling lives in `compete/spsa/`:
+
+- **Master** (`master.py`): Orchestrates iterations - creates perturbed params, builds engines, waits for games, calculates gradients, updates params
+- **Workers** (`worker.py`): Poll database for work, play games between plus/minus engines, report results
+- **Build** (`build.py`): Modifies `engine_constants.rs` with parameter values, compiles engine, restores original
+- **Database**: Coordinates via `spsa_iterations` table
+
+### Configuration Files
+
+**`compete/spsa/params.toml`** - Parameters being tuned:
+```toml
+[see_prune_max_depth]
+value = 10.0          # Current value (updated by SPSA)
+min = 3               # Lower bound
+max = 14              # Upper bound
+step = 1              # Perturbation delta
+```
+
+**`compete/spsa/config.toml`** - Tuning settings:
+```toml
+[time_control]
+timelow = 0.25        # Min seconds per move
+timehigh = 1.0        # Max seconds per move
+
+[games]
+games_per_iteration = 150
+
+[spsa]
+max_iterations = 500
+a = 1.0               # Step size numerator
+c = 1.0               # Perturbation multiplier
+A = 50                # Stability constant
+
+[build]
+rusty_rival_path = "../rusty-rival"    # Path to engine source
+engines_output_path = "engines/spsa"   # Where to put built engines
+```
+
+### Running the Master
+
+The master runs on a single machine and orchestrates the tuning:
+
+```bash
+cd chess-compete
+python -m compete.spsa.master
+```
+
+The master will:
+1. Read current parameter values from `params.toml`
+2. Generate random perturbations (±delta for each parameter)
+3. Build plus and minus engines by modifying `engine_constants.rs` and compiling
+4. Create an iteration record in the database with engine paths
+5. Wait for workers to complete the target number of games
+6. Calculate gradient estimate from results
+7. Update parameter values in `params.toml`
+8. Repeat until max iterations reached
 
 ### Running Workers
+
+Workers can run on multiple machines (including the master machine):
 
 ```bash
 # Start SPSA worker with 8 parallel games
@@ -412,10 +502,22 @@ python -m compete --spsa -c 8 --spsa-batch 20
 
 Workers will:
 1. Poll the database for pending iterations
-2. Load engine binaries from paths in the iteration record
-3. Run games with random openings and time controls (from iteration settings)
+2. Build engines locally from the parameter values stored in the iteration record
+3. Run games with random openings and time controls
 4. Update aggregate results atomically (no individual game saves)
 5. Continue until iteration is complete, then fetch next
+
+### Engine Build Process
+
+When the master or workers build engines:
+
+1. Read `rusty-rival/src/engine_constants.rs`
+2. Replace constant values using regex patterns (e.g., `pub const SEE_PRUNE_MAX_DEPTH: u8 = 6;`)
+3. Run `cargo build --release` in the rusty-rival directory
+4. Copy the binary to the output path
+5. **Restore the original `engine_constants.rs`** (so the source tree stays clean)
+
+The mapping from `params.toml` names to Rust constants is defined in `build.py`.
 
 ### Key Features
 
@@ -424,6 +526,7 @@ Workers will:
 - **Random openings**: Each game uses a random opening from the standard book
 - **Time variety**: Random time per game within the iteration's `timelow`-`timehigh` range
 - **Distributed**: Multiple workers can contribute to the same iteration
+- **Crash recovery**: Master resumes incomplete iterations; workers can restart safely
 
 ### Database Migration
 
@@ -448,9 +551,21 @@ with psycopg.connect(db_url) as conn:
 "
 ```
 
-### Master Setup
+### Adding New Parameters
 
-The SPSA master runs from the engine repository (e.g., `rusty-rival/spsa/master.py`). See the engine's documentation for master configuration.
+To add parameters for tuning:
+
+1. Add the parameter to `params.toml` with appropriate bounds and step size
+2. Add the regex pattern mapping in `build.py` (`PARAM_MAPPINGS` or `ARRAY_PARAM_MAPPINGS`)
+3. Restart the master (it reads params.toml fresh each iteration)
+
+### Interpreting Results
+
+Monitor parameter progression over iterations. Look for:
+- **Clear trends**: Parameter moving consistently in one direction (strong signal)
+- **Hitting bounds**: If a parameter hits min/max, consider expanding the bounds
+- **Oscillation**: Noisy movement may indicate weak signal or high variance - consider more games per iteration
+- **Stability**: Parameters near starting values were likely already well-tuned
 
 ---
 
@@ -628,7 +743,11 @@ compete/
 ├── openings.py        # OPENING_BOOK data, load_epd_positions()
 └── spsa/
     ├── __init__.py    # SPSA module exports
-    └── worker.py      # SPSA worker mode implementation
+    ├── master.py      # SPSA master orchestration
+    ├── worker.py      # SPSA worker (game playing)
+    ├── build.py       # Engine building utilities
+    ├── config.toml    # Tuning hyperparameters
+    └── params.toml    # Parameter values and bounds
 
 web/
 ├── app.py             # Flask application factory

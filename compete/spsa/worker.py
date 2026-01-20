@@ -148,7 +148,7 @@ def ensure_engines_built(iteration: dict, config: dict) -> tuple[str, str]:
 
 
 def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_ms: int,
-                    batch_size: int, concurrency: int) -> tuple[int, int, int, int]:
+                    batch_size: int, concurrency: int) -> tuple[int, int, int, int, float, float]:
     """
     Play a batch of games between plus and minus engines.
 
@@ -161,12 +161,18 @@ def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_m
         concurrency: Number of parallel games
 
     Returns:
-        (plus_wins, minus_wins, draws, errors) - errors are NOT counted as games
+        (plus_wins, minus_wins, draws, errors, plus_avg_nps, minus_avg_nps)
+        - errors are NOT counted as games
+        - NPS values are averages across games (0 if no data)
     """
     plus_wins = 0
     minus_wins = 0
     draws = 0
     errors = 0
+    plus_nps_total = 0
+    minus_nps_total = 0
+    plus_nps_count = 0
+    minus_nps_count = 0
 
     if concurrency > 1:
         # Parallel execution
@@ -225,6 +231,13 @@ def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_m
                             minus_wins += 1
                         else:
                             draws += 1
+                        # Collect NPS (plus=white, minus=black)
+                        if result.white_nps:
+                            plus_nps_total += result.white_nps
+                            plus_nps_count += 1
+                        if result.black_nps:
+                            minus_nps_total += result.black_nps
+                            minus_nps_count += 1
                     else:
                         # Plus was black
                         if result.result == "0-1":
@@ -233,6 +246,13 @@ def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_m
                             minus_wins += 1
                         else:
                             draws += 1
+                        # Collect NPS (minus=white, plus=black)
+                        if result.white_nps:
+                            minus_nps_total += result.white_nps
+                            minus_nps_count += 1
+                        if result.black_nps:
+                            plus_nps_total += result.black_nps
+                            plus_nps_count += 1
                 except Exception as e:
                     print(f"  Error in game: {e}")
                     errors += 1
@@ -276,7 +296,11 @@ def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_m
                 print(f"  Error in game: {e}")
                 errors += 1
 
-    return plus_wins, minus_wins, draws, errors
+    # Calculate average NPS
+    plus_avg_nps = plus_nps_total / plus_nps_count if plus_nps_count > 0 else 0
+    minus_avg_nps = minus_nps_total / minus_nps_count if minus_nps_count > 0 else 0
+
+    return plus_wins, minus_wins, draws, errors, plus_avg_nps, minus_avg_nps
 
 
 def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: int = 10):
@@ -352,7 +376,7 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
 
             # Play batch of games
             print(f"\n  Playing {actual_batch} games...", end=" ", flush=True)
-            plus_wins, minus_wins, draws, errors = play_spsa_batch(
+            plus_wins, minus_wins, draws, errors, plus_nps, minus_nps = play_spsa_batch(
                 plus_path,
                 minus_path,
                 iteration['timelow_ms'],
@@ -369,10 +393,18 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                 update_iteration_results(iteration['id'], completed_games, plus_wins, minus_wins, draws)
                 games_total += completed_games
 
+            # Format NPS for display (in thousands)
+            nps_str = ""
+            if plus_nps > 0 or minus_nps > 0:
+                plus_knps = plus_nps / 1000 if plus_nps > 0 else 0
+                minus_knps = minus_nps / 1000 if minus_nps > 0 else 0
+                avg_knps = (plus_nps + minus_nps) / 2000 if plus_nps > 0 and minus_nps > 0 else max(plus_knps, minus_knps)
+                nps_str = f" NPS: {avg_knps:.0f}k"
+
             if errors > 0:
-                print(f"+{plus_wins} -{minus_wins} ={draws} errors={errors} (total: {games_total})")
+                print(f"+{plus_wins} -{minus_wins} ={draws} errors={errors}{nps_str} (total: {games_total})")
             else:
-                print(f"+{plus_wins} -{minus_wins} ={draws} (total: {games_total})")
+                print(f"+{plus_wins} -{minus_wins} ={draws}{nps_str} (total: {games_total})")
 
         except KeyboardInterrupt:
             print(f"\n\nWorker stopped. Total games played: {games_total}")
