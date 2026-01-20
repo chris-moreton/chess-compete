@@ -7,7 +7,7 @@ from web.queries import (
     get_dashboard_data, get_unique_hostnames, get_time_range,
     clear_elo_cache, recalculate_all_and_store
 )
-from web.models import Cup, CupRound, CupMatch, Engine, Game, EpdTestRun, EpdTestResult
+from web.models import Cup, CupRound, CupMatch, Engine, Game, EpdTestRun, EpdTestResult, SpsaIteration
 from web.database import db
 from sqlalchemy import func, case, and_, or_
 
@@ -548,4 +548,73 @@ def register_routes(app):
             positions=positions,
             engines=engines,
             engine_stats=engine_stats
+        )
+
+    @app.route('/spsa')
+    def spsa_dashboard():
+        """SPSA parameter tuning dashboard with progression graphs."""
+        # Get all completed iterations ordered by iteration number
+        iterations = SpsaIteration.query.filter(
+            SpsaIteration.status == 'complete'
+        ).order_by(SpsaIteration.iteration_number.asc()).all()
+
+        if not iterations:
+            return render_template('spsa.html', iterations=[], params_data={}, elo_data=[])
+
+        # Get parameter names from first iteration
+        param_names = sorted(iterations[0].base_parameters.keys()) if iterations[0].base_parameters else []
+
+        # Build parameter progression data for Chart.js
+        params_data = {name: [] for name in param_names}
+        iteration_numbers = []
+        elo_data = []
+
+        for it in iterations:
+            iteration_numbers.append(it.iteration_number)
+            elo_data.append(float(it.elo_diff) if it.elo_diff else 0)
+            if it.base_parameters:
+                for name in param_names:
+                    params_data[name].append(it.base_parameters.get(name, 0))
+
+        # Get current/latest values for display
+        latest = iterations[-1] if iterations else None
+        current_params = {}
+        if latest and latest.base_parameters:
+            current_params = latest.base_parameters
+
+        # Calculate total change from first to last iteration
+        param_changes = {}
+        if len(iterations) >= 2 and iterations[0].base_parameters and iterations[-1].base_parameters:
+            first_params = iterations[0].base_parameters
+            last_params = iterations[-1].base_parameters
+            for name in param_names:
+                first_val = first_params.get(name, 0)
+                last_val = last_params.get(name, 0)
+                if first_val != 0:
+                    pct_change = ((last_val - first_val) / abs(first_val)) * 100
+                else:
+                    pct_change = 0
+                param_changes[name] = {
+                    'first': first_val,
+                    'last': last_val,
+                    'change': last_val - first_val,
+                    'pct_change': pct_change
+                }
+
+        # Get in-progress iteration if any
+        in_progress = SpsaIteration.query.filter(
+            SpsaIteration.status == 'in_progress'
+        ).first()
+
+        return render_template(
+            'spsa.html',
+            iterations=iterations,
+            param_names=param_names,
+            params_data=params_data,
+            iteration_numbers=iteration_numbers,
+            elo_data=elo_data,
+            current_params=current_params,
+            param_changes=param_changes,
+            in_progress=in_progress,
+            total_iterations=len(iterations)
         )
