@@ -184,6 +184,8 @@ def wait_for_completion(iteration_id: int, poll_interval: int = 30) -> dict:
         try:
             app = create_app()
             with app.app_context():
+                # Expire all cached objects to force fresh read from database
+                db.session.expire_all()
                 iteration = db.session.get(SpsaIteration, iteration_id)
                 if not iteration:
                     raise RuntimeError(f"Iteration {iteration_id} not found!")
