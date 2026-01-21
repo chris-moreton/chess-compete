@@ -160,24 +160,28 @@
                 <div class="value">{{ param_names|length }}</div>
             </div>
             <div class="summary-card">
-                <h3>Latest Elo Diff</h3>
-                <div class="value">{{ "%.1f"|format(elo_data[-1]) if elo_data else '-' }}</div>
+                <h3>Est. Elo vs SF</h3>
+                <div class="value">{{ "%.0f"|format(latest_ref_elo) if latest_ref_elo else '-' }}</div>
             </div>
         </div>
 
         {% if in_progress %}
         <div class="in-progress-banner">
             <h3>Iteration {{ in_progress.iteration_number }} In Progress</h3>
-            <p>Games: {{ in_progress.games_played }}/{{ in_progress.target_games }}</p>
+            <p>SPSA Games: {{ in_progress.games_played }}/{{ in_progress.target_games }}
+            {% if in_progress.ref_games_played is not none %}
+             | Reference Games: {{ in_progress.ref_games_played }}/{{ in_progress.target_games }}
+            {% endif %}
+            </p>
         </div>
         {% endif %}
 
-        <!-- Elo Diff Chart -->
+        <!-- Elo vs Stockfish Chart -->
         <div class="chart-container">
-            <h2>Elo Difference (Plus vs Minus Engine) Over Iterations</h2>
-            <p style="color: #666; font-size: 13px; margin-top: -10px;">Shows which perturbation direction was stronger each iteration. Expected to fluctuate around zero.</p>
+            <h2>Estimated Elo vs Stockfish (2600)</h2>
+            <p style="color: #666; font-size: 13px; margin-top: -10px;">Engine strength measured by playing reference games against Stockfish. Higher = stronger engine.</p>
             <div class="chart-wrapper">
-                <canvas id="eloChart"></canvas>
+                <canvas id="refEloChart"></canvas>
             </div>
         </div>
 
@@ -246,7 +250,7 @@
         <script>
             // Data from server
             const iterationNumbers = {{ iteration_numbers|tojson }};
-            const eloData = {{ elo_data|tojson }};
+            const refEloData = {{ ref_elo_data|tojson }};
             const paramsData = {{ params_data|tojson }};
             const paramNames = {{ param_names|tojson }};
             const stabilityData = {{ stability_data|tojson }};
@@ -258,20 +262,21 @@
                 '#009688', '#CDDC39'
             ];
 
-            // Elo Difference Chart
-            const eloCtx = document.getElementById('eloChart').getContext('2d');
-            new Chart(eloCtx, {
+            // Elo vs Stockfish Chart
+            const refEloCtx = document.getElementById('refEloChart').getContext('2d');
+            new Chart(refEloCtx, {
                 type: 'line',
                 data: {
                     labels: iterationNumbers,
                     datasets: [{
-                        label: 'Elo Difference',
-                        data: eloData,
-                        borderColor: '#2196F3',
-                        backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                        label: 'Estimated Elo',
+                        data: refEloData,
+                        borderColor: '#4CAF50',
+                        backgroundColor: 'rgba(76, 175, 80, 0.1)',
                         fill: true,
                         tension: 0.3,
-                        pointRadius: 3
+                        pointRadius: 3,
+                        spanGaps: true  // Connect across null values
                     }]
                 },
                 options: {
@@ -292,7 +297,7 @@
                         y: {
                             title: {
                                 display: true,
-                                text: 'Elo Diff (+ = Plus engine stronger)'
+                                text: 'Estimated Elo Rating'
                             }
                         }
                     }

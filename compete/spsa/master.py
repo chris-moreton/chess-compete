@@ -133,6 +133,7 @@ def generate_perturbations(params: dict, c_k: float) -> tuple[dict, dict, dict]:
 
 
 def create_iteration(iteration_number: int, plus_path: str, minus_path: str,
+                     base_path: str, ref_path: str | None,
                      config: dict, base_params: dict, plus_params: dict,
                      minus_params: dict, signs: dict) -> int:
     """
@@ -151,6 +152,8 @@ def create_iteration(iteration_number: int, plus_path: str, minus_path: str,
                 iteration_number=iteration_number,
                 plus_engine_path=plus_path,
                 minus_engine_path=minus_path,
+                base_engine_path=base_path,
+                ref_engine_path=ref_path,
                 timelow_ms=int(config['time_control']['timelow'] * 1000),
                 timehigh_ms=int(config['time_control']['timehigh'] * 1000),
                 target_games=config['games']['games_per_iteration'],
@@ -195,7 +198,15 @@ def wait_for_completion(iteration_id: int, poll_interval: int = 30) -> dict:
                 total = iteration.games_played or 1
                 pct = plus_score / total * 100
 
-                print(f"\r  Progress: {progress} games | Plus: {iteration.plus_wins}W-{iteration.minus_wins}L-{iteration.draws}D ({pct:.1f}%)", end='', flush=True)
+                # Show reference game progress if available
+                ref_str = ""
+                if iteration.ref_games_played > 0:
+                    ref_score = iteration.ref_wins + iteration.ref_draws * 0.5
+                    ref_total = iteration.ref_games_played
+                    ref_pct = ref_score / ref_total * 100 if ref_total > 0 else 0
+                    ref_str = f" | Ref: {iteration.ref_wins}W-{iteration.ref_losses}L-{iteration.ref_draws}D ({ref_pct:.1f}%)"
+
+                print(f"\r  Progress: {progress} games | Plus: {iteration.plus_wins}W-{iteration.minus_wins}L-{iteration.draws}D ({pct:.1f}%){ref_str}", end='', flush=True)
 
                 if iteration.games_played >= iteration.target_games:
                     print()  # Newline after progress
@@ -207,6 +218,10 @@ def wait_for_completion(iteration_id: int, poll_interval: int = 30) -> dict:
                         'draws': iteration.draws,
                         'base_parameters': iteration.base_parameters,
                         'perturbation_signs': iteration.perturbation_signs,
+                        'ref_games_played': iteration.ref_games_played,
+                        'ref_wins': iteration.ref_wins,
+                        'ref_losses': iteration.ref_losses,
+                        'ref_draws': iteration.ref_draws,
                     }
 
                 # Reset error counter on success
@@ -287,7 +302,41 @@ def update_parameters(params: dict, gradient: dict, a_k: float) -> dict:
     return params
 
 
-def mark_iteration_complete(iteration_id: int, gradient: dict, elo_diff: float):
+def calculate_elo_from_score(wins: int, losses: int, draws: int, opponent_elo: float) -> float | None:
+    """
+    Calculate Elo rating from game results against a known-strength opponent.
+
+    Uses standard Elo expected score formula:
+        E = 1 / (1 + 10^((R_opponent - R_player) / 400))
+
+    Solving for R_player given score percentage:
+        R_player = R_opponent - 400 * log10(1/S - 1)
+
+    Where S is the score percentage (0 to 1).
+
+    Returns None if no games played or score is 0% or 100% (infinite Elo).
+    """
+    import math
+
+    total = wins + losses + draws
+    if total == 0:
+        return None
+
+    score = (wins + draws * 0.5) / total
+
+    # Avoid log(0) for extreme scores - clamp to reasonable range
+    if score <= 0.001:
+        score = 0.001  # Very weak
+    elif score >= 0.999:
+        score = 0.999  # Very strong
+
+    # R_player = R_opponent - 400 * log10(1/S - 1)
+    elo = opponent_elo - 400 * math.log10(1 / score - 1)
+
+    return elo
+
+
+def mark_iteration_complete(iteration_id: int, gradient: dict, elo_diff: float, ref_elo: float | None):
     """Mark iteration as complete and save results."""
     from web.app import create_app
     from web.database import db
@@ -300,6 +349,7 @@ def mark_iteration_complete(iteration_id: int, gradient: dict, elo_diff: float):
             iteration.status = 'complete'
             iteration.gradient_estimate = gradient
             iteration.elo_diff = elo_diff
+            iteration.ref_elo_estimate = ref_elo
             iteration.completed_at = datetime.utcnow()
             db.session.commit()
 
@@ -380,6 +430,29 @@ def run_master():
     max_iterations = config['spsa']['max_iterations']
     poll_interval = config['database']['poll_interval_seconds']
 
+    # Reference engine settings
+    ref_enabled = config.get('reference', {}).get('enabled', False)
+    ref_elo = config.get('reference', {}).get('engine_elo', 2600)
+    ref_path_config = config.get('reference', {}).get('engine_path')
+
+    # Resolve reference engine path
+    ref_path = None
+    if ref_enabled and ref_path_config:
+        ref_path = Path(ref_path_config)
+        if not ref_path.is_absolute():
+            ref_path = CHESS_COMPETE_DIR / ref_path
+        # Check for .exe on Windows
+        if os.name == 'nt' and not ref_path.suffix:
+            ref_path_exe = ref_path.with_suffix('.exe')
+            if ref_path_exe.exists():
+                ref_path = ref_path_exe
+        ref_path = str(ref_path) if ref_path.exists() else None
+
+    if ref_enabled:
+        print(f"Reference engine: {ref_path} (Elo: {ref_elo})")
+    else:
+        print("Reference games: DISABLED")
+
     # Paths
     output_base = Path(config['build']['engines_output_path'])
     if not output_base.is_absolute():
@@ -431,6 +504,10 @@ def run_master():
                     'draws': incomplete['draws'],
                     'base_parameters': incomplete['base_parameters'],
                     'perturbation_signs': incomplete['perturbation_signs'],
+                    'ref_games_played': incomplete.get('ref_games_played', 0),
+                    'ref_wins': incomplete.get('ref_wins', 0),
+                    'ref_losses': incomplete.get('ref_losses', 0),
+                    'ref_draws': incomplete.get('ref_draws', 0),
                 }
                 # Skip to gradient calculation (don't wait for games)
                 gradient, elo_diff = calculate_gradient(results, params, c_k)
@@ -449,7 +526,18 @@ def run_master():
                     print(f"  {name}: {old:.2f} -> {new:.2f} ({delta:+.4f})")
                 save_params(params)
                 print("\nSaved updated parameters to params.toml")
-                mark_iteration_complete(iteration_id, gradient, elo_diff)
+
+                # Calculate reference Elo if available
+                ref_elo_estimate = None
+                if incomplete.get('ref_games_played', 0) > 0:
+                    ref_elo_estimate = calculate_elo_from_score(
+                        incomplete['ref_wins'], incomplete['ref_losses'],
+                        incomplete['ref_draws'], ref_elo
+                    )
+                    if ref_elo_estimate:
+                        print(f"Reference Elo estimate: {ref_elo_estimate:.0f}")
+
+                mark_iteration_complete(iteration_id, gradient, elo_diff, ref_elo_estimate)
                 continue  # Move to next iteration
             else:
                 print(f"\nResuming iteration ID: {iteration_id} ({incomplete['games_played']}/{incomplete['target_games']} games)")
@@ -469,13 +557,15 @@ def run_master():
             binary_name = 'rusty-rival.exe' if os.name == 'nt' else 'rusty-rival'
             plus_dir = output_base / config['build']['plus_engine_name']
             minus_dir = output_base / config['build']['minus_engine_name']
+            base_dir = output_base / config['build']['base_engine_name']
             plus_path = plus_dir / binary_name
             minus_path = minus_dir / binary_name
+            base_path = base_dir / binary_name
 
             # Create iteration record
             print("\nCreating iteration record...")
             iteration_id = create_iteration(
-                k, str(plus_path), str(minus_path),
+                k, str(plus_path), str(minus_path), str(base_path), ref_path,
                 config, params, plus_params, minus_params, signs
             )
             print(f"  Iteration ID: {iteration_id}")
@@ -507,8 +597,18 @@ def run_master():
         save_params(params)
         print("\nSaved updated parameters to params.toml")
 
+        # Calculate reference Elo if available
+        ref_elo_estimate = None
+        if results.get('ref_games_played', 0) > 0:
+            ref_elo_estimate = calculate_elo_from_score(
+                results['ref_wins'], results['ref_losses'],
+                results['ref_draws'], ref_elo
+            )
+            if ref_elo_estimate:
+                print(f"Reference Elo estimate: {ref_elo_estimate:.0f}")
+
         # Mark iteration complete
-        mark_iteration_complete(iteration_id, gradient, elo_diff)
+        mark_iteration_complete(iteration_id, gradient, elo_diff, ref_elo_estimate)
 
     print(f"\n{'='*60}")
     print("SPSA TUNING COMPLETE")

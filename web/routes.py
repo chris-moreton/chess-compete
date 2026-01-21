@@ -568,10 +568,12 @@ def register_routes(app):
         params_data = {name: [] for name in param_names}
         iteration_numbers = []
         elo_data = []
+        ref_elo_data = []
 
         for it in iterations:
             iteration_numbers.append(it.iteration_number)
             elo_data.append(float(it.elo_diff) if it.elo_diff else 0)
+            ref_elo_data.append(float(it.ref_elo_estimate) if it.ref_elo_estimate else None)
             if it.base_parameters:
                 for name in param_names:
                     params_data[name].append(it.base_parameters.get(name, 0))
@@ -629,6 +631,13 @@ def register_routes(app):
                 else:
                     stability_data[name].append(0)
 
+        # Get the latest ref_elo for display
+        latest_ref_elo = None
+        for elo in reversed(ref_elo_data):
+            if elo is not None:
+                latest_ref_elo = elo
+                break
+
         return render_template(
             'spsa.html',
             iterations=iterations,
@@ -636,6 +645,8 @@ def register_routes(app):
             params_data=params_data,
             iteration_numbers=iteration_numbers,
             elo_data=elo_data,
+            ref_elo_data=ref_elo_data,
+            latest_ref_elo=latest_ref_elo,
             current_params=current_params,
             param_changes=param_changes,
             in_progress=in_progress,

@@ -244,6 +244,8 @@ class SpsaIteration(db.Model):
     # Engine binaries (paths to shared location, not registered engines)
     plus_engine_path = db.Column(db.String(500), nullable=False)
     minus_engine_path = db.Column(db.String(500), nullable=False)
+    base_engine_path = db.Column(db.String(500))  # Unperturbed base params engine
+    ref_engine_path = db.Column(db.String(500))   # Reference engine (e.g., Stockfish)
 
     # Time control (consistent with other compete modes: timelow/timehigh)
     timelow_ms = db.Column(db.Integer, nullable=False)   # e.g., 250 (0.25s)
@@ -255,6 +257,12 @@ class SpsaIteration(db.Model):
     plus_wins = db.Column(db.Integer, nullable=False, default=0)
     minus_wins = db.Column(db.Integer, nullable=False, default=0)
     draws = db.Column(db.Integer, nullable=False, default=0)
+
+    # Reference game tracking (base engine vs Stockfish)
+    ref_games_played = db.Column(db.Integer, nullable=False, default=0)
+    ref_wins = db.Column(db.Integer, nullable=False, default=0)
+    ref_losses = db.Column(db.Integer, nullable=False, default=0)
+    ref_draws = db.Column(db.Integer, nullable=False, default=0)
 
     # Status: pending (waiting for workers), in_progress, complete
     status = db.Column(db.String(20), nullable=False, default='pending')
@@ -268,6 +276,7 @@ class SpsaIteration(db.Model):
     # Results (filled when complete)
     gradient_estimate = db.Column(db.JSON)     # Calculated gradient per parameter
     elo_diff = db.Column(db.Numeric(7, 2))     # Plus vs minus Elo difference
+    ref_elo_estimate = db.Column(db.Numeric(7, 2))  # Estimated Elo vs reference engine
 
     # Timestamps
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

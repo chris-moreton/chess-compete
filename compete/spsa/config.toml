@@ -57,6 +57,17 @@ engines_output_path = "engines/spsa"
 # Engine binary names (will create subdirectories)
 plus_engine_name = "spsa-plus"
 minus_engine_name = "spsa-minus"
+base_engine_name = "spsa-base"
+
+# =============================================================================
+# REFERENCE ENGINE (for tracking actual strength over time)
+# =============================================================================
+
+[reference]
+# Path to reference engine (relative to chess-compete directory or absolute)
+engine_path = "../rusty-rival/engines/stockfish"
+engine_elo = 2600  # Assumed Elo of reference engine
+enabled = true     # Set to false to disable reference games
 
 # =============================================================================
 # DATABASE
@@ -67,4 +78,4 @@ minus_engine_name = "spsa-minus"
 # This matches chess-compete's configuration approach
 
 # Poll interval when waiting for workers to complete games
-poll_interval_seconds = 30
+poll_interval_seconds = 5

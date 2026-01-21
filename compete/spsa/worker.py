@@ -21,7 +21,7 @@ except ImportError:
 
 from compete.game import play_game, GameConfig, play_game_from_config
 from compete.openings import OPENING_BOOK
-from compete.spsa.build import build_spsa_engines, get_rusty_rival_path
+from compete.spsa.build import build_spsa_engines, build_engine, get_rusty_rival_path
 
 
 def load_config() -> dict:
@@ -62,12 +62,16 @@ def get_pending_iteration():
             'iteration_number': iteration.iteration_number,
             'plus_engine_path': iteration.plus_engine_path,
             'minus_engine_path': iteration.minus_engine_path,
+            'base_engine_path': iteration.base_engine_path,
+            'ref_engine_path': iteration.ref_engine_path,
             'plus_parameters': iteration.plus_parameters,
             'minus_parameters': iteration.minus_parameters,
+            'base_parameters': iteration.base_parameters,
             'timelow_ms': iteration.timelow_ms,
             'timehigh_ms': iteration.timehigh_ms,
             'target_games': iteration.target_games,
             'games_played': iteration.games_played,
+            'ref_games_played': iteration.ref_games_played,
         }
 
 
@@ -103,7 +107,37 @@ def update_iteration_results(iteration_id: int, games: int, plus_wins: int, minu
         db.session.commit()
 
 
-def ensure_engines_built(iteration: dict, config: dict, force_rebuild: bool = False) -> tuple[str, str]:
+def update_reference_results(iteration_id: int, games: int, wins: int, losses: int, draws: int):
+    """
+    Atomically update reference game results (base engine vs Stockfish).
+    Uses SQL increment to avoid race conditions between workers.
+    """
+    from web.app import create_app
+    from web.database import db
+
+    app = create_app()
+    with app.app_context():
+        db.session.execute(
+            db.text("""
+                UPDATE spsa_iterations
+                SET ref_games_played = ref_games_played + :games,
+                    ref_wins = ref_wins + :wins,
+                    ref_losses = ref_losses + :losses,
+                    ref_draws = ref_draws + :draws
+                WHERE id = :id
+            """),
+            {
+                'games': games,
+                'wins': wins,
+                'losses': losses,
+                'draws': draws,
+                'id': iteration_id
+            }
+        )
+        db.session.commit()
+
+
+def ensure_engines_built(iteration: dict, config: dict, force_rebuild: bool = False) -> tuple[str, str, str]:
     """
     Ensure engine binaries exist, building from database parameters if needed.
 
@@ -113,7 +147,7 @@ def ensure_engines_built(iteration: dict, config: dict, force_rebuild: bool = Fa
         force_rebuild: If True, rebuild even if binaries exist (for new iterations)
 
     Returns:
-        (plus_path, minus_path) - paths to engine binaries
+        (plus_path, minus_path, base_path) - paths to engine binaries
     """
     # Compute LOCAL paths (don't use database paths which may be from another OS)
     output_base = Path(config['build']['engines_output_path'])
@@ -124,12 +158,14 @@ def ensure_engines_built(iteration: dict, config: dict, force_rebuild: bool = Fa
     binary_name = 'rusty-rival.exe' if os.name == 'nt' else 'rusty-rival'
     plus_dir = output_base / config['build']['plus_engine_name']
     minus_dir = output_base / config['build']['minus_engine_name']
+    base_dir = output_base / config['build']['base_engine_name']
     plus_path = plus_dir / binary_name
     minus_path = minus_dir / binary_name
+    base_path = base_dir / binary_name
 
-    # Check if both binaries exist locally (skip if force_rebuild)
-    if not force_rebuild and plus_path.exists() and minus_path.exists():
-        return str(plus_path), str(minus_path)
+    # Check if all binaries exist locally (skip if force_rebuild)
+    if not force_rebuild and plus_path.exists() and minus_path.exists() and base_path.exists():
+        return str(plus_path), str(minus_path), str(base_path)
 
     # Need to build engines from parameters
     print(f"\n  Building engines for iteration {iteration['iteration_number']}...")
@@ -139,6 +175,7 @@ def ensure_engines_built(iteration: dict, config: dict, force_rebuild: bool = Fa
     # Build with parameters from database
     plus_params = iteration['plus_parameters']
     minus_params = iteration['minus_parameters']
+    base_params = iteration['base_parameters']
 
     try:
         new_plus_path, new_minus_path = build_spsa_engines(
@@ -147,8 +184,15 @@ def ensure_engines_built(iteration: dict, config: dict, force_rebuild: bool = Fa
             config['build']['plus_engine_name'],
             config['build']['minus_engine_name']
         )
-        print(f"  Built engines: {new_plus_path}, {new_minus_path}")
-        return str(new_plus_path), str(new_minus_path)
+        print(f"  Built plus/minus engines")
+
+        # Build base engine (unperturbed parameters)
+        print(f"  Building base engine ({config['build']['base_engine_name']})...")
+        if not build_engine(src_path, base_dir, base_params):
+            raise RuntimeError("Failed to build base engine")
+        print(f"  Built base engine: {base_path}")
+
+        return str(new_plus_path), str(new_minus_path), str(base_path)
     except Exception as e:
         raise RuntimeError(f"Failed to build engines: {e}")
 
@@ -309,6 +353,164 @@ def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_m
     return plus_wins, minus_wins, draws, errors, plus_avg_nps, minus_avg_nps
 
 
+def get_reference_engine_path(config: dict) -> str | None:
+    """Get the path to the reference engine (Stockfish), or None if disabled."""
+    if not config.get('reference', {}).get('enabled', False):
+        return None
+
+    ref_path = config['reference'].get('engine_path')
+    if not ref_path:
+        return None
+
+    ref_path = Path(ref_path)
+    if not ref_path.is_absolute():
+        chess_compete_dir = Path(__file__).parent.parent.parent
+        ref_path = chess_compete_dir / ref_path
+
+    # Check for .exe on Windows
+    if os.name == 'nt' and not ref_path.suffix:
+        ref_path_exe = ref_path.with_suffix('.exe')
+        if ref_path_exe.exists():
+            return str(ref_path_exe)
+
+    if ref_path.exists():
+        return str(ref_path)
+
+    return None
+
+
+def play_reference_batch(base_path: str, ref_path: str, timelow_ms: int, timehigh_ms: int,
+                         batch_size: int, concurrency: int) -> tuple[int, int, int, int]:
+    """
+    Play a batch of reference games (base engine vs Stockfish).
+
+    Args:
+        base_path: Path to the base (unperturbed) engine binary
+        ref_path: Path to the reference engine (Stockfish)
+        timelow_ms: Minimum time per move in milliseconds
+        timehigh_ms: Maximum time per move in milliseconds
+        batch_size: Number of games to play in this batch
+        concurrency: Number of parallel games
+
+    Returns:
+        (base_wins, base_losses, draws, errors) - from base engine's perspective
+    """
+    base_wins = 0
+    base_losses = 0
+    draws = 0
+    errors = 0
+
+    if concurrency > 1:
+        # Parallel execution
+        configs = []
+        for i in range(batch_size):
+            opening_fen, opening_name = random.choice(OPENING_BOOK)
+            time_ms = random.uniform(timelow_ms, timehigh_ms)
+            time_per_move = time_ms / 1000.0
+
+            # Alternate colors: even games base is white, odd games base is black
+            if i % 2 == 0:
+                config = GameConfig(
+                    game_index=i,
+                    white_name="spsa-base",
+                    black_name="stockfish",
+                    white_path=base_path,
+                    black_path=ref_path,
+                    white_uci_options=None,
+                    black_uci_options=None,
+                    time_per_move=time_per_move,
+                    opening_fen=opening_fen,
+                    opening_name=opening_name,
+                    is_engine1_white=True  # base is white
+                )
+            else:
+                config = GameConfig(
+                    game_index=i,
+                    white_name="stockfish",
+                    black_name="spsa-base",
+                    white_path=ref_path,
+                    black_path=base_path,
+                    white_uci_options=None,
+                    black_uci_options=None,
+                    time_per_move=time_per_move,
+                    opening_fen=opening_fen,
+                    opening_name=opening_name,
+                    is_engine1_white=False  # base is black
+                )
+            configs.append(config)
+
+        # Run games in parallel
+        with ProcessPoolExecutor(max_workers=concurrency) as executor:
+            futures = {executor.submit(play_game_from_config, c): c for c in configs}
+
+            for future in as_completed(futures):
+                config = futures[future]
+                try:
+                    result = future.result()
+
+                    # Determine result from base engine's perspective
+                    if config.is_engine1_white:
+                        # Base was white
+                        if result.result == "1-0":
+                            base_wins += 1
+                        elif result.result == "0-1":
+                            base_losses += 1
+                        else:
+                            draws += 1
+                    else:
+                        # Base was black
+                        if result.result == "0-1":
+                            base_wins += 1
+                        elif result.result == "1-0":
+                            base_losses += 1
+                        else:
+                            draws += 1
+                except Exception as e:
+                    print(f"  Error in ref game: {e}")
+                    errors += 1
+
+    else:
+        # Sequential execution
+        for i in range(batch_size):
+            opening_fen, opening_name = random.choice(OPENING_BOOK)
+            time_ms = random.uniform(timelow_ms, timehigh_ms)
+            time_per_move = time_ms / 1000.0
+
+            try:
+                # Alternate colors
+                if i % 2 == 0:
+                    # Base is white
+                    result, _ = play_game(
+                        base_path, ref_path,
+                        "spsa-base", "stockfish",
+                        time_per_move, opening_fen, opening_name
+                    )
+                    if result == "1-0":
+                        base_wins += 1
+                    elif result == "0-1":
+                        base_losses += 1
+                    else:
+                        draws += 1
+                else:
+                    # Base is black
+                    result, _ = play_game(
+                        ref_path, base_path,
+                        "stockfish", "spsa-base",
+                        time_per_move, opening_fen, opening_name
+                    )
+                    if result == "0-1":
+                        base_wins += 1
+                    elif result == "1-0":
+                        base_losses += 1
+                    else:
+                        draws += 1
+            except Exception as e:
+                print(f"  Error in ref game: {e}")
+                errors += 1
+
+    return base_wins, base_losses, draws, errors
+
+
 def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: int = 10):
     """
     Run the SPSA worker loop.
@@ -326,6 +528,10 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
     # Load config for build settings
     config = load_config()
 
+    # Get reference engine path (for tracking strength vs Stockfish)
+    ref_engine_path = get_reference_engine_path(config)
+    ref_enabled = ref_engine_path is not None
+
     print(f"\n{'='*60}")
     print("SPSA WORKER MODE")
     print(f"{'='*60}")
@@ -335,10 +541,15 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
     print(f"Poll interval: {poll_interval}s when idle")
     print(f"Opening book: {len(OPENING_BOOK)} positions")
     print(f"Rusty-rival source: {get_rusty_rival_path(config)}")
+    if ref_enabled:
+        print(f"Reference engine: {ref_engine_path}")
+    else:
+        print(f"Reference games: DISABLED")
     print(f"{'='*60}")
     print("\nWaiting for work...")
 
     games_total = 0
+    ref_games_total = 0
     current_iteration = None
     engines_built_for_iteration = None  # Track which iteration we built engines for
 
@@ -362,7 +573,7 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
             # Ensure engines are built (force rebuild if iteration changed)
             need_rebuild = iteration_changed or engines_built_for_iteration != current_iteration
             try:
-                plus_path, minus_path = ensure_engines_built(iteration, config, force_rebuild=need_rebuild)
+                plus_path, minus_path, base_path = ensure_engines_built(iteration, config, force_rebuild=need_rebuild)
                 engines_built_for_iteration = current_iteration
             except RuntimeError as e:
                 print(f"\n  ERROR: {e}")
@@ -372,6 +583,8 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
 
             print(f"  Plus:  {plus_path}")
             print(f"  Minus: {minus_path}")
+            if ref_enabled:
+                print(f"  Base:  {base_path}")
 
             # Check if iteration is complete
             remaining = iteration['target_games'] - iteration['games_played']
@@ -384,8 +597,8 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
             # Adjust batch size if near completion
             actual_batch = min(batch_size, remaining)
 
-            # Play batch of games
-            print(f"\n  Playing {actual_batch} games...", end=" ", flush=True)
+            # Play batch of SPSA games (plus vs minus)
+            print(f"\n  Playing {actual_batch} SPSA games...", end=" ", flush=True)
             plus_wins, minus_wins, draws, errors, plus_nps, minus_nps = play_spsa_batch(
                 plus_path,
                 minus_path,
@@ -411,10 +624,36 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                 avg_knps = (plus_nps + minus_nps) / 2000 if plus_nps > 0 and minus_nps > 0 else max(plus_knps, minus_knps)
                 nps_str = f" NPS: {avg_knps:.0f}k"
 
+            # Display SPSA results
+            spsa_result = f"{plus_wins}W-{minus_wins}L-{draws}D"
             if errors > 0:
-                print(f"+{plus_wins} -{minus_wins} ={draws} errors={errors}{nps_str} (total: {games_total})")
-            else:
-                print(f"+{plus_wins} -{minus_wins} ={draws}{nps_str} (total: {games_total})")
+                spsa_result += f" err={errors}"
+            print(f"{spsa_result}{nps_str}")
+
+            # Play reference games (base vs Stockfish) - same batch size
+            if ref_enabled and completed_games > 0:
+                print(f"  Playing {completed_games} ref games...", end=" ", flush=True)
+                ref_wins, ref_losses, ref_draws, ref_errors = play_reference_batch(
+                    base_path,
+                    ref_engine_path,
+                    iteration['timelow_ms'],
+                    iteration['timehigh_ms'],
+                    completed_games,  # Play same number as SPSA games
+                    concurrency
+                )
+
+                ref_completed = ref_wins + ref_losses + ref_draws
+                if ref_completed > 0:
+                    update_reference_results(iteration['id'], ref_completed, ref_wins, ref_losses, ref_draws)
+                    ref_games_total += ref_completed
+
+                # Display reference results
+                ref_result = f"{ref_wins}W-{ref_losses}L-{ref_draws}D"
+                if ref_errors > 0:
+                    ref_result += f" err={ref_errors}"
+                print(f"{ref_result}")
+
+            print(f"  Total: {games_total} SPSA, {ref_games_total} ref")
 
         except KeyboardInterrupt:
             print(f"\n\nWorker stopped. Total games played: {games_total}")
