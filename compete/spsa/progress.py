@@ -45,8 +45,7 @@ class ProgressDisplay:
     EMPTY_CHAR = "○"
     SHOW_COMPLETED_FOR = 30.0  # Show completed games for N seconds before removing
 
-    def __init__(self, max_games: int, label: str = "Game"):
-        self.max_games = max_games
+    def __init__(self, label: str = "Game"):
         self.label = label
         self.games: dict[int, GameStatus] = {}
         self.lock = threading.Lock()
@@ -167,7 +166,7 @@ class ProgressDisplay:
             w = self.results["1-0"]
             l = self.results["0-1"]
             d = self.results["1/2-1/2"]
-            lines.append(f"  [{self.completed_count}/{self.max_games} done: {w}W-{l}L-{d}D | {active_count} active]")
+            lines.append(f"  [{self.completed_count} done: {w}W-{l}L-{d}D | {active_count} active]")
 
         return lines
 
@@ -209,7 +208,7 @@ class ProgressDisplay:
     def start(self):
         """Start the display update thread."""
         if not self.ansi_supported:
-            print(f"  (Running {self.max_games} games...)")
+            print(f"  (Running games...)")
             return
 
         self.running = True
@@ -230,4 +229,4 @@ class ProgressDisplay:
     def get_summary(self) -> str:
         """Get a summary line for after completion."""
         with self.lock:
-            return f"{self.completed_count}/{self.max_games}"
+            return f"{self.completed_count} games"

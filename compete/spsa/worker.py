@@ -238,32 +238,39 @@ def ensure_engines_built(iteration: dict, config: dict, force_rebuild: bool = Fa
         raise RuntimeError(f"Failed to build engines: {e}")
 
 
-def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_ms: int,
-                    batch_size: int, concurrency: int) -> tuple[int, int, int, int, float, float]:
+def run_spsa_continuous(plus_path: str, minus_path: str, timelow_ms: int, timehigh_ms: int,
+                        concurrency: int, batch_size: int,
+                        on_batch_complete: callable) -> tuple[int, int, int, int, float, float]:
     """
-    Play a batch of games between plus and minus engines.
+    Run SPSA games continuously, updating database every batch_size completions.
 
     Args:
         plus_path: Path to the plus-perturbed engine binary
         minus_path: Path to the minus-perturbed engine binary
         timelow_ms: Minimum time per move in milliseconds
         timehigh_ms: Maximum time per move in milliseconds
-        batch_size: Number of games to play in this batch
-        concurrency: Number of parallel games
+        concurrency: Number of parallel games to keep running
+        batch_size: How often to update database (every N completed games)
+        on_batch_complete: Callback(plus_wins, minus_wins, draws) -> bool
+            Called every batch_size games. Returns True to continue, False to stop.
 
     Returns:
-        (plus_wins, minus_wins, draws, errors, plus_avg_nps, minus_avg_nps)
-        - errors are NOT counted as games
-        - NPS values are averages across games (0 if no data)
+        (total_plus_wins, total_minus_wins, total_draws, total_errors, plus_avg_nps, minus_avg_nps)
     """
-    plus_wins = 0
-    minus_wins = 0
-    draws = 0
-    errors = 0
+    # Totals across all batches
+    total_plus_wins = 0
+    total_minus_wins = 0
+    total_draws = 0
+    total_errors = 0
     plus_nps_total = 0
     minus_nps_total = 0
     plus_nps_count = 0
     minus_nps_count = 0
+
+    # Current batch counters (reset after each callback)
+    batch_plus_wins = 0
+    batch_minus_wins = 0
+    batch_draws = 0
 
     def make_config(game_index: int) -> GameConfig:
         """Create a game config for the given index."""
@@ -303,17 +310,22 @@ def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_m
 
     def process_result(config: GameConfig, result):
         """Process a completed game result."""
-        nonlocal plus_wins, minus_wins, draws, plus_nps_total, minus_nps_total, plus_nps_count, minus_nps_count
+        nonlocal batch_plus_wins, batch_minus_wins, batch_draws
+        nonlocal total_plus_wins, total_minus_wins, total_draws
+        nonlocal plus_nps_total, minus_nps_total, plus_nps_count, minus_nps_count
 
         # Determine winner from plus engine's perspective
         if config.is_engine1_white:
             # Plus was white
             if result.result == "1-0":
-                plus_wins += 1
+                batch_plus_wins += 1
+                total_plus_wins += 1
             elif result.result == "0-1":
-                minus_wins += 1
+                batch_minus_wins += 1
+                total_minus_wins += 1
             else:
-                draws += 1
+                batch_draws += 1
+                total_draws += 1
             # Collect NPS (plus=white, minus=black)
             if result.white_nps:
                 plus_nps_total += result.white_nps
@@ -324,11 +336,14 @@ def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_m
         else:
             # Plus was black
             if result.result == "0-1":
-                plus_wins += 1
+                batch_plus_wins += 1
+                total_plus_wins += 1
             elif result.result == "1-0":
-                minus_wins += 1
+                batch_minus_wins += 1
+                total_minus_wins += 1
             else:
-                draws += 1
+                batch_draws += 1
+                total_draws += 1
             # Collect NPS (minus=white, plus=black)
             if result.white_nps:
                 minus_nps_total += result.white_nps
@@ -338,21 +353,24 @@ def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_m
                 plus_nps_count += 1
 
     if concurrency > 1:
-        # Continuous pipeline: keep all workers busy by starting new games as old ones finish
-        progress = ProgressDisplay(batch_size, label="Game")
+        # Continuous pipeline: always keep concurrency games running
+        # Call on_batch_complete every batch_size games to update database
+        progress = ProgressDisplay(label="Game")
         progress.start()
 
         def make_move_callback(game_idx: int):
             """Create a callback that updates progress for a specific game."""
             return lambda move_count: progress.update_moves(game_idx, move_count)
 
+        keep_adding = True  # Set to False when iteration is complete
+
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             pending_futures = {}  # future -> config
             next_game_index = 0
-            completed = 0
+            batch_completed = 0  # Games completed in current batch
 
-            # Submit initial batch up to concurrency limit
-            while next_game_index < min(batch_size, concurrency):
+            # Submit initial games up to concurrency limit
+            while next_game_index < concurrency:
                 config = make_config(next_game_index)
                 callback = make_move_callback(next_game_index)
                 future = executor.submit(play_game_from_config, config, callback)
@@ -380,15 +398,25 @@ def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_m
 
                         progress.finish_game(config.game_index, result.result, nps)
                         process_result(config, result)
-                        completed += 1
+                        batch_completed += 1
                     except Exception as e:
                         progress.finish_game(config.game_index, "err")
                         print(f"\n  Error in game: {e}")
-                        errors += 1
-                        completed += 1
+                        total_errors += 1
+                        batch_completed += 1
 
-                    # Submit a new game if there are more to play
-                    if next_game_index < batch_size:
+                    # Check if we've completed a batch
+                    if batch_completed >= batch_size:
+                        # Call the callback to update database
+                        keep_adding = on_batch_complete(batch_plus_wins, batch_minus_wins, batch_draws)
+                        # Reset batch counters
+                        batch_plus_wins = 0
+                        batch_minus_wins = 0
+                        batch_draws = 0
+                        batch_completed = 0
+
+                    # Submit a new game if we should keep adding
+                    if keep_adding:
                         new_config = make_config(next_game_index)
                         callback = make_move_callback(next_game_index)
                         new_future = executor.submit(play_game_from_config, new_config, callback)
@@ -396,18 +424,26 @@ def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_m
                         progress.start_game(next_game_index)
                         next_game_index += 1
 
+            # Final batch update if any games completed since last callback
+            if batch_plus_wins + batch_minus_wins + batch_draws > 0:
+                on_batch_complete(batch_plus_wins, batch_minus_wins, batch_draws)
+
         progress.stop()
 
     else:
-        # Sequential execution
-        for i in range(batch_size):
+        # Sequential execution - run until callback says stop
+        game_index = 0
+        batch_completed = 0
+        keep_going = True
+
+        while keep_going:
             opening_fen, opening_name = random.choice(OPENING_BOOK)
             time_ms = random.uniform(timelow_ms, timehigh_ms)
             time_per_move = time_ms / 1000.0
 
             try:
                 # Alternate colors
-                if i % 2 == 0:
+                if game_index % 2 == 0:
                     # Plus is white
                     result, _ = play_game(
                         plus_path, minus_path,
@@ -415,11 +451,14 @@ def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_m
                         time_per_move, opening_fen, opening_name
                     )
                     if result == "1-0":
-                        plus_wins += 1
+                        batch_plus_wins += 1
+                        total_plus_wins += 1
                     elif result == "0-1":
-                        minus_wins += 1
+                        batch_minus_wins += 1
+                        total_minus_wins += 1
                     else:
-                        draws += 1
+                        batch_draws += 1
+                        total_draws += 1
                 else:
                     # Plus is black
                     result, _ = play_game(
@@ -428,20 +467,39 @@ def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_m
                         time_per_move, opening_fen, opening_name
                     )
                     if result == "0-1":
-                        plus_wins += 1
+                        batch_plus_wins += 1
+                        total_plus_wins += 1
                     elif result == "1-0":
-                        minus_wins += 1
+                        batch_minus_wins += 1
+                        total_minus_wins += 1
                     else:
-                        draws += 1
+                        batch_draws += 1
+                        total_draws += 1
+                batch_completed += 1
             except Exception as e:
                 print(f"  Error in game: {e}")
-                errors += 1
+                total_errors += 1
+                batch_completed += 1
+
+            game_index += 1
+
+            # Check if we've completed a batch
+            if batch_completed >= batch_size:
+                keep_going = on_batch_complete(batch_plus_wins, batch_minus_wins, batch_draws)
+                batch_plus_wins = 0
+                batch_minus_wins = 0
+                batch_draws = 0
+                batch_completed = 0
+
+        # Final batch update if any games completed since last callback
+        if batch_plus_wins + batch_minus_wins + batch_draws > 0:
+            on_batch_complete(batch_plus_wins, batch_minus_wins, batch_draws)
 
     # Calculate average NPS
     plus_avg_nps = plus_nps_total / plus_nps_count if plus_nps_count > 0 else 0
     minus_avg_nps = minus_nps_total / minus_nps_count if minus_nps_count > 0 else 0
 
-    return plus_wins, minus_wins, draws, errors, plus_avg_nps, minus_avg_nps
+    return total_plus_wins, total_minus_wins, total_draws, total_errors, plus_avg_nps, minus_avg_nps
 
 
 def get_reference_engine_path(config: dict) -> str | None:
@@ -562,7 +620,7 @@ def play_reference_batch(base_path: str, ref_path: str, timelow_ms: int, timehig
 
     if concurrency > 1:
         # Continuous pipeline: keep all workers busy by starting new games as old ones finish
-        progress = ProgressDisplay(batch_size, label="Ref")
+        progress = ProgressDisplay(label="Ref")
         progress.start()
 
         def make_move_callback(game_idx: int):
@@ -739,72 +797,79 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                 time.sleep(1)  # Brief pause before checking for next iteration
                 continue
 
-            # Adjust batch size if near completion
-            actual_batch = min(batch_size, remaining)
+            # Create callback for database updates
+            iteration_id = iteration['id']
 
-            # Play batch of SPSA games (plus vs minus)
-            print(f"\n  SPSA games ({actual_batch}, concurrency={concurrency}):")
-            batch_start = time.time()
-            plus_wins, minus_wins, draws, errors, plus_nps, minus_nps = play_spsa_batch(
+            def on_spsa_batch(plus_wins: int, minus_wins: int, draws: int) -> bool:
+                """Called every batch_size games. Updates DB and returns whether to continue."""
+                nonlocal games_total, worker_iteration_games
+
+                completed = plus_wins + minus_wins + draws
+                if completed > 0:
+                    update_iteration_results(iteration_id, completed, plus_wins, minus_wins, draws)
+                    games_total += completed
+                    worker_iteration_games += completed
+
+                # Check if iteration is complete
+                updated = get_pending_iteration()
+                if not updated or updated['iteration_number'] != current_iteration:
+                    return False  # Iteration changed or complete
+                remaining = updated['target_games'] - updated['games_played']
+                if remaining <= 0:
+                    return False  # Iteration complete
+
+                # Print progress
+                print(f"  Batch: +{plus_wins}W-{minus_wins}L-{draws}D | Total: {updated['games_played']}/{updated['target_games']}")
+                return True  # Keep going
+
+            # Run SPSA games continuously until iteration is complete
+            print(f"\n  SPSA games (concurrency={concurrency}, update every {batch_size}):")
+            spsa_start = time.time()
+            total_plus, total_minus, total_draws, total_errors, plus_nps, minus_nps = run_spsa_continuous(
                 plus_path,
                 minus_path,
                 iteration['timelow_ms'],
                 iteration['timehigh_ms'],
-                actual_batch,
-                concurrency
+                concurrency,
+                batch_size,
+                on_spsa_batch
             )
-            batch_time = time.time() - batch_start
+            spsa_time = time.time() - spsa_start
 
-            # Only count successful games (errors don't count toward total)
-            completed_games = plus_wins + minus_wins + draws
-
-            if completed_games > 0:
-                # Update database with actual completed games
-                update_iteration_results(iteration['id'], completed_games, plus_wins, minus_wins, draws)
-                games_total += completed_games
-                worker_iteration_games += completed_games
-
-            # Format NPS for display (in thousands)
+            # Format NPS for display
             nps_str = ""
             if plus_nps > 0 or minus_nps > 0:
-                plus_knps = plus_nps / 1000 if plus_nps > 0 else 0
-                minus_knps = minus_nps / 1000 if minus_nps > 0 else 0
-                avg_knps = (plus_nps + minus_nps) / 2000 if plus_nps > 0 and minus_nps > 0 else max(plus_knps, minus_knps)
+                avg_knps = (plus_nps + minus_nps) / 2000 if plus_nps > 0 and minus_nps > 0 else max(plus_nps, minus_nps) / 1000
                 nps_str = f" NPS: {avg_knps:.0f}k"
 
-            # Display SPSA results
-            spsa_result = f"{plus_wins}W-{minus_wins}L-{draws}D"
-            if errors > 0:
-                spsa_result += f" err={errors}"
-            print(f"  SPSA result: {spsa_result}{nps_str} [{batch_time:.1f}s]")
+            total_spsa = total_plus + total_minus + total_draws
+            print(f"  SPSA done: {total_plus}W-{total_minus}L-{total_draws}D{nps_str} [{spsa_time:.1f}s]")
 
-            # Play reference games (base vs Stockfish) - same batch size
-            if ref_enabled and completed_games > 0:
-                print(f"\n  Reference games ({completed_games}):")
+            # Play reference games (base vs Stockfish) - match SPSA games played
+            if ref_enabled and total_spsa > 0:
+                print(f"\n  Reference games ({total_spsa}):")
                 ref_start = time.time()
                 ref_wins, ref_losses, ref_draws, ref_errors = play_reference_batch(
                     base_path,
                     ref_engine_path,
                     iteration['timelow_ms'],
                     iteration['timehigh_ms'],
-                    completed_games,  # Play same number as SPSA games
+                    total_spsa,
                     concurrency
                 )
                 ref_time = time.time() - ref_start
 
                 ref_completed = ref_wins + ref_losses + ref_draws
                 if ref_completed > 0:
-                    update_reference_results(iteration['id'], ref_completed, ref_wins, ref_losses, ref_draws)
+                    update_reference_results(iteration_id, ref_completed, ref_wins, ref_losses, ref_draws)
                     ref_games_total += ref_completed
                     worker_iteration_ref += ref_completed
 
-                # Display reference results
                 ref_result = f"{ref_wins}W-{ref_losses}L-{ref_draws}D"
                 if ref_errors > 0:
                     ref_result += f" err={ref_errors}"
-                print(f"  Ref result: {ref_result} [{ref_time:.1f}s]")
+                print(f"  Ref done: {ref_result} [{ref_time:.1f}s]")
 
-            # Show this worker's contribution to the current iteration
             print(f"  This worker: {worker_iteration_games} SPSA, {worker_iteration_ref} ref for iter {current_iteration}")
 
         except KeyboardInterrupt:
