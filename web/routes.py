@@ -638,6 +638,14 @@ def register_routes(app):
                 latest_ref_elo = elo
                 break
 
+        # Build filtered data for ref_elo chart (only iterations with reference data)
+        ref_iteration_numbers = []
+        ref_elo_filtered = []
+        for i, elo in enumerate(ref_elo_data):
+            if elo is not None:
+                ref_iteration_numbers.append(iteration_numbers[i])
+                ref_elo_filtered.append(elo)
+
         return render_template(
             'spsa.html',
             iterations=iterations,
@@ -645,7 +653,8 @@ def register_routes(app):
             params_data=params_data,
             iteration_numbers=iteration_numbers,
             elo_data=elo_data,
-            ref_elo_data=ref_elo_data,
+            ref_elo_data=ref_elo_filtered,
+            ref_iteration_numbers=ref_iteration_numbers,
             latest_ref_elo=latest_ref_elo,
             current_params=current_params,
             param_changes=param_changes,

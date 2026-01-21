@@ -210,7 +210,8 @@ chess-compete/
   results/
     competitions/   # PGN output
   migrations/
-    002_spsa_iterations.sql   # SPSA database schema
+    002_spsa_iterations.sql       # SPSA database schema
+    003_spsa_reference_games.sql  # SPSA reference game tracking
 ```
 
 ### Engine Discovery
@@ -467,6 +468,11 @@ A = 50                # Stability constant
 [build]
 rusty_rival_path = "../rusty-rival"    # Path to engine source
 engines_output_path = "engines/spsa"   # Where to put built engines
+
+[reference]
+engine_path = "../rusty-rival/engines/stockfish"  # Path to Stockfish (file or directory)
+engine_elo = 2600     # Assumed Elo of reference engine
+enabled = true        # Set to false to disable reference games
 ```
 
 ### Running the Master
@@ -527,27 +533,36 @@ The mapping from `params.toml` names to Rust constants is defined in `build.py`.
 - **Time variety**: Random time per game within the iteration's `timelow`-`timehigh` range
 - **Distributed**: Multiple workers can contribute to the same iteration
 - **Crash recovery**: Master resumes incomplete iterations; workers can restart safely
+- **Reference games**: Track actual engine strength by playing against Stockfish each iteration
 
 ### Database Migration
 
-Run the SPSA migration before first use:
+Run the SPSA migrations before first use:
 
 ```bash
 python -c "
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-import psycopg
+from sqlalchemy import create_engine, text
 
 load_dotenv()
 db_url = os.getenv('DATABASE_URL')
-migration = Path('migrations/002_spsa_iterations.sql').read_text()
+engine = create_engine(db_url)
 
-with psycopg.connect(db_url) as conn:
-    with conn.cursor() as cur:
-        cur.execute(migration)
+# Run all SPSA migrations
+migrations = [
+    'migrations/002_spsa_iterations.sql',
+    'migrations/003_spsa_reference_games.sql',
+]
+
+with engine.connect() as conn:
+    for migration_file in migrations:
+        sql = Path(migration_file).read_text()
+        conn.execute(text(sql))
+        print(f'Applied: {migration_file}')
     conn.commit()
-    print('Migration completed!')
+    print('All migrations completed!')
 "
 ```
 
@@ -561,11 +576,19 @@ To add parameters for tuning:
 
 ### Interpreting Results
 
-Monitor parameter progression over iterations. Look for:
+Monitor parameter progression on the web dashboard at `/spsa`. The dashboard shows:
+
+- **Estimated Elo vs Stockfish**: Actual engine strength over iterations (from reference games)
+- **Parameter Stability**: Rolling standard deviation - lower = more converged
+- **Parameter Progression**: Individual charts for each tuned parameter
+- **Summary Table**: First value, current value, and percentage change
+
+Look for:
 - **Clear trends**: Parameter moving consistently in one direction (strong signal)
 - **Hitting bounds**: If a parameter hits min/max, consider expanding the bounds
 - **Oscillation**: Noisy movement may indicate weak signal or high variance - consider more games per iteration
 - **Stability**: Parameters near starting values were likely already well-tuned
+- **Elo improvement**: Rising Elo vs Stockfish indicates the tuning is working
 
 ---
 
@@ -701,6 +724,7 @@ Access at `http://localhost:5000`
 | `/cup/<id>` | Bracket view for a specific cup |
 | `/epd-tests` | EPD test results overview with engine percentages |
 | `/epd-tests/<file>` | Detailed position-by-position results grid |
+| `/spsa` | SPSA parameter tuning progress and charts |
 
 ### Dashboard Features
 

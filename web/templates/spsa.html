@@ -251,6 +251,7 @@
             // Data from server
             const iterationNumbers = {{ iteration_numbers|tojson }};
             const refEloData = {{ ref_elo_data|tojson }};
+            const refIterationNumbers = {{ ref_iteration_numbers|tojson }};
             const paramsData = {{ params_data|tojson }};
             const paramNames = {{ param_names|tojson }};
             const stabilityData = {{ stability_data|tojson }};
@@ -262,47 +263,56 @@
                 '#009688', '#CDDC39'
             ];
 
-            // Elo vs Stockfish Chart
+            // Elo vs Stockfish Chart (only shows iterations with reference data)
             const refEloCtx = document.getElementById('refEloChart').getContext('2d');
-            new Chart(refEloCtx, {
-                type: 'line',
-                data: {
-                    labels: iterationNumbers,
-                    datasets: [{
-                        label: 'Estimated Elo',
-                        data: refEloData,
-                        borderColor: '#4CAF50',
-                        backgroundColor: 'rgba(76, 175, 80, 0.1)',
-                        fill: true,
-                        tension: 0.3,
-                        pointRadius: 3,
-                        spanGaps: true  // Connect across null values
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            display: false
-                        }
+            if (refEloData.length > 0) {
+                new Chart(refEloCtx, {
+                    type: 'line',
+                    data: {
+                        labels: refIterationNumbers,
+                        datasets: [{
+                            label: 'Estimated Elo',
+                            data: refEloData,
+                            borderColor: '#4CAF50',
+                            backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 5,
+                            pointHoverRadius: 8
+                        }]
                     },
-                    scales: {
-                        x: {
-                            title: {
-                                display: true,
-                                text: 'Iteration'
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: false
                             }
                         },
-                        y: {
-                            title: {
-                                display: true,
-                                text: 'Estimated Elo Rating'
+                        scales: {
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: 'Iteration'
+                                }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'Estimated Elo Rating'
+                                }
                             }
                         }
                     }
-                }
-            });
+                });
+            } else {
+                // Show message when no reference data yet
+                refEloCtx.font = '14px sans-serif';
+                refEloCtx.fillStyle = '#666';
+                refEloCtx.textAlign = 'center';
+                refEloCtx.fillText('No reference game data yet. Data will appear after iterations complete with reference games enabled.',
+                    refEloCtx.canvas.width / 2, refEloCtx.canvas.height / 2);
+            }
 
             // Parameter Stability/Convergence Chart
             const stabilityCtx = document.getElementById('stabilityChart').getContext('2d');
