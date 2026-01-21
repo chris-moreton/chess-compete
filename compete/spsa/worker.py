@@ -540,7 +540,7 @@ def get_reference_engine_path(config: dict) -> str | None:
 
 
 def play_reference_batch(base_path: str, ref_path: str, timelow_ms: int, timehigh_ms: int,
-                         batch_size: int, concurrency: int) -> tuple[int, int, int, int]:
+                         batch_size: int, concurrency: int, ref_elo: int = 2600) -> tuple[int, int, int, int]:
     """
     Play a batch of reference games (base engine vs Stockfish).
 
@@ -551,6 +551,7 @@ def play_reference_batch(base_path: str, ref_path: str, timelow_ms: int, timehig
         timehigh_ms: Maximum time per move in milliseconds
         batch_size: Number of games to play in this batch
         concurrency: Number of parallel games
+        ref_elo: ELO limit for Stockfish (default 2600)
 
     Returns:
         (base_wins, base_losses, draws, errors) - from base engine's perspective
@@ -559,6 +560,12 @@ def play_reference_batch(base_path: str, ref_path: str, timelow_ms: int, timehig
     base_losses = 0
     draws = 0
     errors = 0
+
+    # UCI options to limit Stockfish strength
+    stockfish_options = {
+        "UCI_LimitStrength": True,
+        "UCI_Elo": ref_elo
+    }
 
     def make_config(game_index: int) -> GameConfig:
         """Create a game config for the given index."""
@@ -571,11 +578,11 @@ def play_reference_batch(base_path: str, ref_path: str, timelow_ms: int, timehig
             return GameConfig(
                 game_index=game_index,
                 white_name="spsa-base",
-                black_name="stockfish",
+                black_name=f"sf-{ref_elo}",
                 white_path=base_path,
                 black_path=ref_path,
                 white_uci_options=None,
-                black_uci_options=None,
+                black_uci_options=stockfish_options,
                 time_per_move=time_per_move,
                 opening_fen=opening_fen,
                 opening_name=opening_name,
@@ -584,11 +591,11 @@ def play_reference_batch(base_path: str, ref_path: str, timelow_ms: int, timehig
         else:
             return GameConfig(
                 game_index=game_index,
-                white_name="stockfish",
+                white_name=f"sf-{ref_elo}",
                 black_name="spsa-base",
                 white_path=ref_path,
                 black_path=base_path,
-                white_uci_options=None,
+                white_uci_options=stockfish_options,
                 black_uci_options=None,
                 time_per_move=time_per_move,
                 opening_fen=opening_fen,
@@ -729,9 +736,10 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
     # Load config for build settings
     config = load_config()
 
-    # Get reference engine path (for tracking strength vs Stockfish)
+    # Get reference engine path and ELO (for tracking strength vs Stockfish)
     ref_engine_path = get_reference_engine_path(config)
     ref_enabled = ref_engine_path is not None
+    ref_elo = config.get('reference', {}).get('engine_elo', 2600)
 
     print(f"\n{'='*60}")
     print("SPSA WORKER MODE")
@@ -743,7 +751,7 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
     print(f"Opening book: {len(OPENING_BOOK)} positions")
     print(f"Rusty-rival source: {get_rusty_rival_path(config)}")
     if ref_enabled:
-        print(f"Reference engine: {ref_engine_path}")
+        print(f"Reference engine: {ref_engine_path} (ELO {ref_elo})")
     else:
         print(f"Reference games: DISABLED")
     print(f"{'='*60}")
@@ -847,7 +855,7 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
 
             # Play reference games (base vs Stockfish) - match SPSA games played
             if ref_enabled and total_spsa > 0:
-                print(f"\n  Reference games ({total_spsa}):")
+                print(f"\n  Reference games ({total_spsa} vs sf-{ref_elo}):")
                 ref_start = time.time()
                 ref_wins, ref_losses, ref_draws, ref_errors = play_reference_batch(
                     base_path,
@@ -855,7 +863,8 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                     iteration['timelow_ms'],
                     iteration['timehigh_ms'],
                     total_spsa,
-                    concurrency
+                    concurrency,
+                    ref_elo
                 )
                 ref_time = time.time() - ref_start
 
