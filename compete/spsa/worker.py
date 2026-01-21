@@ -11,7 +11,7 @@ import random
 import socket
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from pathlib import Path
 
 try:
@@ -22,6 +22,7 @@ except ImportError:
 from compete.game import play_game, GameConfig, play_game_from_config
 from compete.openings import OPENING_BOOK
 from compete.spsa.build import build_spsa_engines, build_engine, get_rusty_rival_path
+from compete.spsa.progress import ProgressDisplay
 
 
 def load_config() -> dict:
@@ -137,9 +138,29 @@ def update_reference_results(iteration_id: int, games: int, wins: int, losses: i
         db.session.commit()
 
 
+def get_cached_iteration(engine_dir: Path) -> int | None:
+    """Read the cached iteration number from an engine directory, or None if not cached."""
+    cache_file = engine_dir / '.iteration'
+    if cache_file.exists():
+        try:
+            return int(cache_file.read_text().strip())
+        except (ValueError, IOError):
+            return None
+    return None
+
+
+def write_cached_iteration(engine_dir: Path, iteration_number: int):
+    """Write the iteration number to a cache file in the engine directory."""
+    cache_file = engine_dir / '.iteration'
+    cache_file.write_text(str(iteration_number))
+
+
 def ensure_engines_built(iteration: dict, config: dict, force_rebuild: bool = False) -> tuple[str, str, str]:
     """
     Ensure engine binaries exist, building from database parameters if needed.
+
+    Uses a cache file (.iteration) to track which iteration the engines were built for,
+    allowing reuse across worker restarts.
 
     Args:
         iteration: Iteration data from database
@@ -149,6 +170,8 @@ def ensure_engines_built(iteration: dict, config: dict, force_rebuild: bool = Fa
     Returns:
         (plus_path, minus_path, base_path) - paths to engine binaries
     """
+    iteration_number = iteration['iteration_number']
+
     # Compute LOCAL paths (don't use database paths which may be from another OS)
     output_base = Path(config['build']['engines_output_path'])
     if not output_base.is_absolute():
@@ -163,12 +186,23 @@ def ensure_engines_built(iteration: dict, config: dict, force_rebuild: bool = Fa
     minus_path = minus_dir / binary_name
     base_path = base_dir / binary_name
 
-    # Check if all binaries exist locally (skip if force_rebuild)
-    if not force_rebuild and plus_path.exists() and minus_path.exists() and base_path.exists():
-        return str(plus_path), str(minus_path), str(base_path)
+    # Check if all binaries exist and were built for the current iteration
+    if not force_rebuild:
+        plus_cached = get_cached_iteration(plus_dir)
+        minus_cached = get_cached_iteration(minus_dir)
+        base_cached = get_cached_iteration(base_dir)
+
+        all_binaries_exist = plus_path.exists() and minus_path.exists() and base_path.exists()
+        all_iterations_match = (plus_cached == iteration_number and
+                                minus_cached == iteration_number and
+                                base_cached == iteration_number)
+
+        if all_binaries_exist and all_iterations_match:
+            print(f"  Using cached engines for iteration {iteration_number}")
+            return str(plus_path), str(minus_path), str(base_path)
 
     # Need to build engines from parameters
-    print(f"\n  Building engines for iteration {iteration['iteration_number']}...")
+    print(f"\n  Building engines for iteration {iteration_number}...")
 
     src_path = get_rusty_rival_path(config)
 
@@ -186,11 +220,18 @@ def ensure_engines_built(iteration: dict, config: dict, force_rebuild: bool = Fa
         )
         print(f"  Built plus/minus engines")
 
+        # Write cache files
+        write_cached_iteration(plus_dir, iteration_number)
+        write_cached_iteration(minus_dir, iteration_number)
+
         # Build base engine (unperturbed parameters)
         print(f"  Building base engine ({config['build']['base_engine_name']})...")
         if not build_engine(src_path, base_dir, base_params):
             raise RuntimeError("Failed to build base engine")
         print(f"  Built base engine: {base_path}")
+
+        # Write cache file for base
+        write_cached_iteration(base_dir, iteration_number)
 
         return str(new_plus_path), str(new_minus_path), str(base_path)
     except Exception as e:
@@ -224,88 +265,138 @@ def play_spsa_batch(plus_path: str, minus_path: str, timelow_ms: int, timehigh_m
     plus_nps_count = 0
     minus_nps_count = 0
 
-    if concurrency > 1:
-        # Parallel execution
-        configs = []
-        for i in range(batch_size):
-            opening_fen, opening_name = random.choice(OPENING_BOOK)
-            time_ms = random.uniform(timelow_ms, timehigh_ms)
-            time_per_move = time_ms / 1000.0
+    def make_config(game_index: int) -> GameConfig:
+        """Create a game config for the given index."""
+        opening_fen, opening_name = random.choice(OPENING_BOOK)
+        time_ms = random.uniform(timelow_ms, timehigh_ms)
+        time_per_move = time_ms / 1000.0
 
-            # Alternate colors: even games plus is white, odd games minus is white
-            if i % 2 == 0:
-                config = GameConfig(
-                    game_index=i,
-                    white_name="spsa-plus",
-                    black_name="spsa-minus",
-                    white_path=plus_path,
-                    black_path=minus_path,
-                    white_uci_options=None,
-                    black_uci_options=None,
-                    time_per_move=time_per_move,
-                    opening_fen=opening_fen,
-                    opening_name=opening_name,
-                    is_engine1_white=True  # plus is white
-                )
+        # Alternate colors: even games plus is white, odd games minus is white
+        if game_index % 2 == 0:
+            return GameConfig(
+                game_index=game_index,
+                white_name="spsa-plus",
+                black_name="spsa-minus",
+                white_path=plus_path,
+                black_path=minus_path,
+                white_uci_options=None,
+                black_uci_options=None,
+                time_per_move=time_per_move,
+                opening_fen=opening_fen,
+                opening_name=opening_name,
+                is_engine1_white=True  # plus is white
+            )
+        else:
+            return GameConfig(
+                game_index=game_index,
+                white_name="spsa-minus",
+                black_name="spsa-plus",
+                white_path=minus_path,
+                black_path=plus_path,
+                white_uci_options=None,
+                black_uci_options=None,
+                time_per_move=time_per_move,
+                opening_fen=opening_fen,
+                opening_name=opening_name,
+                is_engine1_white=False  # plus is black
+            )
+
+    def process_result(config: GameConfig, result):
+        """Process a completed game result."""
+        nonlocal plus_wins, minus_wins, draws, plus_nps_total, minus_nps_total, plus_nps_count, minus_nps_count
+
+        # Determine winner from plus engine's perspective
+        if config.is_engine1_white:
+            # Plus was white
+            if result.result == "1-0":
+                plus_wins += 1
+            elif result.result == "0-1":
+                minus_wins += 1
             else:
-                config = GameConfig(
-                    game_index=i,
-                    white_name="spsa-minus",
-                    black_name="spsa-plus",
-                    white_path=minus_path,
-                    black_path=plus_path,
-                    white_uci_options=None,
-                    black_uci_options=None,
-                    time_per_move=time_per_move,
-                    opening_fen=opening_fen,
-                    opening_name=opening_name,
-                    is_engine1_white=False  # plus is black
-                )
-            configs.append(config)
+                draws += 1
+            # Collect NPS (plus=white, minus=black)
+            if result.white_nps:
+                plus_nps_total += result.white_nps
+                plus_nps_count += 1
+            if result.black_nps:
+                minus_nps_total += result.black_nps
+                minus_nps_count += 1
+        else:
+            # Plus was black
+            if result.result == "0-1":
+                plus_wins += 1
+            elif result.result == "1-0":
+                minus_wins += 1
+            else:
+                draws += 1
+            # Collect NPS (minus=white, plus=black)
+            if result.white_nps:
+                minus_nps_total += result.white_nps
+                minus_nps_count += 1
+            if result.black_nps:
+                plus_nps_total += result.black_nps
+                plus_nps_count += 1
 
-        # Run games in parallel
-        with ProcessPoolExecutor(max_workers=concurrency) as executor:
-            futures = {executor.submit(play_game_from_config, c): c for c in configs}
+    if concurrency > 1:
+        # Continuous pipeline: keep all workers busy by starting new games as old ones finish
+        progress = ProgressDisplay(batch_size, label="Game")
+        progress.start()
 
-            for future in as_completed(futures):
-                config = futures[future]
-                try:
-                    result = future.result()
+        def make_move_callback(game_idx: int):
+            """Create a callback that updates progress for a specific game."""
+            return lambda move_count: progress.update_moves(game_idx, move_count)
 
-                    # Determine winner from plus engine's perspective
-                    if config.is_engine1_white:
-                        # Plus was white
-                        if result.result == "1-0":
-                            plus_wins += 1
-                        elif result.result == "0-1":
-                            minus_wins += 1
-                        else:
-                            draws += 1
-                        # Collect NPS (plus=white, minus=black)
-                        if result.white_nps:
-                            plus_nps_total += result.white_nps
-                            plus_nps_count += 1
-                        if result.black_nps:
-                            minus_nps_total += result.black_nps
-                            minus_nps_count += 1
-                    else:
-                        # Plus was black
-                        if result.result == "0-1":
-                            plus_wins += 1
-                        elif result.result == "1-0":
-                            minus_wins += 1
-                        else:
-                            draws += 1
-                        # Collect NPS (minus=white, plus=black)
-                        if result.white_nps:
-                            minus_nps_total += result.white_nps
-                            minus_nps_count += 1
-                        if result.black_nps:
-                            plus_nps_total += result.black_nps
-                            plus_nps_count += 1
-                except Exception as e:
-                    print(f"  Error in game: {e}")
-                    errors += 1
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            pending_futures = {}  # future -> config
+            next_game_index = 0
+            completed = 0
+
+            # Submit initial batch up to concurrency limit
+            while next_game_index < min(batch_size, concurrency):
+                config = make_config(next_game_index)
+                callback = make_move_callback(next_game_index)
+                future = executor.submit(play_game_from_config, config, callback)
+                pending_futures[future] = config
+                progress.start_game(next_game_index)
+                next_game_index += 1
+
+            # Process completions and submit new games to keep workers busy
+            while pending_futures:
+                # Wait for at least one game to complete
+                done, _ = wait(pending_futures.keys(), return_when=FIRST_COMPLETED)
+
+                for future in done:
+                    config = pending_futures.pop(future)
+                    try:
+                        result = future.result()
+                        # Get NPS for display (average of both engines)
+                        nps = None
+                        if result.white_nps and result.black_nps:
+                            nps = (result.white_nps + result.black_nps) // 2
+                        elif result.white_nps:
+                            nps = result.white_nps
+                        elif result.black_nps:
+                            nps = result.black_nps
+
+                        progress.finish_game(config.game_index, result.result, nps)
+                        process_result(config, result)
+                        completed += 1
+                    except Exception as e:
+                        progress.finish_game(config.game_index, "err")
+                        print(f"\n  Error in game: {e}")
+                        errors += 1
+                        completed += 1
+
+                    # Submit a new game if there are more to play
+                    if next_game_index < batch_size:
+                        new_config = make_config(next_game_index)
+                        callback = make_move_callback(next_game_index)
+                        new_future = executor.submit(play_game_from_config, new_config, callback)
+                        pending_futures[new_future] = new_config
+                        progress.start_game(next_game_index)
+                        next_game_index += 1
+
+        progress.stop()
 
     else:
         # Sequential execution
@@ -411,74 +502,115 @@ def play_reference_batch(base_path: str, ref_path: str, timelow_ms: int, timehig
     draws = 0
     errors = 0
 
-    if concurrency > 1:
-        # Parallel execution
-        configs = []
-        for i in range(batch_size):
-            opening_fen, opening_name = random.choice(OPENING_BOOK)
-            time_ms = random.uniform(timelow_ms, timehigh_ms)
-            time_per_move = time_ms / 1000.0
+    def make_config(game_index: int) -> GameConfig:
+        """Create a game config for the given index."""
+        opening_fen, opening_name = random.choice(OPENING_BOOK)
+        time_ms = random.uniform(timelow_ms, timehigh_ms)
+        time_per_move = time_ms / 1000.0
 
-            # Alternate colors: even games base is white, odd games base is black
-            if i % 2 == 0:
-                config = GameConfig(
-                    game_index=i,
-                    white_name="spsa-base",
-                    black_name="stockfish",
-                    white_path=base_path,
-                    black_path=ref_path,
-                    white_uci_options=None,
-                    black_uci_options=None,
-                    time_per_move=time_per_move,
-                    opening_fen=opening_fen,
-                    opening_name=opening_name,
-                    is_engine1_white=True  # base is white
-                )
+        # Alternate colors: even games base is white, odd games base is black
+        if game_index % 2 == 0:
+            return GameConfig(
+                game_index=game_index,
+                white_name="spsa-base",
+                black_name="stockfish",
+                white_path=base_path,
+                black_path=ref_path,
+                white_uci_options=None,
+                black_uci_options=None,
+                time_per_move=time_per_move,
+                opening_fen=opening_fen,
+                opening_name=opening_name,
+                is_engine1_white=True  # base is white
+            )
+        else:
+            return GameConfig(
+                game_index=game_index,
+                white_name="stockfish",
+                black_name="spsa-base",
+                white_path=ref_path,
+                black_path=base_path,
+                white_uci_options=None,
+                black_uci_options=None,
+                time_per_move=time_per_move,
+                opening_fen=opening_fen,
+                opening_name=opening_name,
+                is_engine1_white=False  # base is black
+            )
+
+    def process_result(config: GameConfig, result):
+        """Process a completed game result."""
+        nonlocal base_wins, base_losses, draws
+
+        # Determine result from base engine's perspective
+        if config.is_engine1_white:
+            # Base was white
+            if result.result == "1-0":
+                base_wins += 1
+            elif result.result == "0-1":
+                base_losses += 1
             else:
-                config = GameConfig(
-                    game_index=i,
-                    white_name="stockfish",
-                    black_name="spsa-base",
-                    white_path=ref_path,
-                    black_path=base_path,
-                    white_uci_options=None,
-                    black_uci_options=None,
-                    time_per_move=time_per_move,
-                    opening_fen=opening_fen,
-                    opening_name=opening_name,
-                    is_engine1_white=False  # base is black
-                )
-            configs.append(config)
+                draws += 1
+        else:
+            # Base was black
+            if result.result == "0-1":
+                base_wins += 1
+            elif result.result == "1-0":
+                base_losses += 1
+            else:
+                draws += 1
 
-        # Run games in parallel
-        with ProcessPoolExecutor(max_workers=concurrency) as executor:
-            futures = {executor.submit(play_game_from_config, c): c for c in configs}
+    if concurrency > 1:
+        # Continuous pipeline: keep all workers busy by starting new games as old ones finish
+        progress = ProgressDisplay(batch_size, label="Ref")
+        progress.start()
 
-            for future in as_completed(futures):
-                config = futures[future]
-                try:
-                    result = future.result()
+        def make_move_callback(game_idx: int):
+            """Create a callback that updates progress for a specific game."""
+            return lambda move_count: progress.update_moves(game_idx, move_count)
 
-                    # Determine result from base engine's perspective
-                    if config.is_engine1_white:
-                        # Base was white
-                        if result.result == "1-0":
-                            base_wins += 1
-                        elif result.result == "0-1":
-                            base_losses += 1
-                        else:
-                            draws += 1
-                    else:
-                        # Base was black
-                        if result.result == "0-1":
-                            base_wins += 1
-                        elif result.result == "1-0":
-                            base_losses += 1
-                        else:
-                            draws += 1
-                except Exception as e:
-                    print(f"  Error in ref game: {e}")
-                    errors += 1
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            pending_futures = {}  # future -> config
+            next_game_index = 0
+            completed = 0
+
+            # Submit initial batch up to concurrency limit
+            while next_game_index < min(batch_size, concurrency):
+                config = make_config(next_game_index)
+                callback = make_move_callback(next_game_index)
+                future = executor.submit(play_game_from_config, config, callback)
+                pending_futures[future] = config
+                progress.start_game(next_game_index)
+                next_game_index += 1
+
+            # Process completions and submit new games to keep workers busy
+            while pending_futures:
+                # Wait for at least one game to complete
+                done, _ = wait(pending_futures.keys(), return_when=FIRST_COMPLETED)
+
+                for future in done:
+                    config = pending_futures.pop(future)
+                    try:
+                        result = future.result()
+                        progress.finish_game(config.game_index, result.result)
+                        process_result(config, result)
+                        completed += 1
+                    except Exception as e:
+                        progress.finish_game(config.game_index, "err")
+                        print(f"\n  Error in ref game: {e}")
+                        errors += 1
+                        completed += 1
+
+                    # Submit a new game if there are more to play
+                    if next_game_index < batch_size:
+                        new_config = make_config(next_game_index)
+                        callback = make_move_callback(next_game_index)
+                        new_future = executor.submit(play_game_from_config, new_config, callback)
+                        pending_futures[new_future] = new_config
+                        progress.start_game(next_game_index)
+                        next_game_index += 1
+
+        progress.stop()
 
     else:
         # Sequential execution
@@ -562,7 +694,6 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
     games_total = 0
     ref_games_total = 0
     current_iteration = None
-    engines_built_for_iteration = None  # Track which iteration we built engines for
     # Track this worker's contribution to current iteration
     worker_iteration_games = 0
     worker_iteration_ref = 0
@@ -586,11 +717,9 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                 print(f"\n\nIteration {current_iteration}: {iteration['games_played']}/{iteration['target_games']} games")
                 print(f"  Time:  {iteration['timelow_ms']}-{iteration['timehigh_ms']}ms/move")
 
-            # Ensure engines are built (force rebuild if iteration changed)
-            need_rebuild = iteration_changed or engines_built_for_iteration != current_iteration
+            # Ensure engines are built (cache check handles iteration matching)
             try:
-                plus_path, minus_path, base_path = ensure_engines_built(iteration, config, force_rebuild=need_rebuild)
-                engines_built_for_iteration = current_iteration
+                plus_path, minus_path, base_path = ensure_engines_built(iteration, config)
             except RuntimeError as e:
                 print(f"\n  ERROR: {e}")
                 print("  Waiting before retry...")
@@ -614,7 +743,8 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
             actual_batch = min(batch_size, remaining)
 
             # Play batch of SPSA games (plus vs minus)
-            print(f"\n  Playing {actual_batch} SPSA games...", end=" ", flush=True)
+            print(f"\n  SPSA games ({actual_batch}, concurrency={concurrency}):")
+            batch_start = time.time()
             plus_wins, minus_wins, draws, errors, plus_nps, minus_nps = play_spsa_batch(
                 plus_path,
                 minus_path,
@@ -623,6 +753,7 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                 actual_batch,
                 concurrency
             )
+            batch_time = time.time() - batch_start
 
             # Only count successful games (errors don't count toward total)
             completed_games = plus_wins + minus_wins + draws
@@ -645,11 +776,12 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
             spsa_result = f"{plus_wins}W-{minus_wins}L-{draws}D"
             if errors > 0:
                 spsa_result += f" err={errors}"
-            print(f"{spsa_result}{nps_str}")
+            print(f"  SPSA result: {spsa_result}{nps_str} [{batch_time:.1f}s]")
 
             # Play reference games (base vs Stockfish) - same batch size
             if ref_enabled and completed_games > 0:
-                print(f"  Playing {completed_games} ref games...", end=" ", flush=True)
+                print(f"\n  Reference games ({completed_games}):")
+                ref_start = time.time()
                 ref_wins, ref_losses, ref_draws, ref_errors = play_reference_batch(
                     base_path,
                     ref_engine_path,
@@ -658,6 +790,7 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                     completed_games,  # Play same number as SPSA games
                     concurrency
                 )
+                ref_time = time.time() - ref_start
 
                 ref_completed = ref_wins + ref_losses + ref_draws
                 if ref_completed > 0:
@@ -669,7 +802,7 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                 ref_result = f"{ref_wins}W-{ref_losses}L-{ref_draws}D"
                 if ref_errors > 0:
                     ref_result += f" err={ref_errors}"
-                print(f"{ref_result}")
+                print(f"  Ref result: {ref_result} [{ref_time:.1f}s]")
 
             # Show this worker's contribution to the current iteration
             print(f"  This worker: {worker_iteration_games} SPSA, {worker_iteration_ref} ref for iter {current_iteration}")

@@ -18,7 +18,7 @@ timehigh = 1.0       # Maximum seconds per move (random within range)
 # =============================================================================
 
 [games]
-games_per_iteration = 150   # Target games before calculating gradient
+games_per_iteration = 1000  # Target games before calculating gradient
 batch_size = 10             # Games per worker batch (for status updates)
 
 # =============================================================================

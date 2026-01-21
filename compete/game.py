@@ -49,8 +49,8 @@ class GameResult:
     black_nps: Optional[int] = None
 
 
-def play_game_from_config(config: GameConfig) -> GameResult:
-    """Play a game from a GameConfig - suitable for ProcessPoolExecutor."""
+def play_game_from_config(config: GameConfig, on_move: callable = None) -> GameResult:
+    """Play a game from a GameConfig - suitable for ThreadPoolExecutor."""
     result, game = play_game(
         engine1_cmd=config.white_path,
         engine2_cmd=config.black_path,
@@ -60,7 +60,8 @@ def play_game_from_config(config: GameConfig) -> GameResult:
         start_fen=config.opening_fen,
         opening_name=config.opening_name,
         engine1_uci_options=config.white_uci_options,
-        engine2_uci_options=config.black_uci_options
+        engine2_uci_options=config.black_uci_options,
+        on_move=on_move
     )
 
     # Extract NPS from game headers
@@ -123,7 +124,8 @@ def play_game(engine1_cmd: Path | list, engine2_cmd: Path | list,
               start_fen: str = None,
               opening_name: str = None,
               engine1_uci_options: dict = None,
-              engine2_uci_options: dict = None) -> tuple[str, chess.pgn.Game]:
+              engine2_uci_options: dict = None,
+              on_move: callable = None) -> tuple[str, chess.pgn.Game]:
     """Play a single game and return (result, pgn_game).
 
     engine1_cmd/engine2_cmd can be:
@@ -174,6 +176,7 @@ def play_game(engine1_cmd: Path | list, engine2_cmd: Path | list,
     engine2_nodes = 0
     engine2_time = 0.0
 
+    move_count = 0
     try:
         while not board.is_game_over():
             is_white = board.turn == chess.WHITE
@@ -181,6 +184,11 @@ def play_game(engine1_cmd: Path | list, engine2_cmd: Path | list,
             result = engine.play(board, chess.engine.Limit(time=time_per_move), info=chess.engine.INFO_ALL)
             board.push(result.move)
             node = node.add_variation(result.move)
+            move_count += 1
+
+            # Report move progress via callback
+            if on_move:
+                on_move(move_count)
 
             # Accumulate nodes and time from search info
             if result.info:

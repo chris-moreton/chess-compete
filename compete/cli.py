@@ -44,6 +44,9 @@ from compete.cup import run_cup
 
 def main():
     """Main entry point for the CLI."""
+    # Required for Windows multiprocessing support
+    multiprocessing.freeze_support()
+
     parser = argparse.ArgumentParser(
         description="Chess engine competition harness",
         epilog="Engine names can be shorthand (v1, v10) or full (v1-baseline, v10-arrayvec-movelist)"
