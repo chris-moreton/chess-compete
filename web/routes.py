@@ -606,6 +606,29 @@ def register_routes(app):
             SpsaIteration.status == 'in_progress'
         ).first()
 
+        # Calculate rolling stability (standard deviation over window) for convergence chart
+        window_size = 10
+        stability_data = {name: [] for name in param_names}
+
+        for name in param_names:
+            values = params_data[name]
+            for i in range(len(values)):
+                if i < window_size - 1:
+                    # Not enough data yet, use what we have
+                    window = values[:i+1]
+                else:
+                    window = values[i-window_size+1:i+1]
+
+                if len(window) > 1:
+                    mean = sum(window) / len(window)
+                    variance = sum((x - mean) ** 2 for x in window) / len(window)
+                    std_dev = variance ** 0.5
+                    # Normalize by parameter range for comparability
+                    param_range = param_changes[name]['first'] if name in param_changes and param_changes[name]['first'] != 0 else 1
+                    stability_data[name].append(std_dev / abs(param_range) * 100)  # As percentage
+                else:
+                    stability_data[name].append(0)
+
         return render_template(
             'spsa.html',
             iterations=iterations,
@@ -616,5 +639,6 @@ def register_routes(app):
             current_params=current_params,
             param_changes=param_changes,
             in_progress=in_progress,
-            total_iterations=len(iterations)
+            total_iterations=len(iterations),
+            stability_data=stability_data
         )

@@ -175,8 +175,18 @@
         <!-- Elo Diff Chart -->
         <div class="chart-container">
             <h2>Elo Difference (Plus vs Minus Engine) Over Iterations</h2>
+            <p style="color: #666; font-size: 13px; margin-top: -10px;">Shows which perturbation direction was stronger each iteration. Expected to fluctuate around zero.</p>
             <div class="chart-wrapper">
                 <canvas id="eloChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Convergence Chart -->
+        <div class="chart-container">
+            <h2>Parameter Stability (Rolling 10-iteration Std Dev)</h2>
+            <p style="color: #666; font-size: 13px; margin-top: -10px;">Lower values = more stable/converged. Shows normalized volatility as % of initial value.</p>
+            <div class="chart-wrapper">
+                <canvas id="stabilityChart"></canvas>
             </div>
         </div>
 
@@ -239,6 +249,7 @@
             const eloData = {{ elo_data|tojson }};
             const paramsData = {{ params_data|tojson }};
             const paramNames = {{ param_names|tojson }};
+            const stabilityData = {{ stability_data|tojson }};
 
             // Color palette for charts
             const colors = [
@@ -283,6 +294,55 @@
                                 display: true,
                                 text: 'Elo Diff (+ = Plus engine stronger)'
                             }
+                        }
+                    }
+                }
+            });
+
+            // Parameter Stability/Convergence Chart
+            const stabilityCtx = document.getElementById('stabilityChart').getContext('2d');
+            const stabilityDatasets = paramNames.map((name, index) => ({
+                label: name,
+                data: stabilityData[name],
+                borderColor: colors[index % colors.length],
+                backgroundColor: 'transparent',
+                tension: 0.3,
+                pointRadius: 0,
+                borderWidth: 2
+            }));
+
+            new Chart(stabilityCtx, {
+                type: 'line',
+                data: {
+                    labels: iterationNumbers,
+                    datasets: stabilityDatasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'right',
+                            labels: {
+                                boxWidth: 12,
+                                font: { size: 10 }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Iteration'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Volatility (% of initial value)'
+                            },
+                            min: 0
                         }
                     }
                 }
