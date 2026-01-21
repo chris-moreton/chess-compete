@@ -25,7 +25,6 @@ class GameStatus:
     nps: Optional[int] = None
     result: Optional[str] = None  # "1-0", "0-1", "1/2-1/2"
     finished: bool = False
-    finish_time: Optional[float] = None
 
 
 class ProgressDisplay:
@@ -43,7 +42,6 @@ class ProgressDisplay:
     BAR_WIDTH = 32
     FILLED_CHAR = "●"
     EMPTY_CHAR = "○"
-    SHOW_COMPLETED_FOR = 30.0  # Show completed games for N seconds before removing
 
     def __init__(self, label: str = "Game"):
         self.label = label
@@ -95,7 +93,6 @@ class ProgressDisplay:
             if game_index in self.games:
                 self.games[game_index].finished = True
                 self.games[game_index].result = result
-                self.games[game_index].finish_time = time.time()
                 if nps:
                     self.games[game_index].nps = nps
                 self.completed_count += 1
@@ -139,26 +136,15 @@ class ProgressDisplay:
         return f"  {game_num}: {bar}{nps_str}{result_str}"
 
     def _render(self) -> list[str]:
-        """Render game lines - only active games and recently completed."""
-        now = time.time()
+        """Render all game lines."""
         lines = []
 
         with self.lock:
-            # Filter to active games + recently completed
-            visible_games = []
-            for g in self.games.values():
-                if not g.finished:
-                    # Active game - always show
-                    visible_games.append(g)
-                elif g.finish_time and (now - g.finish_time) < self.SHOW_COMPLETED_FOR:
-                    # Recently completed - show briefly
-                    visible_games.append(g)
-
             # Sort by game index
-            visible_games.sort(key=lambda g: g.game_index)
+            sorted_games = sorted(self.games.values(), key=lambda g: g.game_index)
 
             # Render each game
-            for g in visible_games:
+            for g in sorted_games:
                 lines.append(self._format_game_line(g))
 
             # Add summary line
