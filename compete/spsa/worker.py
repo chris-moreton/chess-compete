@@ -367,13 +367,24 @@ def get_reference_engine_path(config: dict) -> str | None:
         chess_compete_dir = Path(__file__).parent.parent.parent
         ref_path = chess_compete_dir / ref_path
 
+    # If path is a directory, search for stockfish binary inside it
+    if ref_path.is_dir():
+        # Look for stockfish executable in directory
+        patterns = ['stockfish*', 'Stockfish*']
+        for pattern in patterns:
+            matches = list(ref_path.glob(pattern))
+            for match in matches:
+                if match.is_file():
+                    return str(match)
+        return None
+
     # Check for .exe on Windows
     if os.name == 'nt' and not ref_path.suffix:
         ref_path_exe = ref_path.with_suffix('.exe')
         if ref_path_exe.exists():
             return str(ref_path_exe)
 
-    if ref_path.exists():
+    if ref_path.exists() and ref_path.is_file():
         return str(ref_path)
 
     return None
