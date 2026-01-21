@@ -472,7 +472,7 @@ def run_games_continuous(
                 callback = make_move_callback(next_game_index)
                 future = executor.submit(play_game_from_config, config, callback)
                 pending_futures[future] = (config, game_type)
-                progress.start_game(next_game_index)
+                progress.start_game(next_game_index, game_type)
                 next_game_index += 1
 
             # Process completions and submit new games
@@ -492,7 +492,21 @@ def run_games_continuous(
                         elif result.black_nps:
                             nps = result.black_nps
 
-                        progress.finish_game(config.game_index, result.result, nps)
+                        # Compute interpreted outcome for progress display
+                        if game_type == 'spsa':
+                            # From plus engine's perspective
+                            if config.is_engine1_white:
+                                outcome = "plus_win" if result.result == "1-0" else "minus_win" if result.result == "0-1" else "draw"
+                            else:
+                                outcome = "plus_win" if result.result == "0-1" else "minus_win" if result.result == "1-0" else "draw"
+                        else:
+                            # From base engine's perspective
+                            if config.is_engine1_white:
+                                outcome = "win" if result.result == "1-0" else "loss" if result.result == "0-1" else "draw"
+                            else:
+                                outcome = "win" if result.result == "0-1" else "loss" if result.result == "1-0" else "draw"
+
+                        progress.finish_game(config.game_index, result.result, nps, outcome)
 
                         if game_type == 'spsa':
                             process_spsa_result(config, result)
@@ -501,7 +515,7 @@ def run_games_continuous(
                         batch_completed += 1
 
                     except Exception as e:
-                        progress.finish_game(config.game_index, "err")
+                        progress.finish_game(config.game_index, "err", outcome="err")
                         print(f"\n  Error in {game_type} game: {e}")
                         if game_type == 'spsa':
                             total_spsa['errors'] += 1
@@ -533,7 +547,7 @@ def run_games_continuous(
                         callback = make_move_callback(next_game_index)
                         new_future = executor.submit(play_game_from_config, new_config, callback)
                         pending_futures[new_future] = (new_config, game_type)
-                        progress.start_game(next_game_index)
+                        progress.start_game(next_game_index, game_type)
                         next_game_index += 1
 
             # Final batch update

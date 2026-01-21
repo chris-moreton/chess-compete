@@ -21,6 +21,7 @@ class GameStatus:
     """Status of a single game."""
     game_index: int
     start_time: float
+    game_type: str = "spsa"  # "spsa" or "ref"
     move_count: int = 0  # Current move count (plies)
     nps: Optional[int] = None
     result: Optional[str] = None  # "1-0", "0-1", "1/2-1/2"
@@ -51,7 +52,11 @@ class ProgressDisplay:
         self.running = False
         self.lines_printed = 0
         self.completed_count = 0
-        self.results = {"1-0": 0, "0-1": 0, "1/2-1/2": 0, "err": 0}
+        # Track results separately for SPSA and reference games
+        # SPSA: plus_win, minus_win, draw (from plus engine's perspective)
+        # Ref: win, loss, draw (from base engine's perspective)
+        self.spsa_results = {"plus_win": 0, "minus_win": 0, "draw": 0, "err": 0}
+        self.ref_results = {"win": 0, "loss": 0, "draw": 0, "err": 0}
 
         # Check if terminal supports ANSI (Windows 10+ does, older doesn't)
         self.ansi_supported = self._check_ansi_support()
@@ -73,12 +78,13 @@ class ProgressDisplay:
                 return False
         return True  # Unix-like systems support ANSI
 
-    def start_game(self, game_index: int):
+    def start_game(self, game_index: int, game_type: str = "spsa"):
         """Record that a game has started."""
         with self.lock:
             self.games[game_index] = GameStatus(
                 game_index=game_index,
-                start_time=time.time()
+                start_time=time.time(),
+                game_type=game_type
             )
 
     def update_moves(self, game_index: int, move_count: int):
@@ -87,17 +93,31 @@ class ProgressDisplay:
             if game_index in self.games:
                 self.games[game_index].move_count = move_count
 
-    def finish_game(self, game_index: int, result: str, nps: Optional[int] = None):
-        """Record that a game has finished."""
+    def finish_game(self, game_index: int, result: str, nps: Optional[int] = None,
+                    outcome: Optional[str] = None):
+        """Record that a game has finished.
+
+        Args:
+            game_index: The game index
+            result: Raw game result for display ("1-0", "0-1", "1/2-1/2", "err")
+            nps: Optional NPS to display
+            outcome: Interpreted outcome for stats tracking:
+                     SPSA: "plus_win", "minus_win", "draw"
+                     Ref: "win", "loss", "draw"
+        """
         with self.lock:
             if game_index in self.games:
-                self.games[game_index].finished = True
-                self.games[game_index].result = result
+                game = self.games[game_index]
+                game.finished = True
+                game.result = result
                 if nps:
-                    self.games[game_index].nps = nps
+                    game.nps = nps
                 self.completed_count += 1
-                if result in self.results:
-                    self.results[result] += 1
+                # Track interpreted outcome by game type
+                if outcome:
+                    results_dict = self.ref_results if game.game_type == "ref" else self.spsa_results
+                    if outcome in results_dict:
+                        results_dict[outcome] += 1
 
     def _format_nps(self, nps: Optional[int]) -> str:
         """Format NPS for display."""
@@ -147,12 +167,23 @@ class ProgressDisplay:
             for g in sorted_games:
                 lines.append(self._format_game_line(g))
 
-            # Add summary line
+            # Add summary line with SPSA and ref results
             active_count = sum(1 for g in self.games.values() if not g.finished)
-            w = self.results["1-0"]
-            l = self.results["0-1"]
-            d = self.results["1/2-1/2"]
-            lines.append(f"  [{self.completed_count} done: {w}W-{l}L-{d}D | {active_count} active]")
+            # SPSA results (from plus engine's perspective)
+            spsa_plus = self.spsa_results["plus_win"]
+            spsa_minus = self.spsa_results["minus_win"]
+            spsa_draw = self.spsa_results["draw"]
+            spsa_str = f"+{spsa_plus}W-{spsa_minus}L-{spsa_draw}D"
+            # Reference results (from base engine's perspective)
+            ref_total = self.ref_results["win"] + self.ref_results["loss"] + self.ref_results["draw"]
+            if ref_total > 0:
+                ref_w = self.ref_results["win"]
+                ref_l = self.ref_results["loss"]
+                ref_d = self.ref_results["draw"]
+                ref_str = f" | Ref: {ref_w}W-{ref_l}L-{ref_d}D"
+            else:
+                ref_str = ""
+            lines.append(f"  [{self.completed_count} done: {spsa_str}{ref_str} | {active_count} active]")
 
         return lines
 
