@@ -563,6 +563,9 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
     ref_games_total = 0
     current_iteration = None
     engines_built_for_iteration = None  # Track which iteration we built engines for
+    # Track this worker's contribution to current iteration
+    worker_iteration_games = 0
+    worker_iteration_ref = 0
 
     while True:
         try:
@@ -578,6 +581,8 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
             iteration_changed = current_iteration != iteration['iteration_number']
             if iteration_changed:
                 current_iteration = iteration['iteration_number']
+                worker_iteration_games = 0
+                worker_iteration_ref = 0
                 print(f"\n\nIteration {current_iteration}: {iteration['games_played']}/{iteration['target_games']} games")
                 print(f"  Time:  {iteration['timelow_ms']}-{iteration['timehigh_ms']}ms/move")
 
@@ -626,6 +631,7 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                 # Update database with actual completed games
                 update_iteration_results(iteration['id'], completed_games, plus_wins, minus_wins, draws)
                 games_total += completed_games
+                worker_iteration_games += completed_games
 
             # Format NPS for display (in thousands)
             nps_str = ""
@@ -657,6 +663,7 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                 if ref_completed > 0:
                     update_reference_results(iteration['id'], ref_completed, ref_wins, ref_losses, ref_draws)
                     ref_games_total += ref_completed
+                    worker_iteration_ref += ref_completed
 
                 # Display reference results
                 ref_result = f"{ref_wins}W-{ref_losses}L-{ref_draws}D"
@@ -664,7 +671,8 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                     ref_result += f" err={ref_errors}"
                 print(f"{ref_result}")
 
-            print(f"  Total: {games_total} SPSA, {ref_games_total} ref")
+            # Show this worker's contribution to the current iteration
+            print(f"  This worker: {worker_iteration_games} SPSA, {worker_iteration_ref} ref for iter {current_iteration}")
 
         except KeyboardInterrupt:
             print(f"\n\nWorker stopped. Total games played: {games_total}")
