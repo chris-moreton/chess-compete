@@ -631,18 +631,20 @@ def register_routes(app):
                 else:
                     stability_data[name].append(0)
 
-        # Get the latest ref_elo for display
+        # Get the latest ref_elo for display (only from iteration 110+)
+        ref_min_iteration = 110
         latest_ref_elo = None
-        for elo in reversed(ref_elo_data):
-            if elo is not None:
-                latest_ref_elo = elo
+        for i in range(len(ref_elo_data) - 1, -1, -1):
+            if ref_elo_data[i] is not None and iteration_numbers[i] >= ref_min_iteration:
+                latest_ref_elo = ref_elo_data[i]
                 break
 
         # Build filtered data for ref_elo chart (only iterations with reference data)
+        # Uses ref_min_iteration defined above to exclude buggy early data
         ref_iteration_numbers = []
         ref_elo_filtered = []
         for i, elo in enumerate(ref_elo_data):
-            if elo is not None:
+            if elo is not None and iteration_numbers[i] >= ref_min_iteration:
                 ref_iteration_numbers.append(iteration_numbers[i])
                 ref_elo_filtered.append(elo)
 
