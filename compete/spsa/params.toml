@@ -16,13 +16,13 @@
 # Reverse futility pruning (beta pruning)
 # If static eval - margin * depth > beta, prune
 [beta_prune_margin_per_depth]
-value = 200.17127623877488
+value = 199.6774140925593
 min = 50
 max = 400
 step = 20
 
 [beta_prune_max_depth]
-value = 3.0346255974077154
+value = 1.7703060175229641
 min = 1
 max = 6
 step = 1
@@ -30,27 +30,27 @@ step = 1
 # Null move pruning
 # Reduction = base + depth/4 (approximately)
 [null_move_reduce_depth_base]
-value = 3.167234626600324
-min = 2
+value = 2.5342543072674424
+min = 1
 max = 5
 step = 1
 
 [null_move_min_depth]
-value = 3.8794340794463107
-min = 2
+value = 2.865037615279701
+min = 1
 max = 6
 step = 1
 
 # SEE (Static Exchange Evaluation) pruning
 # At depth N, prune captures with SEE < -margin * N
 [see_prune_margin]
-value = 17.0220064547081
+value = 16.204069058551802
 min = 5
 max = 50
 step = 5
 
 [see_prune_max_depth]
-value = 9.1845386978407
+value = 4.929927264561679
 min = 3
 max = 14
 step = 1
@@ -58,13 +58,13 @@ step = 1
 # Alpha (futility) pruning margins
 # If static eval + margin[depth] < alpha, prune
 [alpha_prune_margin_base]
-value = 129.08848195046207
+value = 130.0639948784644
 min = 50
 max = 200
 step = 16
 
 [alpha_prune_margin_per_depth]
-value = 64.11732394565541
+value = 62.45074157594085
 min = 32
 max = 128
 step = 8
@@ -72,20 +72,20 @@ step = 8
 # Late Move Pruning (LMP) thresholds
 # After N moves at depth D, skip remaining quiet moves
 [lmp_threshold_depth1]
-value = 7.699947940331816
-min = 4
+value = 4
+min = 2
 max = 16
 step = 2
 
 [lmp_threshold_depth2]
-value = 15.180864031597261
-min = 6
+value = 8.987309434449443
+min = 4
 max = 24
 step = 2
 
 [lmp_threshold_depth3]
-value = 17.821360224656654
-min = 8
+value = 8.314363717451801
+min = 4
 max = 32
 step = 2
 
