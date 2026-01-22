@@ -7,7 +7,6 @@ import os
 import random
 import socket
 import sys
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -16,6 +15,7 @@ from compete.database import load_elo_ratings, save_game_to_db, get_initial_elo
 from compete.engine_manager import get_engine_info, ensure_engines_initialized
 from compete.game import play_game, GameConfig, GameResult, play_game_from_config
 from compete.openings import OPENING_BOOK
+from compete.parallel import run_games_parallel
 
 
 def get_seeded_engines(engine_dir: Path, num_engines: int = None,
@@ -191,7 +191,7 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
 
             # Game 1: engine1 as white
             config1 = GameConfig(
-                game_index=pair_idx * 2,
+                game_index=len(all_configs),
                 white_name=engine1_name,
                 black_name=engine2_name,
                 white_path=str(engine1_path),
@@ -203,10 +203,11 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
                 opening_name=opening_name1,
                 is_engine1_white=True
             )
+            all_configs.append(config1)
 
             # Game 2: engine2 as white
             config2 = GameConfig(
-                game_index=pair_idx * 2 + 1,
+                game_index=len(all_configs),
                 white_name=engine2_name,
                 black_name=engine1_name,
                 white_path=str(engine2_path),
@@ -218,23 +219,10 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
                 opening_name=opening_name2,
                 is_engine1_white=False
             )
-
-            all_configs.append(config1)
             all_configs.append(config2)
 
-        # Run all games in parallel and collect results
-        results_by_index = {}
-        with ProcessPoolExecutor(max_workers=concurrency) as executor:
-            future_to_config = {executor.submit(play_game_from_config, c): c for c in all_configs}
-
-            for future in as_completed(future_to_config):
-                config = future_to_config[future]
-                game_result = future.result()
-                results_by_index[game_result.game_index] = (config, game_result)
-
-        # Process results in order
-        for idx in sorted(results_by_index.keys()):
-            config, game_result = results_by_index[idx]
+        def on_game_complete(config: GameConfig, game_result: GameResult):
+            nonlocal games_played, engine1_points, engine2_points
             games_played += 1
 
             # Save to database
@@ -244,7 +232,7 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
                             time_per_move_ms=int(game_result.time_per_move * 1000),
                             hostname=hostname)
 
-            # Update points
+            # Update points based on who was engine1
             if config.is_engine1_white:
                 if game_result.result == "1-0":
                     engine1_points += 1
@@ -253,8 +241,6 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
                 elif game_result.result == "1/2-1/2":
                     engine1_points += 0.5
                     engine2_points += 0.5
-                print(f"  Game {games_played}: {engine1_name} vs {engine2_name} -> {game_result.result} [{game_result.opening_name}] "
-                      f"| {engine1_name} {engine1_points:.1f} - {engine2_points:.1f} {engine2_name}")
             else:
                 if game_result.result == "1-0":
                     engine2_points += 1
@@ -263,8 +249,9 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
                 elif game_result.result == "1/2-1/2":
                     engine1_points += 0.5
                     engine2_points += 0.5
-                print(f"  Game {games_played}: {engine2_name} vs {engine1_name} -> {game_result.result} [{game_result.opening_name}] "
-                      f"| {engine1_name} {engine1_points:.1f} - {engine2_points:.1f} {engine2_name}")
+
+        # Run games with continuous pipeline
+        run_games_parallel(all_configs, concurrency, on_game_complete, label="Game")
 
     else:
         # Sequential execution (original code)
