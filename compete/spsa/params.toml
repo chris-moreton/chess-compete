@@ -8,49 +8,52 @@
 # - value: current value (updated by SPSA)
 # - min/max: bounds to prevent nonsensical values
 # - step: perturbation delta (δ) for SPSA
+#
+# Reset to iteration 118 values (best Stockfish performance: 2593 Elo)
+# Added probcut and multi-cut parameters for Phase 2 tuning
 
 # =============================================================================
-# SEARCH PARAMETERS (Phase 1 - focused tuning)
+# SEARCH PARAMETERS
 # =============================================================================
 
 # Reverse futility pruning (beta pruning)
 # If static eval - margin * depth > beta, prune
 [beta_prune_margin_per_depth]
-value = 199.6774140925593
+value = 199.5722624308379
 min = 50
 max = 400
 step = 20
 
 [beta_prune_max_depth]
-value = 1.7703060175229641
+value = 3.582281038525344
 min = 1
 max = 6
 step = 1
 
 # Null move pruning
-# Reduction = base + depth/4 (approximately)
+# Reduction = base + depth/6 (approximately)
 [null_move_reduce_depth_base]
-value = 2.5342543072674424
+value = 2.1355517356311315
 min = 1
 max = 5
 step = 1
 
 [null_move_min_depth]
-value = 2.865037615279701
+value = 3.9283016242679114
 min = 1
 max = 6
 step = 1
 
 # SEE (Static Exchange Evaluation) pruning
-# At depth N, prune captures with SEE < -margin * N
+# At depth N, prune captures with SEE < -margin * N^2
 [see_prune_margin]
-value = 16.204069058551802
+value = 16.300503390248746
 min = 5
 max = 50
 step = 5
 
 [see_prune_max_depth]
-value = 4.929927264561679
+value = 3.4958269102471133
 min = 3
 max = 14
 step = 1
@@ -58,13 +61,13 @@ step = 1
 # Alpha (futility) pruning margins
 # If static eval + margin[depth] < alpha, prune
 [alpha_prune_margin_base]
-value = 130.0639948784644
+value = 130.02370933025688
 min = 50
 max = 200
 step = 16
 
 [alpha_prune_margin_per_depth]
-value = 62.45074157594085
+value = 62.73730523115326
 min = 32
 max = 128
 step = 8
@@ -72,25 +75,79 @@ step = 8
 # Late Move Pruning (LMP) thresholds
 # After N moves at depth D, skip remaining quiet moves
 [lmp_threshold_depth1]
-value = 4
+value = 4.798171374734611
 min = 2
 max = 16
 step = 2
 
 [lmp_threshold_depth2]
-value = 8.987309434449443
+value = 10.868538146708357
 min = 4
 max = 24
 step = 2
 
 [lmp_threshold_depth3]
-value = 8.314363717451801
+value = 8.449878795933476
 min = 4
 max = 32
 step = 2
 
 # =============================================================================
-# FUTURE PARAMETERS (Phase 2+)
+# PROBCUT PARAMETERS (NEW)
+# =============================================================================
+# At high depth, do a shallow search with raised beta
+# If a capture fails high, the position is probably winning and can be cut
+
+[probcut_min_depth]
+value = 5
+min = 4
+max = 10
+step = 1
+
+[probcut_margin]
+value = 100
+min = 50
+max = 300
+step = 25
+
+[probcut_depth_reduction]
+value = 4
+min = 2
+max = 6
+step = 1
+
+# =============================================================================
+# MULTI-CUT PARAMETERS (NEW)
+# =============================================================================
+# At high depth, if multiple moves fail high at shallow depth,
+# assume the position is good and return a beta cutoff
+
+[multicut_min_depth]
+value = 8
+min = 6
+max = 12
+step = 1
+
+[multicut_depth_reduction]
+value = 4
+min = 2
+max = 6
+step = 1
+
+[multicut_moves_to_try]
+value = 6
+min = 3
+max = 10
+step = 1
+
+[multicut_required_cutoffs]
+value = 3
+min = 2
+max = 5
+step = 1
+
+# =============================================================================
+# FUTURE PARAMETERS (Phase 3+)
 # =============================================================================
 # Uncomment these when expanding the parameter set
 

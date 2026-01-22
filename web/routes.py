@@ -561,8 +561,13 @@ def register_routes(app):
         if not iterations:
             return render_template('spsa.html', iterations=[], params_data={}, elo_data=[])
 
-        # Get parameter names from first iteration
-        param_names = sorted(iterations[0].base_parameters.keys()) if iterations[0].base_parameters else []
+        # Get parameter names from ALL iterations (union of all params seen)
+        # This handles cases where new params are added mid-tuning
+        all_param_names = set()
+        for it in iterations:
+            if it.base_parameters:
+                all_param_names.update(it.base_parameters.keys())
+        param_names = sorted(all_param_names)
 
         # Build parameter progression data for Chart.js
         params_data = {name: [] for name in param_names}
@@ -576,7 +581,10 @@ def register_routes(app):
             ref_elo_data.append(float(it.ref_elo_estimate) if it.ref_elo_estimate else None)
             if it.base_parameters:
                 for name in param_names:
-                    params_data[name].append(it.base_parameters.get(name, 0))
+                    # Use None for params that don't exist in this iteration
+                    # Chart.js will skip null points, showing gaps for new params
+                    val = it.base_parameters.get(name)
+                    params_data[name].append(val)
 
         # Get current/latest values for display
         latest = iterations[-1] if iterations else None
@@ -584,13 +592,21 @@ def register_routes(app):
         if latest and latest.base_parameters:
             current_params = latest.base_parameters
 
-        # Calculate total change from first to last iteration
+        # Calculate total change from first appearance to last iteration
+        # For params added mid-tuning, find their first iteration
         param_changes = {}
-        if len(iterations) >= 2 and iterations[0].base_parameters and iterations[-1].base_parameters:
-            first_params = iterations[0].base_parameters
+        if len(iterations) >= 1 and iterations[-1].base_parameters:
             last_params = iterations[-1].base_parameters
             for name in param_names:
-                first_val = first_params.get(name, 0)
+                # Find first iteration where this param exists
+                first_val = None
+                for it in iterations:
+                    if it.base_parameters and name in it.base_parameters:
+                        first_val = it.base_parameters[name]
+                        break
+                if first_val is None:
+                    first_val = 0
+
                 last_val = last_params.get(name, 0)
                 if first_val != 0:
                     pct_change = ((last_val - first_val) / abs(first_val)) * 100
@@ -617,9 +633,9 @@ def register_routes(app):
             for i in range(len(values)):
                 if i < window_size - 1:
                     # Not enough data yet, use what we have
-                    window = values[:i+1]
+                    window = [v for v in values[:i+1] if v is not None]
                 else:
-                    window = values[i-window_size+1:i+1]
+                    window = [v for v in values[i-window_size+1:i+1] if v is not None]
 
                 if len(window) > 1:
                     mean = sum(window) / len(window)
@@ -628,8 +644,12 @@ def register_routes(app):
                     # Normalize by parameter range for comparability
                     param_range = param_changes[name]['first'] if name in param_changes and param_changes[name]['first'] != 0 else 1
                     stability_data[name].append(std_dev / abs(param_range) * 100)  # As percentage
-                else:
+                elif len(window) == 1:
+                    # Only one data point, no stability measure yet
                     stability_data[name].append(0)
+                else:
+                    # No data for this param at this iteration
+                    stability_data[name].append(None)
 
         # Get the latest ref_elo for display (only from iteration 110+)
         ref_min_iteration = 110

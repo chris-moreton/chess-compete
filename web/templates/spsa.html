@@ -256,11 +256,12 @@
             const paramNames = {{ param_names|tojson }};
             const stabilityData = {{ stability_data|tojson }};
 
-            // Color palette for charts
+            // Color palette for charts (18+ colors for all parameters)
             const colors = [
                 '#2196F3', '#4CAF50', '#FF9800', '#9C27B0', '#F44336',
                 '#00BCD4', '#8BC34A', '#FF5722', '#673AB7', '#E91E63',
-                '#009688', '#CDDC39'
+                '#009688', '#CDDC39', '#3F51B5', '#795548', '#607D8B',
+                '#FFC107', '#9E9E9E', '#00E676', '#FF4081', '#7C4DFF'
             ];
 
             // Elo vs Stockfish Chart (only shows iterations with reference data)
@@ -323,7 +324,8 @@
                 backgroundColor: 'transparent',
                 tension: 0.3,
                 pointRadius: 0,
-                borderWidth: 2
+                borderWidth: 2,
+                spanGaps: false  // Show gaps where data is null (new params)
             }));
 
             new Chart(stabilityCtx, {
@@ -378,7 +380,8 @@
                                 borderColor: colors[index % colors.length],
                                 backgroundColor: 'transparent',
                                 tension: 0.3,
-                                pointRadius: 2
+                                pointRadius: 2,
+                                spanGaps: false  // Show gaps where data is null (new params)
                             }]
                         },
                         options: {
