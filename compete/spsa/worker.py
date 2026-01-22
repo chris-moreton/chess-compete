@@ -443,7 +443,7 @@ def run_games_continuous(
 
     if concurrency > 1:
         # Continuous pipeline: always keep concurrency games running
-        progress = ProgressDisplay(label="Game")
+        progress = ProgressDisplay(label="Game", concurrency=concurrency)
         progress.start()
 
         def make_move_callback(game_idx: int):

@@ -35,20 +35,34 @@ class ProgressDisplay:
     """
     Live progress display for parallel games.
 
-    Shows a visual representation of each active game's progress:
-      Game  1: ●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●● 1.2M nps
-      Game  2: ●●●●●●●●●●●●●●●●●●●●○○○○○○○○○○○○ 1.1M nps
-      Game  3: ●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●● 980k nps (1-0)
-      [12 done: 5W-4L-3D | 4 active]
+    Shows a fixed-height display with:
+    - Top section: active (in-progress) games
+    - Bottom section: recently completed games
+    - Summary line at the bottom
+
+    Example with concurrency=4 (8 slots total):
+      Game 101: ●●●●●●●●●●●●●●●●●●●●○○○○○○○○○○○○ 1.1M nps
+      Game 102: ●●●●●●●●●●●●●●●○○○○○○○○○○○○○○○○○ 1.0M nps
+      [empty]
+      [empty]
+      --------------------------------------------------
+      Game  99: ●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●● 1.1M (1-0)
+      Game 100: ●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●● 1.0M (0-1)
+      [empty]
+      [empty]
+      [100 done: 45W-40L-15D | 2 active]
     """
 
     BAR_WIDTH = 32
     FILLED_CHAR = "●"
     EMPTY_CHAR = "○"
 
-    def __init__(self, label: str = "Game"):
+    def __init__(self, label: str = "Game", concurrency: int = 4):
         self.label = label
+        self.concurrency = concurrency
+        self.max_slots = concurrency * 2  # Fixed display height
         self.games: dict[int, GameStatus] = {}
+        self.recently_completed: list[GameStatus] = []  # Most recent completions
         self.lock = threading.Lock()
         self.display_thread: Optional[threading.Thread] = None
         self.running = False
@@ -99,6 +113,14 @@ class ProgressDisplay:
                 if result in self.results:
                     self.results[result] += 1
 
+                # Move to recently completed list (keep most recent)
+                self.recently_completed.insert(0, game)
+                if len(self.recently_completed) > self.concurrency:
+                    self.recently_completed.pop()
+
+                # Remove from active games
+                del self.games[game_index]
+
     def _format_nps(self, nps: Optional[int]) -> str:
         """Format NPS for display."""
         if not nps:
@@ -129,17 +151,40 @@ class ProgressDisplay:
         game_num = f"{self.label} {status.game_index + 1:4d}"
         return f"  {game_num}: {bar}{nps_str}{result_str}"
 
+    def _format_empty_slot(self) -> str:
+        """Format an empty slot line."""
+        empty_bar = self.EMPTY_CHAR * self.BAR_WIDTH
+        return f"  {'[empty]':<{len(self.label) + 6}}: {empty_bar}"
+
     def _render(self) -> list[str]:
-        """Render all game lines."""
+        """Render fixed-height display with active games on top, completed on bottom."""
         lines = []
 
         with self.lock:
-            sorted_games = sorted(self.games.values(), key=lambda g: g.game_index)
+            # Top section: active (in-progress) games
+            active_games = sorted(self.games.values(), key=lambda g: g.game_index)
+            active_slots = self.concurrency
 
-            for g in sorted_games:
-                lines.append(self._format_game_line(g))
+            for i in range(active_slots):
+                if i < len(active_games):
+                    lines.append(self._format_game_line(active_games[i]))
+                else:
+                    lines.append(self._format_empty_slot())
 
-            active_count = sum(1 for g in self.games.values() if not g.finished)
+            # Separator
+            lines.append("  " + "-" * 50)
+
+            # Bottom section: recently completed games
+            completed_slots = self.concurrency
+
+            for i in range(completed_slots):
+                if i < len(self.recently_completed):
+                    lines.append(self._format_game_line(self.recently_completed[i]))
+                else:
+                    lines.append(self._format_empty_slot())
+
+            # Summary line
+            active_count = len(self.games)
             w = self.results["1-0"]
             l = self.results["0-1"]
             d = self.results["1/2-1/2"]
@@ -244,7 +289,7 @@ def run_games_parallel(
         return {'completed': completed, 'errors': errors, 'results': results}
 
     # Parallel execution with continuous pipeline
-    progress = ProgressDisplay(label=label)
+    progress = ProgressDisplay(label=label, concurrency=concurrency)
     progress.start()
 
     def make_move_callback(game_idx: int):
