@@ -267,6 +267,37 @@
             // Elo vs Stockfish Chart (only shows iterations with reference data)
             const refEloCtx = document.getElementById('refEloChart').getContext('2d');
             if (refEloData.length > 0) {
+                // Calculate linear regression trendline
+                function linearRegression(data) {
+                    const n = data.length;
+                    if (n < 2) return null;
+
+                    let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+                    for (let i = 0; i < n; i++) {
+                        sumX += i;
+                        sumY += data[i];
+                        sumXY += i * data[i];
+                        sumX2 += i * i;
+                    }
+
+                    const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+                    const intercept = (sumY - slope * sumX) / n;
+
+                    // Generate trendline data
+                    return data.map((_, i) => intercept + slope * i);
+                }
+
+                const trendlineData = linearRegression(refEloData);
+
+                // Calculate slope for display (Elo per iteration)
+                const n = refEloData.length;
+                let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+                for (let i = 0; i < n; i++) {
+                    sumX += i; sumY += refEloData[i]; sumXY += i * refEloData[i]; sumX2 += i * i;
+                }
+                const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+                const slopeText = slope >= 0 ? `+${slope.toFixed(1)}` : slope.toFixed(1);
+
                 new Chart(refEloCtx, {
                     type: 'line',
                     data: {
@@ -280,6 +311,15 @@
                             tension: 0.3,
                             pointRadius: 5,
                             pointHoverRadius: 8
+                        }, {
+                            label: `Trend (${slopeText} Elo/iter)`,
+                            data: trendlineData,
+                            borderColor: '#FF9800',
+                            borderDash: [5, 5],
+                            borderWidth: 2,
+                            fill: false,
+                            pointRadius: 0,
+                            pointHoverRadius: 0
                         }]
                     },
                     options: {
@@ -287,7 +327,8 @@
                         maintainAspectRatio: false,
                         plugins: {
                             legend: {
-                                display: false
+                                display: true,
+                                position: 'top'
                             }
                         },
                         scales: {

@@ -243,13 +243,16 @@ def run_games_continuous(
     ref_path: str | None, ref_elo: int,
     timelow_ms: int, timehigh_ms: int,
     concurrency: int, batch_size: int,
-    on_batch_complete: callable
+    on_batch_complete: callable,
+    ref_ratio: float = 1.0
 ) -> tuple[dict, dict]:
     """
-    Run SPSA and reference games interleaved 1:1, updating database every batch_size completions.
+    Run SPSA and reference games interleaved, updating database every batch_size completions.
 
-    Games alternate: SPSA, ref, SPSA, ref, ...
-    This ensures reference games track the same conditions as SPSA games.
+    Games are interleaved based on ref_ratio:
+    - ref_ratio=1.0: alternating SPSA, ref, SPSA, ref, ... (1:1)
+    - ref_ratio=0.25: SPSA, SPSA, SPSA, SPSA, ref, ... (4:1)
+    - ref_ratio=0.0: SPSA only, no reference games
 
     Args:
         plus_path: Path to the plus-perturbed engine binary
@@ -265,11 +268,12 @@ def run_games_continuous(
             Called every batch_size games. Returns True to continue, False to stop.
             spsa_results = {'plus_wins': N, 'minus_wins': N, 'draws': N}
             ref_results = {'wins': N, 'losses': N, 'draws': N} or None if ref disabled
+        ref_ratio: Reference games per SPSA game (0.25 = 1 ref per 4 SPSA, 1.0 = 1:1)
 
     Returns:
         (spsa_totals, ref_totals) - dicts with cumulative win/loss/draw counts
     """
-    ref_enabled = ref_path is not None
+    ref_enabled = ref_path is not None and ref_ratio > 0
 
     # UCI options to limit Stockfish strength
     stockfish_options = {
@@ -292,14 +296,22 @@ def run_games_continuous(
     minus_nps_count = 0
 
     # Game type tracking: 'spsa' or 'ref'
-    # Games are submitted alternating: spsa(0), ref(1), spsa(2), ref(3), ...
-    # If ref_enabled is False, all games are SPSA
+    # Games are interleaved based on ref_ratio:
+    # - ratio=1.0: SPSA(0), ref(1), SPSA(2), ref(3), ... (cycle=2)
+    # - ratio=0.25: SPSA(0-3), ref(4), SPSA(5-8), ref(9), ... (cycle=5)
+    if ref_enabled and ref_ratio > 0:
+        spsa_per_ref = int(1 / ref_ratio)  # e.g., 4 for ratio=0.25
+        cycle_size = spsa_per_ref + 1      # e.g., 5 for ratio=0.25
+    else:
+        spsa_per_ref = 0
+        cycle_size = 1
 
     def get_game_type(game_index: int) -> str:
         """Determine if a game index is SPSA or reference."""
         if not ref_enabled:
             return 'spsa'
-        return 'spsa' if game_index % 2 == 0 else 'ref'
+        # ref game is at position spsa_per_ref in each cycle
+        return 'ref' if (game_index % cycle_size) == spsa_per_ref else 'spsa'
 
     def make_spsa_config(game_index: int, spsa_game_num: int) -> GameConfig:
         """Create a SPSA game config (plus vs minus)."""
@@ -692,10 +704,11 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
     # Load config for build settings
     config = load_config()
 
-    # Get reference engine path and ELO (for tracking strength vs Stockfish)
+    # Get reference engine path, ELO, and ratio (for tracking strength vs Stockfish)
     ref_engine_path = get_reference_engine_path(config)
-    ref_enabled = ref_engine_path is not None
     ref_elo = config.get('reference', {}).get('engine_elo', 2600)
+    ref_ratio = config.get('reference', {}).get('ratio', 1.0)  # 1.0 = 1:1, 0.25 = 4:1
+    ref_enabled = ref_engine_path is not None and ref_ratio > 0
 
     print(f"\n{'='*60}")
     print("SPSA WORKER MODE")
@@ -707,7 +720,8 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
     print(f"Opening book: {len(OPENING_BOOK)} positions")
     print(f"Rusty-rival source: {get_rusty_rival_path(config)}")
     if ref_enabled:
-        print(f"Reference engine: {ref_engine_path} (ELO {ref_elo})")
+        spsa_per_ref = int(1 / ref_ratio) if ref_ratio > 0 else 0
+        print(f"Reference engine: {ref_engine_path} (ELO {ref_elo}, {spsa_per_ref}:1 SPSA:ref)")
     else:
         print(f"Reference games: DISABLED")
     print(f"{'='*60}")
@@ -806,8 +820,9 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                 print(f"  Batch: {spsa_str}{ref_str} | Progress: {updated['games_played']}/{updated['target_games']}")
                 return True  # Keep going
 
-            # Run games continuously (SPSA and ref interleaved 1:1) until iteration is complete
-            ref_str = f" + ref vs sf-{ref_elo}" if ref_enabled else ""
+            # Run games continuously until iteration is complete
+            spsa_per_ref = int(1 / ref_ratio) if ref_ratio > 0 else 0
+            ref_str = f" + ref vs sf-{ref_elo} ({spsa_per_ref}:1)" if ref_enabled else ""
             print(f"\n  Running games (concurrency={concurrency}, update every {batch_size}){ref_str}:")
             start_time = time.time()
             total_spsa, total_ref, plus_nps, minus_nps = run_games_continuous(
@@ -820,7 +835,8 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                 iteration['timehigh_ms'],
                 concurrency,
                 batch_size,
-                on_batch_complete
+                on_batch_complete,
+                ref_ratio
             )
             elapsed = time.time() - start_time
 

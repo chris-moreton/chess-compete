@@ -18,7 +18,7 @@ timehigh = 1.0       # Maximum seconds per move (random within range)
 # =============================================================================
 
 [games]
-games_per_iteration = 1000  # Target games before calculating gradient
+games_per_iteration = 400  # Target games before calculating gradient
 batch_size = 10             # Games per worker batch (for status updates)
 
 # =============================================================================
@@ -68,6 +68,7 @@ base_engine_name = "spsa-base"
 engine_path = "../rusty-rival/engines/stockfish"
 engine_elo = 2600  # Assumed Elo of reference engine
 enabled = true     # Set to false to disable reference games
+ratio = 0.25       # Reference games per SPSA game (0.25 = 1 ref per 4 SPSA = 100 ref for 400 SPSA)
 
 # =============================================================================
 # DATABASE
