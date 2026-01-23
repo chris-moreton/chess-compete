@@ -491,7 +491,10 @@ def migrate_database():
         # Check if ref_target_games column exists
         try:
             db.session.execute(db.text("SELECT ref_target_games FROM spsa_iterations LIMIT 1"))
+            db.session.commit()
         except Exception:
+            # Rollback the failed query before trying ALTER
+            db.session.rollback()
             # Column doesn't exist, add it
             print("  Adding ref_target_games column...")
             db.session.execute(db.text(
