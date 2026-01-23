@@ -447,12 +447,17 @@ def mark_iteration_complete(iteration_id: int, gradient: dict, elo_diff: float, 
     with_db_retry(_mark)
 
 
-def build_new_base_engine(config: dict, params: dict) -> str:
+def build_new_base_engine(config: dict, params: dict, iteration_number: int) -> str:
     """
     Build a new base engine with the given parameters.
 
     This is called after SPSA games complete and gradient is calculated,
     so the base engine has the NEW updated parameters.
+
+    Args:
+        config: SPSA configuration
+        params: Updated parameters (full config with value/min/max/step)
+        iteration_number: Current iteration number (for cache file)
 
     Returns the path to the built engine binary.
     """
@@ -476,6 +481,10 @@ def build_new_base_engine(config: dict, params: dict) -> str:
 
     if not build_engine(src_path, base_dir, param_values):
         raise RuntimeError("Failed to build new base engine")
+
+    # Write iteration cache file so workers know this is the correct version
+    cache_file = base_dir / '.iteration'
+    cache_file.write_text(str(iteration_number))
 
     print(f"  Built new base engine: {base_path}")
     return str(base_path)
@@ -758,7 +767,7 @@ def run_master():
 
             # ===== Build new base engine with updated params =====
             if ref_enabled:
-                base_engine_path = build_new_base_engine(config, params)
+                base_engine_path = build_new_base_engine(config, params, k)
 
                 # Transition to ref phase
                 updated_param_values = {k: v['value'] for k, v in params.items()}

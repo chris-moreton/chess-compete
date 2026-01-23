@@ -251,7 +251,8 @@ def ensure_base_engine_ready(iteration: dict, config: dict) -> str:
     Get the base engine path for reference games.
 
     The base engine is built by the master with UPDATED parameters after
-    SPSA games complete. Workers just use the path from the iteration record.
+    SPSA games complete. Workers check the iteration cache to ensure they
+    have the correct version.
 
     Args:
         iteration: Iteration data from database (must be ref phase)
@@ -260,8 +261,7 @@ def ensure_base_engine_ready(iteration: dict, config: dict) -> str:
     Returns:
         Path to the base engine binary
     """
-    # The master builds the base engine and stores the path in the iteration
-    # We just need to verify it exists locally
+    iteration_number = iteration['iteration_number']
 
     # Compute LOCAL path (don't use database paths which may be from another OS)
     output_base = Path(config['build']['engines_output_path'])
@@ -273,16 +273,40 @@ def ensure_base_engine_ready(iteration: dict, config: dict) -> str:
     base_dir = output_base / config['build']['base_engine_name']
     base_path = base_dir / binary_name
 
-    if not base_path.exists():
-        # Base engine should have been built by master - if not present, we need to build it
-        print(f"\n  Base engine not found, building from updated parameters...")
-        src_path = get_rusty_rival_path(config)
-        base_params = iteration['base_parameters']
+    # Check if base engine exists AND was built for this iteration
+    cached_iteration = get_cached_iteration(base_dir)
+    if base_path.exists() and cached_iteration == iteration_number:
+        print(f"  Using cached base engine for iteration {iteration_number}")
+        return str(base_path)
 
-        if not build_engine(src_path, base_dir, base_params):
-            raise RuntimeError("Failed to build base engine")
+    # Base engine not ready for this iteration - master should build it
+    # Wait and retry a few times
+    max_wait = 120  # 2 minutes max
+    poll_interval = 5
+    waited = 0
 
-        print(f"  Built base engine: {base_path}")
+    while waited < max_wait:
+        cached_iteration = get_cached_iteration(base_dir)
+        if base_path.exists() and cached_iteration == iteration_number:
+            print(f"  Base engine ready for iteration {iteration_number}")
+            return str(base_path)
+
+        if waited == 0:
+            print(f"  Waiting for master to build base engine for iteration {iteration_number}...")
+        time.sleep(poll_interval)
+        waited += poll_interval
+
+    # Timeout - try to build it ourselves as fallback
+    print(f"\n  Timeout waiting for base engine, building from parameters...")
+    src_path = get_rusty_rival_path(config)
+    base_params = iteration['base_parameters']
+
+    if not build_engine(src_path, base_dir, base_params):
+        raise RuntimeError("Failed to build base engine")
+
+    # Write cache file
+    write_cached_iteration(base_dir, iteration_number)
+    print(f"  Built base engine: {base_path}")
 
     return str(base_path)
 
