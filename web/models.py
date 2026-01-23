@@ -258,13 +258,15 @@ class SpsaIteration(db.Model):
     minus_wins = db.Column(db.Integer, nullable=False, default=0)
     draws = db.Column(db.Integer, nullable=False, default=0)
 
-    # Reference game tracking (base engine vs Stockfish)
+    # Reference game tracking (new base engine vs Stockfish)
+    ref_target_games = db.Column(db.Integer, nullable=False, default=100)
     ref_games_played = db.Column(db.Integer, nullable=False, default=0)
     ref_wins = db.Column(db.Integer, nullable=False, default=0)
     ref_losses = db.Column(db.Integer, nullable=False, default=0)
     ref_draws = db.Column(db.Integer, nullable=False, default=0)
 
-    # Status: pending (waiting for workers), in_progress, complete
+    # Status: pending (SPSA phase), building (master building new base),
+    #         ref_pending (ref phase), complete
     status = db.Column(db.String(20), nullable=False, default='pending')
 
     # Parameter snapshot (JSON for reproducibility and analysis)

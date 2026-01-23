@@ -632,10 +632,10 @@ def register_routes(app):
                     'pct_change': pct_change
                 }
 
-        # Get in-progress iteration if any
+        # Get in-progress iteration if any (two-phase: pending, in_progress, building, ref_pending)
         in_progress = SpsaIteration.query.filter(
-            SpsaIteration.status == 'in_progress'
-        ).first()
+            SpsaIteration.status.in_(['pending', 'in_progress', 'building', 'ref_pending'])
+        ).order_by(SpsaIteration.iteration_number.desc()).first()
 
         # Calculate rolling stability (standard deviation over window) for convergence chart
         window_size = 10

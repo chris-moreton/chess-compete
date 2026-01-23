@@ -168,11 +168,15 @@
         {% if in_progress %}
         <div class="in-progress-banner">
             <h3>Iteration {{ in_progress.iteration_number }} In Progress</h3>
-            <p>SPSA Games: {{ in_progress.games_played }}/{{ in_progress.target_games }}
-            {% if in_progress.ref_games_played is not none %}
-             | Reference Games: {{ in_progress.ref_games_played }}/{{ (in_progress.target_games * ref_ratio)|int }}
+            {% if in_progress.status in ['pending', 'in_progress'] %}
+            <p><strong>Phase 1:</strong> SPSA Games (plus vs minus): {{ in_progress.games_played }}/{{ in_progress.target_games }}</p>
+            {% elif in_progress.status == 'building' %}
+            <p><strong>Building:</strong> Master is building new base engine with updated parameters...</p>
+            {% elif in_progress.status == 'ref_pending' %}
+            <p><strong>Phase 2:</strong> Reference Games (base vs Stockfish): {{ in_progress.ref_games_played }}/{{ in_progress.ref_target_games }}</p>
+            {% else %}
+            <p>Status: {{ in_progress.status }}</p>
             {% endif %}
-            </p>
         </div>
         {% endif %}
 
