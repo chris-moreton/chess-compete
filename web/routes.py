@@ -553,13 +553,26 @@ def register_routes(app):
     @app.route('/spsa')
     def spsa_dashboard():
         """SPSA parameter tuning dashboard with progression graphs."""
+        import tomllib
+        from pathlib import Path
+
+        # Load SPSA config for ref_ratio
+        config_path = Path(__file__).parent.parent / 'compete' / 'spsa' / 'config.toml'
+        ref_ratio = 1.0  # Default
+        try:
+            with open(config_path, 'rb') as f:
+                spsa_config = tomllib.load(f)
+                ref_ratio = spsa_config.get('reference', {}).get('ratio', 1.0)
+        except Exception:
+            pass  # Use default if config not found
+
         # Get all completed iterations ordered by iteration number
         iterations = SpsaIteration.query.filter(
             SpsaIteration.status == 'complete'
         ).order_by(SpsaIteration.iteration_number.asc()).all()
 
         if not iterations:
-            return render_template('spsa.html', iterations=[], params_data={}, elo_data=[])
+            return render_template('spsa.html', iterations=[], params_data={}, elo_data=[], ref_ratio=ref_ratio)
 
         # Get parameter names from ALL iterations (union of all params seen)
         # This handles cases where new params are added mid-tuning
@@ -682,5 +695,6 @@ def register_routes(app):
             param_changes=param_changes,
             in_progress=in_progress,
             total_iterations=len(iterations),
-            stability_data=stability_data
+            stability_data=stability_data,
+            ref_ratio=ref_ratio
         )

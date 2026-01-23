@@ -170,7 +170,7 @@
             <h3>Iteration {{ in_progress.iteration_number }} In Progress</h3>
             <p>SPSA Games: {{ in_progress.games_played }}/{{ in_progress.target_games }}
             {% if in_progress.ref_games_played is not none %}
-             | Reference Games: {{ in_progress.ref_games_played }}/{{ in_progress.target_games }}
+             | Reference Games: {{ in_progress.ref_games_played }}/{{ (in_progress.target_games * ref_ratio)|int }}
             {% endif %}
             </p>
         </div>
