@@ -267,36 +267,20 @@
             // Elo vs Stockfish Chart (only shows iterations with reference data)
             const refEloCtx = document.getElementById('refEloChart').getContext('2d');
             if (refEloData.length > 0) {
-                // Calculate linear regression trendline
-                function linearRegression(data) {
-                    const n = data.length;
-                    if (n < 2) return null;
-
-                    let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
-                    for (let i = 0; i < n; i++) {
-                        sumX += i;
-                        sumY += data[i];
-                        sumXY += i * data[i];
-                        sumX2 += i * i;
-                    }
-
-                    const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
-                    const intercept = (sumY - slope * sumX) / n;
-
-                    // Generate trendline data
-                    return data.map((_, i) => intercept + slope * i);
+                // Calculate 10-iteration moving average
+                function movingAverage(data, window) {
+                    return data.map((_, i) => {
+                        if (i < window - 1) return null;  // Not enough data yet
+                        let sum = 0;
+                        for (let j = 0; j < window; j++) {
+                            sum += data[i - j];
+                        }
+                        return sum / window;
+                    });
                 }
 
-                const trendlineData = linearRegression(refEloData);
-
-                // Calculate slope for display (Elo per iteration)
-                const n = refEloData.length;
-                let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
-                for (let i = 0; i < n; i++) {
-                    sumX += i; sumY += refEloData[i]; sumXY += i * refEloData[i]; sumX2 += i * i;
-                }
-                const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
-                const slopeText = slope >= 0 ? `+${slope.toFixed(1)}` : slope.toFixed(1);
+                const maWindow = 10;
+                const movingAvgData = movingAverage(refEloData, maWindow);
 
                 new Chart(refEloCtx, {
                     type: 'line',
@@ -312,14 +296,15 @@
                             pointRadius: 5,
                             pointHoverRadius: 8
                         }, {
-                            label: `Trend (${slopeText} Elo/iter)`,
-                            data: trendlineData,
+                            label: `${maWindow}-iter Moving Avg`,
+                            data: movingAvgData,
                             borderColor: '#FF9800',
-                            borderDash: [5, 5],
-                            borderWidth: 2,
+                            borderWidth: 3,
                             fill: false,
+                            tension: 0.3,
                             pointRadius: 0,
-                            pointHoverRadius: 0
+                            pointHoverRadius: 0,
+                            spanGaps: true
                         }]
                     },
                     options: {
