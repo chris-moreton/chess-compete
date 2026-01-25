@@ -447,49 +447,6 @@ def mark_iteration_complete(iteration_id: int, gradient: dict, elo_diff: float, 
     with_db_retry(_mark)
 
 
-def build_new_base_engine(config: dict, params: dict, iteration_number: int) -> str:
-    """
-    Build a new base engine with the given parameters.
-
-    This is called after SPSA games complete and gradient is calculated,
-    so the base engine has the NEW updated parameters.
-
-    Args:
-        config: SPSA configuration
-        params: Updated parameters (full config with value/min/max/step)
-        iteration_number: Current iteration number (for cache file)
-
-    Returns the path to the built engine binary.
-    """
-    from compete.spsa.build import build_engine, get_rusty_rival_path
-
-    print("\nBuilding new base engine with updated parameters...")
-
-    src_path = get_rusty_rival_path(config)
-
-    # Paths
-    output_base = Path(config['build']['engines_output_path'])
-    if not output_base.is_absolute():
-        output_base = CHESS_COMPETE_DIR / output_base
-
-    binary_name = 'rusty-rival.exe' if os.name == 'nt' else 'rusty-rival'
-    base_dir = output_base / config['build']['base_engine_name']
-    base_path = base_dir / binary_name
-
-    # Build with updated parameters (convert from full config to just values)
-    param_values = {k: v['value'] for k, v in params.items()}
-
-    if not build_engine(src_path, base_dir, param_values):
-        raise RuntimeError("Failed to build new base engine")
-
-    # Write iteration cache file so workers know this is the correct version
-    cache_file = base_dir / '.iteration'
-    cache_file.write_text(str(iteration_number))
-
-    print(f"  Built new base engine: {base_path}")
-    return str(base_path)
-
-
 def migrate_database():
     """Ensure database schema is up to date with new columns."""
     from web.app import create_app
@@ -765,14 +722,17 @@ def run_master():
             save_params(params)
             print("\nSaved updated parameters to params.toml")
 
-            # ===== Build new base engine with updated params =====
+            # ===== Transition to ref phase (workers will build base engine) =====
             if ref_enabled:
-                base_engine_path = build_new_base_engine(config, params, k)
+                # Compute expected base engine path (workers build it locally)
+                binary_name = 'rusty-rival.exe' if os.name == 'nt' else 'rusty-rival'
+                base_engine_path = str(output_base / config['build']['base_engine_name'] / binary_name)
 
                 # Transition to ref phase
-                updated_param_values = {k: v['value'] for k, v in params.items()}
+                updated_param_values = {name: cfg['value'] for name, cfg in params.items()}
                 set_ref_phase(iteration_id, base_engine_path, updated_param_values)
                 print(f"\nTransitioned to ref phase (status='ref_pending')")
+                print("  Workers will build base engine with updated parameters")
                 status = 'ref_pending'
 
         # ===== PHASE 2: Reference Games =====
