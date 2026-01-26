@@ -1332,7 +1332,8 @@ def solve_position(engine, board: chess.Board, position: EpdPosition,
             final_depth=None,
             score=None,
             score_valid=None,
-            timed_out=True
+            timed_out=True,
+            points_earned=None
         )
 
     elapsed = time.time() - start_time
@@ -1354,6 +1355,14 @@ def solve_position(engine, board: chess.Board, position: EpdPosition,
                 diff = abs(cp - position.centipawn_eval)
                 score_valid = diff <= score_tolerance
 
+    # Calculate points from STS move_scores if available
+    points_earned = None
+    if position.move_scores:
+        # Look up the move played (found_move for bm, last_move for am)
+        move_to_check = found_move if found_move else last_move
+        if move_to_check:
+            points_earned = position.move_scores.get(move_to_check, 0)
+
     # Determine if solved based on test type
     if is_avoid_only:
         # For am-only positions: solved if final move is NOT in avoid_moves
@@ -1365,7 +1374,8 @@ def solve_position(engine, board: chess.Board, position: EpdPosition,
             final_depth=final_depth,
             score=final_score,
             score_valid=score_valid,
-            timed_out=False  # am positions always run to completion
+            timed_out=False,  # am positions always run to completion
+            points_earned=points_earned
         )
     else:
         # For bm positions: solved if we found the expected move
@@ -1376,7 +1386,8 @@ def solve_position(engine, board: chess.Board, position: EpdPosition,
             final_depth=final_depth,
             score=final_score,
             score_valid=score_valid,
-            timed_out=found_move is None and elapsed >= timeout * 0.95
+            timed_out=found_move is None and elapsed >= timeout * 0.95,
+            points_earned=points_earned
         )
 
 
@@ -1693,6 +1704,10 @@ def run_epd_solve(engine_names: list[str], engine_dir: Path, epd_file: Path,
                         else:
                             print(f"  Engine score: {score_str} (expected {position.centipawn_eval:+d}) {valid_mark}")
 
+                # Show points if STS format
+                if result.points_earned is not None:
+                    max_pts = max(position.move_scores.values()) if position.move_scores else 10
+                    print(f"  Points: {result.points_earned}/{max_pts}")
                 print(f"  Status: SOLVED ({result.solve_time:.1f}s)")
             else:
                 if is_avoid_only:
@@ -1727,10 +1742,17 @@ def run_epd_solve(engine_names: list[str], engine_dir: Path, epd_file: Path,
 
         avg_solve_time = total_solve_time / solved if solved > 0 else 0
 
+        # Calculate points if STS format
+        total_points = sum(r.points_earned for r in results if r.points_earned is not None)
+        max_points = sum(max(p.move_scores.values()) if p.move_scores else 0 for p in testable_positions)
+        has_points = max_points > 0
+
         print(f"\n{'='*70}")
         print(f"RESULTS: {engine_name}")
         print(f"{'='*70}")
         print(f"Solved: {solved}/{total} ({100*solved/total:.1f}%)")
+        if has_points:
+            print(f"Points: {total_points}/{max_points} ({100*total_points/max_points:.1f}%)")
         if solved > 0:
             print(f"Average solve time: {avg_solve_time:.2f}s")
             print(f"Total solve time: {total_solve_time:.1f}s")
@@ -1745,11 +1767,19 @@ def run_epd_solve(engine_names: list[str], engine_dir: Path, epd_file: Path,
 
     # If multiple engines, print comparison
     if len(engine_names) > 1:
+        # Check if any positions have points (STS format)
+        max_points = sum(max(p.move_scores.values()) if p.move_scores else 0 for p in testable_positions)
+        has_points = max_points > 0
+
         print(f"\n{'='*70}")
         print("ENGINE COMPARISON")
         print(f"{'='*70}")
-        print(f"{'Engine':<30} {'Solved':>8} {'%':>8} {'Avg Time':>10}")
-        print("-" * 58)
+        if has_points:
+            print(f"{'Engine':<30} {'Solved':>8} {'%':>8} {'Points':>10} {'Avg Time':>10}")
+            print("-" * 68)
+        else:
+            print(f"{'Engine':<30} {'Solved':>8} {'%':>8} {'Avg Time':>10}")
+            print("-" * 58)
 
         for engine_name in engine_names:
             results = all_results[engine_name]
@@ -1757,7 +1787,11 @@ def run_epd_solve(engine_names: list[str], engine_dir: Path, epd_file: Path,
             total_time = sum(r.solve_time for r in results if r.solved and r.solve_time)
             avg_time = total_time / solved if solved > 0 else 0
             pct = 100 * solved / len(results)
-            print(f"{engine_name:<30} {solved:>5}/{len(results):<2} {pct:>7.1f}% {avg_time:>9.2f}s")
+            if has_points:
+                total_points = sum(r.points_earned for r in results if r.points_earned is not None)
+                print(f"{engine_name:<30} {solved:>5}/{len(results):<2} {pct:>7.1f}% {total_points:>6}/{max_points:<3} {avg_time:>9.2f}s")
+            else:
+                print(f"{engine_name:<30} {solved:>5}/{len(results):<2} {pct:>7.1f}% {avg_time:>9.2f}s")
 
         print(f"{'='*70}")
 

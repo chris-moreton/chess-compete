@@ -63,6 +63,7 @@ def parse_epd_operations(line: str, fen_end_idx: int) -> dict:
     - ce: centipawn evaluation - e.g., "ce +150;" or "ce -200;"
     - dm: direct mate in N - e.g., "dm 5;"
     - id: position identifier - e.g., 'id "Test 1";'
+    - c0: move scores (STS format) - e.g., 'c0 "f5=10, Be5+=2, Bf2=3";'
 
     Returns dict with parsed operations.
     """
@@ -72,6 +73,7 @@ def parse_epd_operations(line: str, fen_end_idx: int) -> dict:
         "ce": None,
         "dm": None,
         "id": None,
+        "move_scores": {},
     }
 
     # Get the operations part (everything after FEN)
@@ -103,6 +105,18 @@ def parse_epd_operations(line: str, fen_end_idx: int) -> dict:
     dm_match = re.search(r'dm\s+(\d+);', ops_part)
     if dm_match:
         operations["dm"] = int(dm_match.group(1))
+
+    # Parse 'c0' operation (STS move scores format: "f5=10, Be5+=2, Bf2=3")
+    c0_match = re.search(r'c0\s+"([^"]+)"', ops_part)
+    if c0_match:
+        for pair in c0_match.group(1).split(','):
+            pair = pair.strip()
+            if '=' in pair:
+                move, pts = pair.rsplit('=', 1)  # rsplit to handle moves like "Be5+"
+                try:
+                    operations["move_scores"][move.strip()] = int(pts.strip())
+                except ValueError:
+                    pass  # Skip malformed entries
 
     return operations
 
@@ -155,6 +169,7 @@ def load_epd_for_solving(epd_file: Path) -> list[EpdPosition]:
                 avoid_moves=ops["am"],
                 centipawn_eval=ops["ce"],
                 direct_mate=ops["dm"],
+                move_scores=ops["move_scores"],
             ))
 
     return positions

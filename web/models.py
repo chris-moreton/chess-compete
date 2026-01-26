@@ -219,6 +219,7 @@ class EpdTestResult(db.Model):
     score_mate = db.Column(db.Integer)  # Mate in N (NULL if not mate)
     score_valid = db.Column(db.Boolean)  # NULL if no ce check
     timed_out = db.Column(db.Boolean, nullable=False, default=False)
+    points_earned = db.Column(db.Integer)  # STS points (0-10, NULL if not STS format)
 
     # Relationships
     engine = db.relationship('Engine', backref='epd_test_results')

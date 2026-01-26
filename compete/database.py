@@ -308,7 +308,8 @@ def save_epd_test_run(epd_file: str, total_positions: int, timeout_seconds: floa
                         score_cp=score_cp,
                         score_mate=score_mate,
                         score_valid=result.score_valid,
-                        timed_out=result.timed_out
+                        timed_out=result.timed_out,
+                        points_earned=result.points_earned
                     )
                     db.session.add(epd_result)
 

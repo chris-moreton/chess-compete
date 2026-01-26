@@ -15,6 +15,7 @@ class EpdPosition:
     avoid_moves: list[str] = field(default_factory=list)  # From 'am' operation
     centipawn_eval: int | None = None  # From 'ce' operation
     direct_mate: int | None = None  # From 'dm' operation
+    move_scores: dict[str, int] = field(default_factory=dict)  # From 'c0' (STS format): {"f5": 10, "Be5+": 2}
 
 
 @dataclass
@@ -27,3 +28,4 @@ class SolveResult:
     score: Any  # chess.engine.Score - using Any to avoid import dependency
     score_valid: bool | None
     timed_out: bool = False
+    points_earned: int | None = None  # STS points from move_scores lookup (0-10)
