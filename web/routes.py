@@ -458,7 +458,13 @@ def register_routes(app):
             ).order_by(EpdTestRun.created_at.desc()).first()
 
         if not run:
-            return render_template('epd_test_detail.html', epd_file=epd_file, run=None, positions=[], engines=[])
+            return render_template('epd_test_detail.html', epd_file=epd_file, run=None, positions=[], engines=[],
+                                   page=1, total_pages=1, per_page=50, total_positions=0)
+
+        # Pagination parameters
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 50, type=int)
+        per_page = min(per_page, 200)  # Cap at 200
 
         # Get all engines that have results for this run
         engine_ids = db.session.query(EpdTestResult.engine_id).filter(
@@ -466,80 +472,80 @@ def register_routes(app):
         ).distinct().all()
         engine_ids = [e[0] for e in engine_ids]
         engines = Engine.query.filter(Engine.id.in_(engine_ids)).order_by(Engine.name).all()
+        engine_map = {e.id: e.name for e in engines}
 
-        # Get all unique positions from this run
-        positions_query = db.session.query(
-            EpdTestResult.position_index,
-            EpdTestResult.position_id,
-            EpdTestResult.fen,
-            EpdTestResult.test_type,
-            EpdTestResult.expected_moves
-        ).filter(
+        # Fetch ALL results for this run in a single query
+        all_results = EpdTestResult.query.filter(
             EpdTestResult.run_id == run.id
-        ).group_by(
-            EpdTestResult.position_index,
-            EpdTestResult.position_id,
-            EpdTestResult.fen,
-            EpdTestResult.test_type,
-            EpdTestResult.expected_moves
-        ).order_by(EpdTestResult.position_index).all()
+        ).all()
 
-        # Build position data with results for each engine
+        # Group results by position_index for efficient lookup
+        results_by_position = {}
+        for result in all_results:
+            if result.position_index not in results_by_position:
+                results_by_position[result.position_index] = {
+                    'position_id': result.position_id,
+                    'fen': result.fen,
+                    'test_type': result.test_type,
+                    'expected_moves': result.expected_moves,
+                    'engine_results': {}
+                }
+            engine_name = engine_map.get(result.engine_id)
+            if engine_name:
+                results_by_position[result.position_index]['engine_results'][engine_name] = {
+                    'solved': result.solved,
+                    'move_found': result.move_found,
+                    'solve_time_ms': result.solve_time_ms,
+                    'final_depth': result.final_depth,
+                    'timed_out': result.timed_out,
+                    'score_cp': result.score_cp,
+                    'score_mate': result.score_mate
+                }
+
+        # Calculate engine stats from the already-fetched results
+        engine_stats = {e.name: {'solved': 0, 'total': 0, 'solve_times': []} for e in engines}
+        for result in all_results:
+            engine_name = engine_map.get(result.engine_id)
+            if engine_name:
+                engine_stats[engine_name]['total'] += 1
+                if result.solved:
+                    engine_stats[engine_name]['solved'] += 1
+                    if result.solve_time_ms:
+                        engine_stats[engine_name]['solve_times'].append(result.solve_time_ms)
+
+        # Finalize engine stats
+        for name in engine_stats:
+            stats = engine_stats[name]
+            solve_times = stats.pop('solve_times')
+            stats['pct'] = 100 * stats['solved'] / stats['total'] if stats['total'] > 0 else 0
+            stats['avg_time'] = sum(solve_times) / len(solve_times) / 1000 if solve_times else 0
+
+        # Get sorted position indices and apply pagination
+        sorted_indices = sorted(results_by_position.keys())
+        total_positions = len(sorted_indices)
+        total_pages = (total_positions + per_page - 1) // per_page
+        page = max(1, min(page, total_pages)) if total_pages > 0 else 1
+
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        paginated_indices = sorted_indices[start_idx:end_idx]
+
+        # Build position data for the current page only
         positions = []
-        for pos_index, pos_id, fen, test_type, expected_moves in positions_query:
+        for pos_index in paginated_indices:
+            pos_info = results_by_position[pos_index]
+            fen = pos_info['fen']
             pos_data = {
                 'index': pos_index,
-                'id': pos_id,
+                'id': pos_info['position_id'],
                 'fen': fen,
                 'fen_short': fen[:40] + '...' if len(fen) > 40 else fen,
-                'test_type': test_type,
-                'expected_moves': expected_moves,
-                'engine_results': {},
-                'failure_count': 0
+                'test_type': pos_info['test_type'],
+                'expected_moves': pos_info['expected_moves'],
+                'engine_results': pos_info['engine_results'],
+                'failure_count': sum(1 for r in pos_info['engine_results'].values() if not r['solved'])
             }
-
-            # Get results for each engine
-            for engine in engines:
-                result = EpdTestResult.query.filter(
-                    EpdTestResult.run_id == run.id,
-                    EpdTestResult.engine_id == engine.id,
-                    EpdTestResult.position_index == pos_index
-                ).first()
-
-                if result:
-                    pos_data['engine_results'][engine.name] = {
-                        'solved': result.solved,
-                        'move_found': result.move_found,
-                        'solve_time_ms': result.solve_time_ms,
-                        'final_depth': result.final_depth,
-                        'timed_out': result.timed_out,
-                        'score_cp': result.score_cp,
-                        'score_mate': result.score_mate
-                    }
-                    if not result.solved:
-                        pos_data['failure_count'] += 1
-
             positions.append(pos_data)
-
-        # Calculate summary stats for each engine
-        engine_stats = {}
-        for engine in engines:
-            results = EpdTestResult.query.filter(
-                EpdTestResult.run_id == run.id,
-                EpdTestResult.engine_id == engine.id
-            ).all()
-
-            solved = sum(1 for r in results if r.solved)
-            total = len(results)
-            solve_times = [r.solve_time_ms for r in results if r.solved and r.solve_time_ms]
-            avg_time = sum(solve_times) / len(solve_times) / 1000 if solve_times else 0
-
-            engine_stats[engine.name] = {
-                'solved': solved,
-                'total': total,
-                'pct': 100 * solved / total if total > 0 else 0,
-                'avg_time': avg_time
-            }
 
         return render_template(
             'epd_test_detail.html',
@@ -547,7 +553,11 @@ def register_routes(app):
             run=run,
             positions=positions,
             engines=engines,
-            engine_stats=engine_stats
+            engine_stats=engine_stats,
+            page=page,
+            total_pages=total_pages,
+            per_page=per_page,
+            total_positions=total_positions
         )
 
     @app.route('/spsa')
