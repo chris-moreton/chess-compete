@@ -52,6 +52,14 @@
             background-color: #FFFFE0;
             color: #8B8B00;
         }
+        .result-partial {
+            background-color: #B0E0B0;
+            color: #005000;
+        }
+        .result-low {
+            background-color: #FFE4B5;
+            color: #8B4500;
+        }
         .fen-cell {
             font-family: monospace;
             font-size: 11px;
@@ -249,9 +257,12 @@
                     <td class="expected-cell">{{ pos.expected_moves }}</td>
                     {% for engine in engines %}
                     {% set result = pos.engine_results.get(engine.name, {}) %}
-                    <td class="result-cell {% if result.get('solved') %}result-solved{% elif result.get('timed_out') %}result-timeout{% else %}result-failed{% endif %}"
+                    {% set pts = result.get('points_earned') %}
+                    <td class="result-cell {% if pts is not none %}{% if pts == 10 %}result-solved{% elif pts >= 6 %}result-partial{% elif pts > 0 %}result-low{% else %}result-failed{% endif %}{% elif result.get('solved') %}result-solved{% elif result.get('timed_out') %}result-timeout{% else %}result-failed{% endif %}"
                         title="{% if result %}Move: {{ result.get('move_found', '?') }} | Depth: {{ result.get('final_depth', '?') }} | {% if result.get('score_mate') %}Mate in {{ result.get('score_mate') }}{% elif result.get('score_cp') is not none %}{{ result.get('score_cp') }}cp{% else %}?{% endif %}{% endif %}">
-                        {% if result.get('solved') %}
+                        {% if pts is not none %}
+                            {{ pts }}/10
+                        {% elif result.get('solved') %}
                             &#10003; {{ "%.1f"|format(result.get('solve_time_ms', 0) / 1000) }}s
                         {% elif result.get('timed_out') %}
                             &#10007; T/O
@@ -302,8 +313,10 @@
             <thead>
                 <tr>
                     <th>Engine</th>
+                    <th>Points</th>
+                    <th>Points %</th>
                     <th>Solved</th>
-                    <th>%</th>
+                    <th>Solved %</th>
                     <th>Avg Time</th>
                 </tr>
             </thead>
@@ -312,6 +325,10 @@
                 {% set stats = engine_stats.get(engine.name, {}) %}
                 <tr>
                     <td>{{ engine.name }}</td>
+                    <td>{{ stats.get('points_earned', 0) }}/{{ stats.get('points_max', 0) }}</td>
+                    <td class="{% if stats.get('points_pct', 0) >= 80 %}result-solved{% elif stats.get('points_pct', 0) >= 60 %}result-partial{% elif stats.get('points_pct', 0) >= 40 %}result-low{% else %}result-failed{% endif %}">
+                        {{ "%.1f"|format(stats.get('points_pct', 0)) }}%
+                    </td>
                     <td>{{ stats.get('solved', 0) }}/{{ stats.get('total', 0) }}</td>
                     <td class="{% if stats.get('pct', 0) >= 80 %}result-solved{% elif stats.get('pct', 0) >= 50 %}result-timeout{% else %}result-failed{% endif %}">
                         {{ "%.1f"|format(stats.get('pct', 0)) }}%

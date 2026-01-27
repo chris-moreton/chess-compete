@@ -499,15 +499,19 @@ def register_routes(app):
                     'final_depth': result.final_depth,
                     'timed_out': result.timed_out,
                     'score_cp': result.score_cp,
-                    'score_mate': result.score_mate
+                    'score_mate': result.score_mate,
+                    'points_earned': result.points_earned
                 }
 
         # Calculate engine stats from the already-fetched results
-        engine_stats = {e.name: {'solved': 0, 'total': 0, 'solve_times': []} for e in engines}
+        engine_stats = {e.name: {'solved': 0, 'total': 0, 'solve_times': [], 'points_earned': 0, 'points_max': 0} for e in engines}
         for result in all_results:
             engine_name = engine_map.get(result.engine_id)
             if engine_name:
                 engine_stats[engine_name]['total'] += 1
+                if result.points_earned is not None:
+                    engine_stats[engine_name]['points_earned'] += result.points_earned
+                    engine_stats[engine_name]['points_max'] += 10  # STS max is always 10
                 if result.solved:
                     engine_stats[engine_name]['solved'] += 1
                     if result.solve_time_ms:
@@ -519,6 +523,7 @@ def register_routes(app):
             solve_times = stats.pop('solve_times')
             stats['pct'] = 100 * stats['solved'] / stats['total'] if stats['total'] > 0 else 0
             stats['avg_time'] = sum(solve_times) / len(solve_times) / 1000 if solve_times else 0
+            stats['points_pct'] = 100 * stats['points_earned'] / stats['points_max'] if stats['points_max'] > 0 else 0
 
         # Get sorted position indices and apply pagination
         sorted_indices = sorted(results_by_position.keys())
