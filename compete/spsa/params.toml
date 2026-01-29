@@ -19,13 +19,13 @@
 # Reverse futility pruning (beta pruning)
 # If static eval - margin * depth > beta, prune
 [beta_prune_margin_per_depth]
-value = 199.62408683949323
+value = 199.61300767732163
 min = 50
 max = 400
 step = 20
 
 [beta_prune_max_depth]
-value = 5.238352683292911
+value = 5.016769439860688
 min = 1
 max = 6
 step = 1
@@ -33,13 +33,13 @@ step = 1
 # Null move pruning
 # Reduction = base + depth/6 (approximately)
 [null_move_reduce_depth_base]
-value = 3.0216327747528196
+value = 2.800049531320597
 min = 1
 max = 5
 step = 1
 
 [null_move_min_depth]
-value = 5.036166465869351
+value = 5.2577497093015735
 min = 1
 max = 6
 step = 1
@@ -47,13 +47,13 @@ step = 1
 # SEE (Static Exchange Evaluation) pruning
 # At depth N, prune captures with SEE < -margin * N^2
 [see_prune_margin]
-value = 17.26616903431728
+value = 17.221852385630836
 min = 5
 max = 50
 step = 5
 
 [see_prune_max_depth]
-value = 3.737984637740516
+value = 3.9595678811727386
 min = 3
 max = 14
 step = 1
@@ -61,13 +61,13 @@ step = 1
 # Alpha (futility) pruning margins
 # If static eval + margin[depth] < alpha, prune
 [alpha_prune_margin_base]
-value = 129.02627249873478
+value = 129.0401214514493
 min = 50
 max = 200
 step = 16
 
 [alpha_prune_margin_per_depth]
-value = 62.475700589551266
+value = 62.44800268412224
 min = 32
 max = 128
 step = 8
@@ -75,7 +75,7 @@ step = 8
 # Late Move Pruning (LMP) thresholds
 # After N moves at depth D, skip remaining quiet moves
 [lmp_threshold_depth1]
-value = 3.4766789044456665
+value = 3.365887282729555
 min = 2
 max = 16
 step = 2
@@ -87,7 +87,7 @@ max = 24
 step = 2
 
 [lmp_threshold_depth3]
-value = 5.405823535912437
+value = 5.516615157628548
 min = 4
 max = 32
 step = 2
@@ -99,19 +99,19 @@ step = 2
 # If a capture fails high, the position is probably winning and can be cut
 
 [probcut_min_depth]
-value = 3.4793725861979876
+value = 3.7009558296302103
 min = 3
 max = 10
 step = 1
 
 [probcut_margin]
-value = 100.27729938880533
+value = 100.28616271854263
 min = 50
 max = 300
 step = 25
 
 [probcut_depth_reduction]
-value = 2.689908451340656
+value = 2.9114916947728786
 min = 1
 max = 6
 step = 1
@@ -123,27 +123,57 @@ step = 1
 # assume the position is good and return a beta cutoff
 
 [multicut_min_depth]
-value = 10.851294139340629
+value = 11.072877382772852
 min = 6
 max = 12
 step = 1
 
 [multicut_depth_reduction]
-value = 6.9327993741162635
+value = 7.154382617548486
 min = 2
 max = 8
 step = 1
 
 [multicut_moves_to_try]
-value = 9.326138314384677
+value = 9.5477215578169
 min = 3
 max = 14
 step = 1
 
 [multicut_required_cutoffs]
-value = 2.0476375721410314
+value = 2.269220815573254
 min = 1
 max = 5
+step = 1
+
+# =============================================================================
+# SINGULAR EXTENSION PARAMETERS
+# =============================================================================
+# If the hash move is significantly better than all alternatives, extend its search.
+# This catches critical forcing sequences where one move is clearly best.
+
+[singular_extension_min_depth]
+value = 8
+min = 4
+max = 12
+step = 1
+
+[singular_extension_depth_margin]
+value = 2
+min = 1
+max = 5
+step = 1
+
+[singular_extension_depth_reduction]
+value = 4
+min = 2
+max = 6
+step = 1
+
+[singular_extension_margin_multiplier]
+value = 3
+min = 1
+max = 6
 step = 1
 
 # =============================================================================

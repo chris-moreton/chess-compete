@@ -79,6 +79,25 @@ PARAM_MAPPINGS = {
         'pub const MULTICUT_REQUIRED_CUTOFFS: u8 = {value};'
     ),
     # ==========================================================================
+    # SINGULAR EXTENSION PARAMETERS
+    # ==========================================================================
+    'singular_extension_min_depth': (
+        r'pub const SINGULAR_EXTENSION_MIN_DEPTH: u8 = \d+;',
+        'pub const SINGULAR_EXTENSION_MIN_DEPTH: u8 = {value};'
+    ),
+    'singular_extension_depth_margin': (
+        r'pub const SINGULAR_EXTENSION_DEPTH_MARGIN: u8 = \d+;',
+        'pub const SINGULAR_EXTENSION_DEPTH_MARGIN: u8 = {value};'
+    ),
+    'singular_extension_depth_reduction': (
+        r'pub const SINGULAR_EXTENSION_DEPTH_REDUCTION: u8 = \d+;',
+        'pub const SINGULAR_EXTENSION_DEPTH_REDUCTION: u8 = {value};'
+    ),
+    'singular_extension_margin_multiplier': (
+        r'pub const SINGULAR_EXTENSION_MARGIN_MULTIPLIER: Score = \d+;',
+        'pub const SINGULAR_EXTENSION_MARGIN_MULTIPLIER: Score = {value};'
+    ),
+    # ==========================================================================
     # EVALUATION PARAMETERS
     # ==========================================================================
     # Rook file bonuses
