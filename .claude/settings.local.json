@@ -11,7 +11,13 @@
       "Bash(RUST_MIN_STACK=16777216 cargo test:*)",
       "Bash(./target/release/rusty-rival.exe:*)",
       "Bash(./engines/v1.0.17/rusty-rival-v1.0.17-windows-x86_64.exe:*)",
-      "Bash(cargo fmt:*)"
+      "Bash(cargo fmt:*)",
+      "Bash(python -c:*)",
+      "WebFetch(domain:chess-compete-production.up.railway.app)",
+      "Bash(psql:*)",
+      "Bash(git restore:*)",
+      "Bash(git push)",
+      "Bash(python -m pytest:*)"
     ]
   }
 }

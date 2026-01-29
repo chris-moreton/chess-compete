@@ -17,7 +17,9 @@ DEFAULT_RUSTY_RIVAL_PATH = "../rusty-rival"
 # Format: param_name -> (regex_pattern, replacement_template)
 # The template uses {value} as placeholder
 PARAM_MAPPINGS = {
-    # Simple constants
+    # ==========================================================================
+    # SEARCH PARAMETERS
+    # ==========================================================================
     'beta_prune_margin_per_depth': (
         r'pub const BETA_PRUNE_MARGIN_PER_DEPTH: Score = \d+;',
         'pub const BETA_PRUNE_MARGIN_PER_DEPTH: Score = {value};'
@@ -45,6 +47,85 @@ PARAM_MAPPINGS = {
     'threat_extension_margin': (
         r'pub const THREAT_EXTENSION_MARGIN: Score = \d+;',
         'pub const THREAT_EXTENSION_MARGIN: Score = {value};'
+    ),
+    # Probcut parameters
+    'probcut_min_depth': (
+        r'pub const PROBCUT_MIN_DEPTH: u8 = \d+;',
+        'pub const PROBCUT_MIN_DEPTH: u8 = {value};'
+    ),
+    'probcut_margin': (
+        r'pub const PROBCUT_MARGIN: Score = \d+;',
+        'pub const PROBCUT_MARGIN: Score = {value};'
+    ),
+    'probcut_depth_reduction': (
+        r'pub const PROBCUT_DEPTH_REDUCTION: u8 = \d+;',
+        'pub const PROBCUT_DEPTH_REDUCTION: u8 = {value};'
+    ),
+    # Multi-cut parameters
+    'multicut_min_depth': (
+        r'pub const MULTICUT_MIN_DEPTH: u8 = \d+;',
+        'pub const MULTICUT_MIN_DEPTH: u8 = {value};'
+    ),
+    'multicut_depth_reduction': (
+        r'pub const MULTICUT_DEPTH_REDUCTION: u8 = \d+;',
+        'pub const MULTICUT_DEPTH_REDUCTION: u8 = {value};'
+    ),
+    'multicut_moves_to_try': (
+        r'pub const MULTICUT_MOVES_TO_TRY: u8 = \d+;',
+        'pub const MULTICUT_MOVES_TO_TRY: u8 = {value};'
+    ),
+    'multicut_required_cutoffs': (
+        r'pub const MULTICUT_REQUIRED_CUTOFFS: u8 = \d+;',
+        'pub const MULTICUT_REQUIRED_CUTOFFS: u8 = {value};'
+    ),
+    # ==========================================================================
+    # EVALUATION PARAMETERS
+    # ==========================================================================
+    # Rook file bonuses
+    'rook_open_file_bonus': (
+        r'pub const ROOK_OPEN_FILE_BONUS: Score = \d+;',
+        'pub const ROOK_OPEN_FILE_BONUS: Score = {value};'
+    ),
+    'rook_semi_open_file_bonus': (
+        r'pub const ROOK_SEMI_OPEN_FILE_BONUS: Score = \d+;',
+        'pub const ROOK_SEMI_OPEN_FILE_BONUS: Score = {value};'
+    ),
+    # Knight outposts
+    'value_knight_outpost': (
+        r'pub const VALUE_KNIGHT_OUTPOST: Score = \d+;',
+        'pub const VALUE_KNIGHT_OUTPOST: Score = {value};'
+    ),
+    # Passed pawn bonuses
+    'value_rook_behind_passed_pawn': (
+        r'pub const VALUE_ROOK_BEHIND_PASSED_PAWN: Score = \d+;',
+        'pub const VALUE_ROOK_BEHIND_PASSED_PAWN: Score = {value};'
+    ),
+    'value_guarded_passed_pawn': (
+        r'pub const VALUE_GUARDED_PASSED_PAWN: Score = \d+;',
+        'pub const VALUE_GUARDED_PASSED_PAWN: Score = {value};'
+    ),
+    # Pawn structure penalties
+    'doubled_pawn_penalty': (
+        r'pub const DOUBLED_PAWN_PENALTY: Score = \d+;',
+        'pub const DOUBLED_PAWN_PENALTY: Score = {value};'
+    ),
+    'isolated_pawn_penalty': (
+        r'pub const ISOLATED_PAWN_PENALTY: Score = \d+;',
+        'pub const ISOLATED_PAWN_PENALTY: Score = {value};'
+    ),
+    'value_backward_pawn_penalty': (
+        r'pub const VALUE_BACKWARD_PAWN_PENALTY: Score = \d+;',
+        'pub const VALUE_BACKWARD_PAWN_PENALTY: Score = {value};'
+    ),
+    # Bishop pair bonus
+    'value_bishop_pair': (
+        r'pub const VALUE_BISHOP_PAIR: Score = \d+;',
+        'pub const VALUE_BISHOP_PAIR: Score = {value};'
+    ),
+    # Space evaluation
+    'space_bonus_per_square': (
+        r'pub const SPACE_BONUS_PER_SQUARE: Score = \d+;',
+        'pub const SPACE_BONUS_PER_SQUARE: Score = {value};'
     ),
 }
 

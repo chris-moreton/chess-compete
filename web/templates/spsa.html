@@ -294,11 +294,11 @@
                             label: 'Estimated Elo',
                             data: refEloData,
                             borderColor: '#4CAF50',
-                            backgroundColor: 'rgba(76, 175, 80, 0.1)',
-                            fill: true,
+                            borderWidth: 1,
+                            fill: false,
                             tension: 0.3,
-                            pointRadius: 5,
-                            pointHoverRadius: 8
+                            pointRadius: 0,
+                            pointHoverRadius: 4
                         }, {
                             label: `${maWindow}-iter Moving Avg`,
                             data: movingAvgData,

@@ -19,13 +19,13 @@
 # Reverse futility pruning (beta pruning)
 # If static eval - margin * depth > beta, prune
 [beta_prune_margin_per_depth]
-value = 199.5460979287717
+value = 199.62408683949323
 min = 50
 max = 400
 step = 20
 
 [beta_prune_max_depth]
-value = 4.419819665008436
+value = 5.238352683292911
 min = 1
 max = 6
 step = 1
@@ -33,13 +33,13 @@ step = 1
 # Null move pruning
 # Reduction = base + depth/6 (approximately)
 [null_move_reduce_depth_base]
-value = 2.9406048225058967
+value = 3.0216327747528196
 min = 1
 max = 5
 step = 1
 
 [null_move_min_depth]
-value = 5.688443935604393
+value = 5.036166465869351
 min = 1
 max = 6
 step = 1
@@ -47,13 +47,13 @@ step = 1
 # SEE (Static Exchange Evaluation) pruning
 # At depth N, prune captures with SEE < -margin * N^2
 [see_prune_margin]
-value = 16.899122349185635
+value = 17.26616903431728
 min = 5
 max = 50
 step = 5
 
 [see_prune_max_depth]
-value = 4.916844231009714
+value = 3.737984637740516
 min = 3
 max = 14
 step = 1
@@ -61,13 +61,13 @@ step = 1
 # Alpha (futility) pruning margins
 # If static eval + margin[depth] < alpha, prune
 [alpha_prune_margin_base]
-value = 129.16530693633368
+value = 129.02627249873478
 min = 50
 max = 200
 step = 16
 
 [alpha_prune_margin_per_depth]
-value = 62.713851414506834
+value = 62.475700589551266
 min = 32
 max = 128
 step = 8
@@ -75,19 +75,19 @@ step = 8
 # Late Move Pruning (LMP) thresholds
 # After N moves at depth D, skip remaining quiet moves
 [lmp_threshold_depth1]
-value = 3.8627680945676337
+value = 3.4766789044456665
 min = 2
 max = 16
 step = 2
 
 [lmp_threshold_depth2]
-value = 4.161021084131218
+value = 2
 min = 2
 max = 24
 step = 2
 
 [lmp_threshold_depth3]
-value = 6.008329244191307
+value = 5.405823535912437
 min = 4
 max = 32
 step = 2
@@ -99,19 +99,19 @@ step = 2
 # If a capture fails high, the position is probably winning and can be cut
 
 [probcut_min_depth]
-value = 4.354126930202213
+value = 3.4793725861979876
 min = 3
 max = 10
 step = 1
 
 [probcut_margin]
-value = 100.32299431040776
+value = 100.27729938880533
 min = 50
 max = 300
 step = 25
 
 [probcut_depth_reduction]
-value = 2.322042168262436
+value = 2.689908451340656
 min = 1
 max = 6
 step = 1
@@ -123,27 +123,98 @@ step = 1
 # assume the position is good and return a beta cutoff
 
 [multicut_min_depth]
-value = 10.78662048306704
+value = 10.851294139340629
 min = 6
 max = 12
 step = 1
 
 [multicut_depth_reduction]
-value = 5.677957831737563
+value = 6.9327993741162635
 min = 2
 max = 8
 step = 1
 
 [multicut_moves_to_try]
-value = 10
+value = 9.326138314384677
 min = 3
 max = 14
 step = 1
 
 [multicut_required_cutoffs]
-value = 2
+value = 2.0476375721410314
 min = 1
 max = 5
+step = 1
+
+# =============================================================================
+# EVALUATION PARAMETERS
+# =============================================================================
+# These control positional evaluation weights - critical for strategic play
+
+# Rook file bonuses (relates to STS "Open Files and Diagonals" category)
+[rook_open_file_bonus]
+value = 25
+min = 10
+max = 50
+step = 5
+
+[rook_semi_open_file_bonus]
+value = 12
+min = 5
+max = 30
+step = 3
+
+# Knight outposts (relates to STS "Knight Outposts" category)
+[value_knight_outpost]
+value = 7
+min = 0
+max = 20
+step = 2
+
+# Passed pawn bonuses (relates to STS "7th Rank" and pawn advancement)
+[value_rook_behind_passed_pawn]
+value = 20
+min = 5
+max = 50
+step = 5
+
+[value_guarded_passed_pawn]
+value = 30
+min = 10
+max = 60
+step = 5
+
+# Pawn structure penalties
+[doubled_pawn_penalty]
+value = 15
+min = 5
+max = 30
+step = 3
+
+[isolated_pawn_penalty]
+value = 10
+min = 3
+max = 25
+step = 2
+
+[value_backward_pawn_penalty]
+value = 15
+min = 5
+max = 30
+step = 3
+
+# Bishop pair bonus
+[value_bishop_pair]
+value = 10
+min = 0
+max = 30
+step = 3
+
+# Space evaluation (relates to STS "Center Control" category)
+[space_bonus_per_square]
+value = 2
+min = 0
+max = 8
 step = 1
 
 # =============================================================================
