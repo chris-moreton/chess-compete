@@ -418,6 +418,20 @@ def discover_engines(engine_dir: Path) -> dict:
                     engine_name = name
                 engines[engine_name] = {"binary": binary, "uci_options": {}}
 
+        # stockfish* engines (e.g., stockfish11, stockfish16)
+        elif name.startswith("stockfish") and name != "stockfish":
+            # Look for stockfish binary (stockfish.exe, stockfish, or any .exe)
+            binary = None
+            for f in entry.iterdir():
+                if f.is_file():
+                    if f.name in ("stockfish.exe", "stockfish"):
+                        binary = f
+                        break
+                    elif f.suffix == ".exe" or (f.stat().st_mode & stat.S_IXUSR):
+                        binary = f  # Fall back to any executable
+            if binary:
+                engines[name] = {"binary": binary, "uci_options": {}}
+
     # Add virtual Stockfish engines at different Elo levels
     if stockfish_binary:
         for elo in [1400, 1600, 1800, 2000, 2200, 2400, 2500, 2600, 2700, 2800, 3000]:
