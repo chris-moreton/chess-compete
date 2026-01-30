@@ -621,6 +621,15 @@ def resolve_engine_name(shorthand: str, engine_dir: Path) -> str:
     if shorthand in engines:
         return shorthand
 
+    # No exact match - try to initialize/download before falling back to prefix matching
+    # This ensures 'v1.0.24' downloads the release even if 'v1.0.24-rc*' versions exist
+    if ensure_engine_initialized(shorthand, engine_dir):
+        # Re-discover engines after initialization
+        engines = discover_engines(engine_dir)
+        if shorthand in engines:
+            return shorthand
+
+    # Initialization didn't work - fall back to prefix matching
     matches = []
 
     # Handle v-prefixed numeric shorthand (v1 -> v001, v10 -> v010)
@@ -644,17 +653,6 @@ def resolve_engine_name(shorthand: str, engine_dir: Path) -> str:
     if len(matches) == 1:
         return matches[0]
     elif len(matches) == 0:
-        # Engine not found locally - try to initialize it
-        if ensure_engine_initialized(shorthand, engine_dir):
-            # Re-discover engines after initialization
-            engines = discover_engines(engine_dir)
-            if shorthand in engines:
-                return shorthand
-            # Check for matches again (in case initialization created a differently-named engine)
-            matches = [name for name in engines.keys() if name.startswith(f"{shorthand}")]
-            if len(matches) == 1:
-                return matches[0]
-
         print(f"Error: No engine found matching '{shorthand}'")
         print(f"Available engines: {', '.join(sorted(engines.keys()))}")
         sys.exit(1)
