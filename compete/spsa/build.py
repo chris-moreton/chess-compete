@@ -98,6 +98,57 @@ PARAM_MAPPINGS = {
         'pub const SINGULAR_EXTENSION_MARGIN_MULTIPLIER: Score = {value};'
     ),
     # ==========================================================================
+    # MOVE ORDERING PARAMETERS
+    # ==========================================================================
+    'move_score_mate_killer': (
+        r'pub const MOVE_SCORE_MATE_KILLER: Score = \d+;',
+        'pub const MOVE_SCORE_MATE_KILLER: Score = {value};'
+    ),
+    'move_score_killer_1': (
+        r'pub const MOVE_SCORE_KILLER_1: Score = \d+;',
+        'pub const MOVE_SCORE_KILLER_1: Score = {value};'
+    ),
+    'move_score_killer_2': (
+        r'pub const MOVE_SCORE_KILLER_2: Score = \d+;',
+        'pub const MOVE_SCORE_KILLER_2: Score = {value};'
+    ),
+    'move_score_history_max': (
+        r'pub const MOVE_SCORE_HISTORY_MAX: Score = \d+;',
+        'pub const MOVE_SCORE_HISTORY_MAX: Score = {value};'
+    ),
+    'move_score_distant_killer_1': (
+        r'pub const MOVE_SCORE_DISTANT_KILLER_1: Score = \d+;',
+        'pub const MOVE_SCORE_DISTANT_KILLER_1: Score = {value};'
+    ),
+    'move_score_distant_killer_2': (
+        r'pub const MOVE_SCORE_DISTANT_KILLER_2: Score = \d+;',
+        'pub const MOVE_SCORE_DISTANT_KILLER_2: Score = {value};'
+    ),
+    'move_score_countermove': (
+        r'pub const MOVE_SCORE_COUNTERMOVE: Score = \d+;',
+        'pub const MOVE_SCORE_COUNTERMOVE: Score = {value};'
+    ),
+    'move_score_pawn_push_7th': (
+        r'pub const MOVE_SCORE_PAWN_PUSH_7TH: Score = \d+;',
+        'pub const MOVE_SCORE_PAWN_PUSH_7TH: Score = {value};'
+    ),
+    'move_score_pawn_push_6th': (
+        r'pub const MOVE_SCORE_PAWN_PUSH_6TH: Score = \d+;',
+        'pub const MOVE_SCORE_PAWN_PUSH_6TH: Score = {value};'
+    ),
+    'countermove_history_divisor': (
+        r'pub const COUNTERMOVE_HISTORY_DIVISOR: i32 = \d+;',
+        'pub const COUNTERMOVE_HISTORY_DIVISOR: i32 = {value};'
+    ),
+    'followup_history_divisor': (
+        r'pub const FOLLOWUP_HISTORY_DIVISOR: i32 = \d+;',
+        'pub const FOLLOWUP_HISTORY_DIVISOR: i32 = {value};'
+    ),
+    'capture_history_divisor': (
+        r'pub const CAPTURE_HISTORY_DIVISOR: i32 = \d+;',
+        'pub const CAPTURE_HISTORY_DIVISOR: i32 = {value};'
+    ),
+    # ==========================================================================
     # EVALUATION PARAMETERS
     # ==========================================================================
     # Rook file bonuses
