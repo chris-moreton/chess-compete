@@ -653,14 +653,17 @@ def register_routes(app):
         ).order_by(SpsaIteration.iteration_number.desc()).first()
 
         # Calculate rolling stability (standard deviation over window) for convergence chart
+        # Sample every Nth point to reduce computation - chart doesn't need every point
         window_size = 10
+        sample_rate = max(1, len(iterations) // 100)  # At most ~100 points
         stability_data = {name: [] for name in param_names}
+        stability_iterations = []
 
         for name in param_names:
             values = params_data[name]
-            for i in range(len(values)):
+            param_stability = []
+            for i in range(0, len(values), sample_rate):
                 if i < window_size - 1:
-                    # Not enough data yet, use what we have
                     window = [v for v in values[:i+1] if v is not None]
                 else:
                     window = [v for v in values[i-window_size+1:i+1] if v is not None]
@@ -669,15 +672,14 @@ def register_routes(app):
                     mean = sum(window) / len(window)
                     variance = sum((x - mean) ** 2 for x in window) / len(window)
                     std_dev = variance ** 0.5
-                    # Normalize by parameter range for comparability
                     param_range = param_changes[name]['first'] if name in param_changes and param_changes[name]['first'] != 0 else 1
-                    stability_data[name].append(std_dev / abs(param_range) * 100)  # As percentage
-                elif len(window) == 1:
-                    # Only one data point, no stability measure yet
-                    stability_data[name].append(0)
+                    param_stability.append(std_dev / abs(param_range) * 100)
                 else:
-                    # No data for this param at this iteration
-                    stability_data[name].append(None)
+                    param_stability.append(0 if len(window) == 1 else None)
+            stability_data[name] = param_stability
+
+        # Build sampled iteration numbers for stability chart x-axis
+        stability_iterations = [iteration_numbers[i] for i in range(0, len(iteration_numbers), sample_rate)]
 
         # Get the latest ref_elo for display (only from iteration 110+)
         ref_min_iteration = 110
@@ -711,5 +713,6 @@ def register_routes(app):
             in_progress=in_progress,
             total_iterations=len(iterations),
             stability_data=stability_data,
+            stability_iterations=stability_iterations,
             ref_ratio=ref_ratio
         )

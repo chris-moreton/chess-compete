@@ -259,6 +259,7 @@
             const paramsData = {{ params_data|tojson }};
             const paramNames = {{ param_names|tojson }};
             const stabilityData = {{ stability_data|tojson }};
+            const stabilityIterations = {{ stability_iterations|tojson }};
 
             // Color palette for charts (18+ colors for all parameters)
             const colors = [
@@ -361,7 +362,7 @@
             new Chart(stabilityCtx, {
                 type: 'line',
                 data: {
-                    labels: iterationNumbers,
+                    labels: stabilityIterations,
                     datasets: stabilityDatasets
                 },
                 options: {
