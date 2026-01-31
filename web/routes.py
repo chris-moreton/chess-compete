@@ -725,3 +725,8 @@ def register_routes(app):
             effective_iteration_offset=effective_iteration_offset,
             latest_effective_iteration=latest_effective_iteration
         )
+
+    @app.route('/elo-stats')
+    def elo_stats():
+        """Elo statistics calculator - probability of detecting Elo differences."""
+        return render_template('elo_stats.html')

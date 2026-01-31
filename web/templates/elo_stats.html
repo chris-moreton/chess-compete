@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Elo Statistics Calculator</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .stats-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .nav-links {
+            margin-bottom: 20px;
+        }
+        .nav-links a {
+            margin-right: 15px;
+            color: #0066cc;
+        }
+        .controls {
+            background: #f5f5f5;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+            display: flex;
+            gap: 30px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .control-group label {
+            font-size: 13px;
+            color: #666;
+            font-weight: bold;
+        }
+        .control-group input, .control-group select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .control-group input[type="number"] {
+            width: 100px;
+        }
+        .chart-container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .chart-container h2 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            color: #333;
+        }
+        .chart-wrapper {
+            height: 500px;
+            position: relative;
+        }
+        .info-box {
+            background: #e7f3ff;
+            border: 1px solid #b3d9ff;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .info-box h3 {
+            margin-top: 0;
+            color: #0066cc;
+        }
+        .formula {
+            background: #f8f8f8;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px 15px;
+            font-family: monospace;
+            margin: 10px 0;
+        }
+        .results-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .results-table th, .results-table td {
+            padding: 10px;
+            text-align: center;
+            border: 1px solid #ddd;
+        }
+        .results-table th {
+            background: #f5f5f5;
+        }
+        .results-table tr:hover {
+            background: #f9f9f9;
+        }
+        .highlight-cell {
+            font-weight: bold;
+        }
+        .prob-high { background-color: #c8e6c9; }
+        .prob-medium { background-color: #fff9c4; }
+        .prob-low { background-color: #ffcdd2; }
+    </style>
+</head>
+<body>
+    <div class="stats-container">
+        <h1>Elo Statistics Calculator</h1>
+
+        <div class="nav-links">
+            <a href="/">Dashboard</a>
+            <a href="/epd-tests">EPD Tests</a>
+            <a href="/engines">Engines</a>
+            <a href="/cups">Cups</a>
+            <a href="/spsa">SPSA Tuning</a>
+        </div>
+
+        <div class="info-box">
+            <h3>What does this show?</h3>
+            <p>Given a true Elo difference between two engines, this shows the probability that the stronger engine will score more points in a head-to-head match of N games.</p>
+            <div class="formula">
+                Expected Score = 1 / (1 + 10^(-EloDiff/400))
+                <br>
+                P(stronger wins match) = &Phi;(2 &times; (ExpectedScore - 0.5) &times; &radic;N)
+            </div>
+            <p><strong>Key insight:</strong> Even with 1000 games, a 5 Elo difference only gives ~68% confidence. This is why SPSA needs many iterations - individual measurements are noisy.</p>
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <label>Min Games</label>
+                <input type="number" id="minGames" value="10" min="1" max="10000">
+            </div>
+            <div class="control-group">
+                <label>Max Games</label>
+                <input type="number" id="maxGames" value="2000" min="10" max="100000">
+            </div>
+            <div class="control-group">
+                <label>Elo Differences to Show</label>
+                <input type="text" id="eloDiffs" value="1,2,5,10,20,50" style="width: 150px;">
+            </div>
+            <div class="control-group">
+                <label>&nbsp;</label>
+                <button onclick="updateChart()" style="padding: 8px 20px; cursor: pointer;">Update Chart</button>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <h2>Probability of Correctly Identifying Stronger Engine</h2>
+            <div class="chart-wrapper">
+                <canvas id="probChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <h2>Quick Reference Table</h2>
+            <p style="color: #666; margin-bottom: 15px;">Probability that the stronger engine scores more points in the match:</p>
+            <table class="results-table" id="resultsTable">
+                <thead>
+                    <tr>
+                        <th>Games</th>
+                        <th>1 Elo</th>
+                        <th>2 Elo</th>
+                        <th>5 Elo</th>
+                        <th>10 Elo</th>
+                        <th>20 Elo</th>
+                        <th>50 Elo</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody">
+                </tbody>
+            </table>
+        </div>
+
+        <div class="chart-container">
+            <h2>Games Required for Target Confidence</h2>
+            <p style="color: #666; margin-bottom: 15px;">How many games do you need to be X% confident the stronger engine wins?</p>
+            <table class="results-table">
+                <thead>
+                    <tr>
+                        <th>Elo Diff</th>
+                        <th>60% Confidence</th>
+                        <th>70% Confidence</th>
+                        <th>80% Confidence</th>
+                        <th>90% Confidence</th>
+                        <th>95% Confidence</th>
+                    </tr>
+                </thead>
+                <tbody id="gamesRequiredTable">
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+    // Normal CDF approximation
+    function normalCDF(x) {
+        const a1 =  0.254829592;
+        const a2 = -0.284496736;
+        const a3 =  1.421413741;
+        const a4 = -1.453152027;
+        const a5 =  1.061405429;
+        const p  =  0.3275911;
+
+        const sign = x < 0 ? -1 : 1;
+        x = Math.abs(x) / Math.sqrt(2);
+
+        const t = 1.0 / (1.0 + p * x);
+        const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+
+        return 0.5 * (1.0 + sign * y);
+    }
+
+    // Inverse normal CDF approximation
+    function normalInvCDF(p) {
+        if (p <= 0) return -Infinity;
+        if (p >= 1) return Infinity;
+        if (p === 0.5) return 0;
+
+        // Rational approximation
+        const a = [
+            -3.969683028665376e+01, 2.209460984245205e+02,
+            -2.759285104469687e+02, 1.383577518672690e+02,
+            -3.066479806614716e+01, 2.506628277459239e+00
+        ];
+        const b = [
+            -5.447609879822406e+01, 1.615858368580409e+02,
+            -1.556989798598866e+02, 6.680131188771972e+01, -1.328068155288572e+01
+        ];
+        const c = [
+            -7.784894002430293e-03, -3.223964580411365e-01,
+            -2.400758277161838e+00, -2.549732539343734e+00,
+            4.374664141464968e+00, 2.938163982698783e+00
+        ];
+        const d = [
+            7.784695709041462e-03, 3.224671290700398e-01,
+            2.445134137142996e+00, 3.754408661907416e+00
+        ];
+
+        const pLow = 0.02425;
+        const pHigh = 1 - pLow;
+        let q, r;
+
+        if (p < pLow) {
+            q = Math.sqrt(-2 * Math.log(p));
+            return (((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) /
+                   ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1);
+        } else if (p <= pHigh) {
+            q = p - 0.5;
+            r = q * q;
+            return (((((a[0]*r + a[1])*r + a[2])*r + a[3])*r + a[4])*r + a[5])*q /
+                   (((((b[0]*r + b[1])*r + b[2])*r + b[3])*r + b[4])*r + 1);
+        } else {
+            q = Math.sqrt(-2 * Math.log(1 - p));
+            return -(((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) /
+                    ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1);
+        }
+    }
+
+    // Calculate expected score from Elo difference
+    function expectedScore(eloDiff) {
+        return 1 / (1 + Math.pow(10, -eloDiff / 400));
+    }
+
+    // Calculate probability that stronger engine wins match
+    function probWinsMatch(eloDiff, numGames) {
+        const expScore = expectedScore(eloDiff);
+        const delta = expScore - 0.5;
+        const z = 2 * delta * Math.sqrt(numGames);
+        return normalCDF(z);
+    }
+
+    // Calculate games required for target probability
+    function gamesRequired(eloDiff, targetProb) {
+        const expScore = expectedScore(eloDiff);
+        const delta = expScore - 0.5;
+        if (delta <= 0) return Infinity;
+        const z = normalInvCDF(targetProb);
+        const n = Math.pow(z / (2 * delta), 2);
+        return Math.ceil(n);
+    }
+
+    // Color palette
+    const colors = [
+        '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', '#2196f3',
+        '#00bcd4', '#009688', '#4caf50', '#8bc34a', '#cddc39'
+    ];
+
+    let chart = null;
+
+    function updateChart() {
+        const minGames = parseInt(document.getElementById('minGames').value) || 10;
+        const maxGames = parseInt(document.getElementById('maxGames').value) || 2000;
+        const eloDiffsStr = document.getElementById('eloDiffs').value;
+        const eloDiffs = eloDiffsStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n > 0);
+
+        // Generate game counts (logarithmic scale feels more natural)
+        const gameCounts = [];
+        for (let g = minGames; g <= maxGames; g = Math.ceil(g * 1.1)) {
+            gameCounts.push(g);
+        }
+        if (gameCounts[gameCounts.length - 1] < maxGames) {
+            gameCounts.push(maxGames);
+        }
+
+        // Build datasets
+        const datasets = eloDiffs.map((elo, idx) => ({
+            label: `${elo} Elo`,
+            data: gameCounts.map(n => ({ x: n, y: probWinsMatch(elo, n) * 100 })),
+            borderColor: colors[idx % colors.length],
+            backgroundColor: 'transparent',
+            tension: 0.3,
+            pointRadius: 0,
+            borderWidth: 2
+        }));
+
+        // Add 50% reference line
+        datasets.push({
+            label: '50% (random)',
+            data: gameCounts.map(n => ({ x: n, y: 50 })),
+            borderColor: '#999',
+            borderDash: [5, 5],
+            backgroundColor: 'transparent',
+            pointRadius: 0,
+            borderWidth: 1
+        });
+
+        if (chart) {
+            chart.destroy();
+        }
+
+        const ctx = document.getElementById('probChart').getContext('2d');
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: { datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        type: 'logarithmic',
+                        title: { display: true, text: 'Number of Games' },
+                        min: minGames,
+                        max: maxGames
+                    },
+                    y: {
+                        title: { display: true, text: 'Probability Stronger Engine Wins Match (%)' },
+                        min: 50,
+                        max: 100
+                    }
+                },
+                plugins: {
+                    legend: {
+                        position: 'right'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return `${context.dataset.label}: ${context.parsed.y.toFixed(1)}% at ${Math.round(context.parsed.x)} games`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Update table
+        updateTable(eloDiffs);
+        updateGamesRequiredTable(eloDiffs);
+    }
+
+    function updateTable(eloDiffs) {
+        const gameRows = [10, 25, 50, 100, 250, 400, 500, 1000, 2000, 5000, 10000];
+        const defaultElos = [1, 2, 5, 10, 20, 50];
+        const elos = eloDiffs.length > 0 ? eloDiffs : defaultElos;
+
+        // Update header
+        const headerRow = document.querySelector('#resultsTable thead tr');
+        headerRow.innerHTML = '<th>Games</th>' + elos.map(e => `<th>${e} Elo</th>`).join('');
+
+        // Update body
+        const tbody = document.getElementById('tableBody');
+        tbody.innerHTML = '';
+
+        gameRows.forEach(games => {
+            const row = document.createElement('tr');
+            row.innerHTML = `<td><strong>${games.toLocaleString()}</strong></td>` +
+                elos.map(elo => {
+                    const prob = probWinsMatch(elo, games) * 100;
+                    let cellClass = '';
+                    if (prob >= 80) cellClass = 'prob-high';
+                    else if (prob >= 65) cellClass = 'prob-medium';
+                    else cellClass = 'prob-low';
+                    return `<td class="${cellClass}">${prob.toFixed(1)}%</td>`;
+                }).join('');
+            tbody.appendChild(row);
+        });
+    }
+
+    function updateGamesRequiredTable(eloDiffs) {
+        const defaultElos = [1, 2, 5, 10, 20, 50];
+        const elos = eloDiffs.length > 0 ? eloDiffs : defaultElos;
+        const confidences = [0.6, 0.7, 0.8, 0.9, 0.95];
+
+        const tbody = document.getElementById('gamesRequiredTable');
+        tbody.innerHTML = '';
+
+        elos.forEach(elo => {
+            const row = document.createElement('tr');
+            row.innerHTML = `<td><strong>${elo} Elo</strong></td>` +
+                confidences.map(conf => {
+                    const games = gamesRequired(elo, conf);
+                    return `<td>${games.toLocaleString()}</td>`;
+                }).join('');
+            tbody.appendChild(row);
+        });
+    }
+
+    // Initialize on load
+    updateChart();
+    </script>
+</body>
+</html>
