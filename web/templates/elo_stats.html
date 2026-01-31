@@ -163,12 +163,12 @@
                 <thead>
                     <tr>
                         <th>Games</th>
-                        <th>1 Elo</th>
-                        <th>2 Elo</th>
-                        <th>5 Elo</th>
-                        <th>10 Elo</th>
-                        <th>20 Elo</th>
                         <th>50 Elo</th>
+                        <th>20 Elo</th>
+                        <th>10 Elo</th>
+                        <th>5 Elo</th>
+                        <th>2 Elo</th>
+                        <th>1 Elo</th>
                     </tr>
                 </thead>
                 <tbody id="tableBody">
@@ -307,8 +307,9 @@
             gameCounts.push(maxGames);
         }
 
-        // Build datasets
-        const datasets = eloDiffs.map((elo, idx) => ({
+        // Build datasets (reversed so higher Elo diffs appear at top of legend)
+        const reversedEloDiffs = [...eloDiffs].reverse();
+        const datasets = reversedEloDiffs.map((elo, idx) => ({
             label: `${elo} Elo`,
             data: gameCounts.map(n => ({ x: n, y: probWinsMatch(elo, n) * 100 })),
             borderColor: colors[idx % colors.length],
@@ -317,17 +318,6 @@
             pointRadius: 0,
             borderWidth: 2
         }));
-
-        // Add 50% reference line
-        datasets.push({
-            label: '50% (random)',
-            data: gameCounts.map(n => ({ x: n, y: 50 })),
-            borderColor: '#999',
-            borderDash: [5, 5],
-            backgroundColor: 'transparent',
-            pointRadius: 0,
-            borderWidth: 1
-        });
 
         if (chart) {
             chart.destroy();
@@ -375,8 +365,8 @@
 
     function updateTable(eloDiffs) {
         const gameRows = [10, 25, 50, 100, 250, 400, 500, 1000, 2000, 5000, 10000];
-        const defaultElos = [1, 2, 5, 10, 20, 50];
-        const elos = eloDiffs.length > 0 ? eloDiffs : defaultElos;
+        const defaultElos = [50, 20, 10, 5, 2, 1];
+        const elos = eloDiffs.length > 0 ? [...eloDiffs].reverse() : defaultElos;
 
         // Update header
         const headerRow = document.querySelector('#resultsTable thead tr');
@@ -402,8 +392,8 @@
     }
 
     function updateGamesRequiredTable(eloDiffs) {
-        const defaultElos = [1, 2, 5, 10, 20, 50];
-        const elos = eloDiffs.length > 0 ? eloDiffs : defaultElos;
+        const defaultElos = [50, 20, 10, 5, 2, 1];
+        const elos = eloDiffs.length > 0 ? [...eloDiffs].reverse() : defaultElos;
         const confidences = [0.6, 0.7, 0.8, 0.9, 0.95];
 
         const tbody = document.getElementById('gamesRequiredTable');
