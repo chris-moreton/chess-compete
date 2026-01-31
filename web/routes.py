@@ -571,13 +571,15 @@ def register_routes(app):
         import tomllib
         from pathlib import Path
 
-        # Load SPSA config for ref_ratio
+        # Load SPSA config for ref_ratio and effective_iteration_offset
         config_path = Path(__file__).parent.parent / 'compete' / 'spsa' / 'config.toml'
         ref_ratio = 1.0  # Default
+        effective_iteration_offset = 0  # Default
         try:
             with open(config_path, 'rb') as f:
                 spsa_config = tomllib.load(f)
                 ref_ratio = spsa_config.get('reference', {}).get('ratio', 1.0)
+                effective_iteration_offset = spsa_config.get('spsa', {}).get('effective_iteration_offset', 0)
         except Exception:
             pass  # Use default if config not found
 
@@ -698,6 +700,11 @@ def register_routes(app):
                 ref_iteration_numbers.append(iteration_numbers[i])
                 ref_elo_filtered.append(elo)
 
+        # Get latest effective iteration from completed iterations
+        latest_effective_iteration = None
+        if iterations:
+            latest_effective_iteration = iterations[-1].effective_iteration
+
         return render_template(
             'spsa.html',
             iterations=iterations,
@@ -714,5 +721,7 @@ def register_routes(app):
             total_iterations=len(iterations),
             stability_data=stability_data,
             stability_iterations=stability_iterations,
-            ref_ratio=ref_ratio
+            ref_ratio=ref_ratio,
+            effective_iteration_offset=effective_iteration_offset,
+            latest_effective_iteration=latest_effective_iteration
         )

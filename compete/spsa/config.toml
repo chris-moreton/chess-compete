@@ -43,6 +43,11 @@ A = 50                   # Stability constant (larger = more conservative early)
 alpha = 0.602            # Step size decay exponent
 gamma = 0.101            # Perturbation decay exponent
 
+# Effective iteration offset: effective_k = iteration_number - offset
+# Set this when absorbing parameters to reset learning rates
+# Example: if at iteration 400 and you want effective_k=50, set offset=350
+effective_iteration_offset = 0
+
 # =============================================================================
 # BUILD CONFIGURATION
 # =============================================================================

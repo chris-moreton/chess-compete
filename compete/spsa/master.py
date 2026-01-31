@@ -143,7 +143,7 @@ def generate_perturbations(params: dict, c_k: float) -> tuple[dict, dict, dict]:
     return plus_params, minus_params, signs
 
 
-def create_iteration(iteration_number: int, plus_path: str, minus_path: str,
+def create_iteration(iteration_number: int, effective_iteration: int, plus_path: str, minus_path: str,
                      ref_path: str | None, ref_target_games: int,
                      config: dict, base_params: dict, plus_params: dict,
                      minus_params: dict, signs: dict) -> int:
@@ -165,6 +165,7 @@ def create_iteration(iteration_number: int, plus_path: str, minus_path: str,
         with app.app_context():
             iteration = SpsaIteration(
                 iteration_number=iteration_number,
+                effective_iteration=effective_iteration,
                 plus_engine_path=plus_path,
                 minus_engine_path=minus_path,
                 base_engine_path=None,  # Set after SPSA phase
@@ -554,6 +555,7 @@ def run_master():
     alpha = config['spsa']['alpha']
     gamma = config['spsa']['gamma']
     max_iterations = config['spsa']['max_iterations']
+    effective_iteration_offset = config['spsa'].get('effective_iteration_offset', 0)
     poll_interval = config['database']['poll_interval_seconds']
 
     # Reference engine settings
@@ -618,9 +620,11 @@ def run_master():
         # Reload params each iteration to pick up any bound changes
         params = load_params()
 
-        # Calculate SPSA coefficients for this iteration
-        a_k = a / ((k + A) ** alpha)
-        c_k = c / (k ** gamma)
+        # Calculate effective iteration (for learning rate) and SPSA coefficients
+        effective_k = max(1, k - effective_iteration_offset)
+        a_k = a / ((effective_k + A) ** alpha)
+        c_k = c / (effective_k ** gamma)
+        print(f"Iteration {k} (effective: {effective_k})")
         print(f"Coefficients: a_k={a_k:.4f}, c_k={c_k:.4f}")
 
         # Variables to track where we are in the iteration
@@ -683,7 +687,7 @@ def run_master():
             # Create iteration record (no base_engine_path yet)
             print("\nCreating iteration record...")
             iteration_id = create_iteration(
-                k, str(plus_path), str(minus_path), ref_path, ref_target_games,
+                k, effective_k, str(plus_path), str(minus_path), ref_path, ref_target_games,
                 config, params, plus_params, minus_params, signs
             )
             print(f"  Iteration ID: {iteration_id}")

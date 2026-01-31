@@ -156,6 +156,13 @@
                 <div class="value">{{ total_iterations }}</div>
             </div>
             <div class="summary-card">
+                <h3>Effective Iteration</h3>
+                <div class="value">{{ latest_effective_iteration if latest_effective_iteration else '-' }}</div>
+                {% if effective_iteration_offset > 0 %}
+                <div style="font-size: 11px; color: #666;">offset: {{ effective_iteration_offset }}</div>
+                {% endif %}
+            </div>
+            <div class="summary-card">
                 <h3>Parameters</h3>
                 <div class="value">{{ param_names|length }}</div>
             </div>
@@ -167,7 +174,7 @@
 
         {% if in_progress %}
         <div class="in-progress-banner">
-            <h3>Iteration {{ in_progress.iteration_number }} In Progress</h3>
+            <h3>Iteration {{ in_progress.iteration_number }}{% if in_progress.effective_iteration %} (eff: {{ in_progress.effective_iteration }}){% endif %} In Progress</h3>
             {% if in_progress.status in ['pending', 'in_progress'] %}
             <p><strong>Phase 1:</strong> SPSA Games (plus vs minus): {{ in_progress.games_played }}/{{ in_progress.target_games }}</p>
             {% elif in_progress.status == 'building' %}

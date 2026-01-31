@@ -149,6 +149,25 @@ PARAM_MAPPINGS = {
         'pub const CAPTURE_HISTORY_DIVISOR: i32 = {value};'
     ),
     # ==========================================================================
+    # LMR HISTORY PARAMETERS
+    # ==========================================================================
+    'lmr_history_good_divisor': (
+        r'pub const LMR_HISTORY_GOOD_DIVISOR: i32 = \d+;',
+        'pub const LMR_HISTORY_GOOD_DIVISOR: i32 = {value};'
+    ),
+    'lmr_history_bad_divisor': (
+        r'pub const LMR_HISTORY_BAD_DIVISOR: i32 = \d+;',
+        'pub const LMR_HISTORY_BAD_DIVISOR: i32 = {value};'
+    ),
+    'lmr_continuation_good_threshold': (
+        r'pub const LMR_CONTINUATION_GOOD_THRESHOLD: i32 = \d+;',
+        'pub const LMR_CONTINUATION_GOOD_THRESHOLD: i32 = {value};'
+    ),
+    'lmr_continuation_bad_threshold': (
+        r'pub const LMR_CONTINUATION_BAD_THRESHOLD: i32 = -\d+;',
+        'pub const LMR_CONTINUATION_BAD_THRESHOLD: i32 = {value};'
+    ),
+    # ==========================================================================
     # EVALUATION PARAMETERS
     # ==========================================================================
     # Rook file bonuses

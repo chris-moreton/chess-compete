@@ -241,6 +241,7 @@ class SpsaIteration(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     iteration_number = db.Column(db.Integer, nullable=False)
+    effective_iteration = db.Column(db.Integer)  # Used for learning rate calculation (can be reset)
 
     # Engine binaries (paths to shared location, not registered engines)
     plus_engine_path = db.Column(db.String(500), nullable=False)
