@@ -381,10 +381,10 @@ def update_parameters(params: dict, gradient: dict, a_k: float) -> dict:
 
     θ_new = θ_old + a_k * gradient * step
 
-    The step multiplier compensates for the gradient being divided by step
-    in calculate_gradient(). This ensures parameters with different step
-    sizes move proportionally to their step (i.e., a parameter with step=500
-    moves in increments ~500x larger than one with step=1).
+    The step multiplier ensures parameters with larger step sizes move
+    proportionally faster. A parameter with step=500 moves ~500x faster
+    than one with step=1, which is essential for exploring wide ranges
+    (e.g., [-16000, -1000]) in reasonable time.
 
     Respects min/max bounds for each parameter.
     """
