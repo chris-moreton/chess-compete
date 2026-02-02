@@ -365,10 +365,12 @@ def calculate_gradient(results: dict, params: dict, c_k: float) -> tuple[dict, f
     for name, cfg in params.items():
         if name in signs:
             sign = signs[name]
-            step = cfg['step']
-            # Gradient estimate: Δ_loss / (2 * c_k * step * sign)
-            # Since sign is ±1, this simplifies to: elo_diff * sign / (2 * c_k * step)
-            gradient[name] = elo_diff * sign / (2 * c_k * step)
+            # Gradient estimate: elo_diff * sign / (2 * c_k)
+            # Note: We do NOT divide by step here. The step scaling is applied
+            # in update_parameters() so that parameters with larger step sizes
+            # move by proportionally larger amounts (important for params with
+            # wide ranges like [-16000, -1000] vs narrow ranges like [1, 10])
+            gradient[name] = elo_diff * sign / (2 * c_k)
 
     return gradient, elo_diff
 
