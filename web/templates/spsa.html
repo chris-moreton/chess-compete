@@ -200,7 +200,7 @@
         <!-- Convergence Chart -->
         <div class="chart-container">
             <h2>Parameter Stability (Rolling 10-iteration Std Dev)</h2>
-            <p style="color: #666; font-size: 13px; margin-top: -10px;">Lower values = more stable/converged. Shows normalized volatility as % of initial value.</p>
+            <p style="color: #666; font-size: 13px; margin-top: -10px;">Lower = more converged. Shows how much each parameter is changing recently (std dev as % of initial value). Lines start when parameters have enough history.</p>
             <div class="chart-wrapper">
                 <canvas id="stabilityChart"></canvas>
             </div>
@@ -216,7 +216,7 @@
                     <canvas id="param-{{ loop.index }}"></canvas>
                 </div>
                 <div class="param-stats">
-                    <span>Start: {{ "%.2f"|format(param_changes[name].first) if name in param_changes else '-' }}</span>
+                    <span>Bounds: [{{ param_bounds[name].min if name in param_bounds else '?' }}, {{ param_bounds[name].max if name in param_bounds else '?' }}]</span>
                     <span>Current: {{ "%.2f"|format(param_changes[name].last) if name in param_changes else '-' }}</span>
                     <span class="change {% if name in param_changes %}{% if param_changes[name].change > 0 %}change-positive{% elif param_changes[name].change < 0 %}change-negative{% endif %}{% endif %}">
                         {% if name in param_changes %}
@@ -268,6 +268,7 @@
             const paramNames = {{ param_names|tojson }};
             const stabilityData = {{ stability_data|tojson }};
             const stabilityIterations = {{ stability_iterations|tojson }};
+            const paramBounds = {{ param_bounds|tojson }};
 
             // Color palette for charts (18+ colors for all parameters)
             const colors = [
@@ -364,7 +365,7 @@
                 tension: 0.3,
                 pointRadius: 0,
                 borderWidth: 2,
-                spanGaps: false  // Show gaps where data is null (new params)
+                spanGaps: true  // Connect lines across gaps for params added mid-tuning
             }));
 
             new Chart(stabilityCtx, {
@@ -409,6 +410,7 @@
                 const canvas = document.getElementById('param-' + (index + 1));
                 if (canvas) {
                     const ctx = canvas.getContext('2d');
+                    const bounds = paramBounds[name] || {};
                     new Chart(ctx, {
                         type: 'line',
                         data: {
@@ -437,6 +439,8 @@
                                 },
                                 y: {
                                     display: true,
+                                    min: bounds.min,
+                                    max: bounds.max,
                                     ticks: {
                                         maxTicksLimit: 3
                                     }

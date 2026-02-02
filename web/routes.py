@@ -583,6 +583,18 @@ def register_routes(app):
         except Exception:
             pass  # Use default if config not found
 
+        # Load parameter bounds from params.toml
+        params_path = Path(__file__).parent.parent / 'compete' / 'spsa' / 'params.toml'
+        param_bounds = {}  # {param_name: {'min': X, 'max': Y}}
+        try:
+            with open(params_path, 'rb') as f:
+                params_config = tomllib.load(f)
+                for name, config in params_config.items():
+                    if isinstance(config, dict) and 'min' in config and 'max' in config:
+                        param_bounds[name] = {'min': config['min'], 'max': config['max']}
+        except Exception:
+            pass  # Use empty bounds if config not found
+
         # Get all completed iterations ordered by iteration number
         iterations = SpsaIteration.query.filter(
             SpsaIteration.status == 'complete'
@@ -723,7 +735,8 @@ def register_routes(app):
             stability_iterations=stability_iterations,
             ref_ratio=ref_ratio,
             effective_iteration_offset=effective_iteration_offset,
-            latest_effective_iteration=latest_effective_iteration
+            latest_effective_iteration=latest_effective_iteration,
+            param_bounds=param_bounds
         )
 
     @app.route('/elo-stats')
