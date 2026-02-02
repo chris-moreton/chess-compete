@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="600">
     <title>SPSA Parameter Tuning</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -221,9 +222,11 @@
             <button id="filter-100" onclick="setFilter(100)">Last 100</button>
             <button id="filter-250" onclick="setFilter(250)">Last 250</button>
             {% if effective_iteration_offset > 0 %}
-            <button id="filter-offset" onclick="setFilter('offset')">Since offset ({{ effective_iteration_offset }})</button>
-            {% endif %}
+            <button id="filter-offset" class="active" onclick="setFilter('offset')">Since offset ({{ effective_iteration_offset }})</button>
+            <button id="filter-all" onclick="setFilter('all')">All</button>
+            {% else %}
             <button id="filter-all" class="active" onclick="setFilter('all')">All</button>
+            {% endif %}
         </div>
 
         <!-- Elo vs Stockfish Chart -->
@@ -310,8 +313,8 @@
             const paramBounds = {{ param_bounds|tojson }};
             const effectiveIterationOffset = {{ effective_iteration_offset|tojson }};
 
-            // Current filter setting
-            let currentFilter = 'all';
+            // Current filter setting - default to 'offset' if offset exists, otherwise 'all'
+            let currentFilter = effectiveIterationOffset > 0 ? 'offset' : 'all';
 
             // Chart instances (for destruction on filter change)
             let refEloChart = null;
