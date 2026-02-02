@@ -220,6 +220,9 @@
             <button id="filter-50" onclick="setFilter(50)">Last 50</button>
             <button id="filter-100" onclick="setFilter(100)">Last 100</button>
             <button id="filter-250" onclick="setFilter(250)">Last 250</button>
+            {% if effective_iteration_offset > 0 %}
+            <button id="filter-offset" onclick="setFilter('offset')">Since offset ({{ effective_iteration_offset }})</button>
+            {% endif %}
             <button id="filter-all" class="active" onclick="setFilter('all')">All</button>
         </div>
 
@@ -305,6 +308,7 @@
             const allStabilityData = {{ stability_data|tojson }};
             const allStabilityIterations = {{ stability_iterations|tojson }};
             const paramBounds = {{ param_bounds|tojson }};
+            const effectiveIterationOffset = {{ effective_iteration_offset|tojson }};
 
             // Current filter setting
             let currentFilter = 'all';
@@ -322,18 +326,29 @@
                 '#FFC107', '#9E9E9E', '#00E676', '#FF4081', '#7C4DFF'
             ];
 
-            // Filter data to last N iterations
-            function filterData(data, n) {
-                if (n === 'all' || n >= data.length) return data;
-                return data.slice(-n);
+            // Filter data based on filter type
+            // - 'all': return all data
+            // - 'offset': return data from effective_iteration_offset onwards
+            // - number: return last N items
+            function filterData(data, iterNums, filter) {
+                if (filter === 'all' || data.length === 0) return data;
+                if (filter === 'offset') {
+                    // Find index where iteration number > offset
+                    const startIdx = iterNums.findIndex(n => n > effectiveIterationOffset);
+                    if (startIdx === -1) return data;
+                    return data.slice(startIdx);
+                }
+                // Numeric filter - last N
+                if (filter >= data.length) return data;
+                return data.slice(-filter);
             }
 
-            // Filter object data (like paramsData) to last N iterations
-            function filterObjectData(obj, n) {
-                if (n === 'all') return obj;
+            // Filter object data (like paramsData)
+            function filterObjectData(obj, iterNums, filter) {
+                if (filter === 'all') return obj;
                 const result = {};
                 for (const key in obj) {
-                    result[key] = filterData(obj[key], n);
+                    result[key] = filterData(obj[key], iterNums, filter);
                 }
                 return result;
             }
@@ -366,13 +381,13 @@
 
             function buildAllCharts() {
                 // Get filtered data
-                const iterationNumbers = filterData(allIterationNumbers, currentFilter);
-                const refEloData = filterData(allRefEloData, currentFilter);
-                const refIterationNumbers = filterData(allRefIterationNumbers, currentFilter);
-                const refGameResults = filterData(allRefGameResults, currentFilter);
-                const paramsData = filterObjectData(allParamsData, currentFilter);
-                const stabilityIterations = filterData(allStabilityIterations, currentFilter);
-                const stabilityData = filterObjectData(allStabilityData, currentFilter);
+                const iterationNumbers = filterData(allIterationNumbers, allIterationNumbers, currentFilter);
+                const refEloData = filterData(allRefEloData, allRefIterationNumbers, currentFilter);
+                const refIterationNumbers = filterData(allRefIterationNumbers, allRefIterationNumbers, currentFilter);
+                const refGameResults = filterData(allRefGameResults, allRefIterationNumbers, currentFilter);
+                const paramsData = filterObjectData(allParamsData, allIterationNumbers, currentFilter);
+                const stabilityIterations = filterData(allStabilityIterations, allStabilityIterations, currentFilter);
+                const stabilityData = filterObjectData(allStabilityData, allStabilityIterations, currentFilter);
 
                 // Destroy existing charts
                 if (refEloChart) refEloChart.destroy();
