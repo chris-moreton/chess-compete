@@ -19,41 +19,41 @@
 # Reverse futility pruning (beta pruning)
 # If static eval - margin * depth > beta, prune
 [beta_prune_margin_per_depth]
-value = 199.26752690118883
+value = 198.8137127869935
 min = 50
 max = 400
 step = 20
 
 [beta_prune_max_depth]
-value = 5.53947328174325
+value = 6.453384694308725
 min = 1
-max = 6
+max = 12
 step = 1
 
 # Null move pruning
 # Reduction = base + depth/6 (approximately)
 [null_move_reduce_depth_base]
-value = 1.5843884702750675
+value = 2.577122784418932
 min = 1
 max = 5
 step = 1
 
 [null_move_min_depth]
-value = 5.575269781639703
+value = 8.86374351877853
 min = 1
-max = 10
+max = 14
 step = 1
 
 # SEE (Static Exchange Evaluation) pruning
 # At depth N, prune captures with SEE < -margin * N^2
 [see_prune_margin]
-value = 17.40759270428589
+value = 21.55766678789916
 min = 5
 max = 50
 step = 5
 
 [see_prune_max_depth]
-value = 8.438606247875102
+value = 9.246290558335463
 min = 3
 max = 14
 step = 1
@@ -61,13 +61,13 @@ step = 1
 # Alpha (futility) pruning margins
 # If static eval + margin[depth] < alpha, prune
 [alpha_prune_margin_base]
-value = 129.11318560428884
+value = 130.35933656877546
 min = 50
 max = 200
 step = 16
 
 [alpha_prune_margin_per_depth]
-value = 61.927915019631484
+value = 61.22603021511788
 min = 32
 max = 128
 step = 8
@@ -75,19 +75,19 @@ step = 8
 # Late Move Pruning (LMP) thresholds
 # After N moves at depth D, skip remaining quiet moves
 [lmp_threshold_depth1]
-value = 3.362900696558432
+value = 5.729834572815102
 min = 2
 max = 16
 step = 2
 
 [lmp_threshold_depth2]
-value = 3.4885843875102784
+value = 3.5298585587102855
 min = 1
 max = 24
 step = 2
 
 [lmp_threshold_depth3]
-value = 5.409168226674676
+value = 6.794554201187545
 min = 2
 max = 32
 step = 2
@@ -99,19 +99,19 @@ step = 2
 # If a capture fails high, the position is probably winning and can be cut
 
 [probcut_min_depth]
-value = 2.703812276857809
+value = 8.331528031497449
 min = 2
-max = 10
+max = 14
 step = 1
 
 [probcut_margin]
-value = 100.39958750973923
+value = 100.99196631061619
 min = 50
 max = 300
 step = 25
 
 [probcut_depth_reduction]
-value = 1.7294138191292996
+value = 3.461065733409074
 min = 1
 max = 6
 step = 1
@@ -123,27 +123,27 @@ step = 1
 # assume the position is good and return a beta cutoff
 
 [multicut_min_depth]
-value = 12.292195555207732
+value = 19.392928553507236
 min = 6
-max = 16
+max = 30
 step = 1
 
 [multicut_depth_reduction]
-value = 8.132482806335391
+value = 11.874923207235554
 min = 2
-max = 12
+max = 20
 step = 1
 
 [multicut_moves_to_try]
-value = 6.874131930513611
+value = 9.381263210324743
 min = 3
 max = 14
 step = 1
 
 [multicut_required_cutoffs]
-value = 1.7880036763216425
+value = 5.709713640901557
 min = 1
-max = 5
+max = 8
 step = 1
 
 # =============================================================================
@@ -153,25 +153,25 @@ step = 1
 # This catches critical forcing sequences where one move is clearly best.
 
 [singular_extension_min_depth]
-value = 6.788282154748485
+value = 9.99578367016699
 min = 4
-max = 12
+max = 16
 step = 1
 
 [singular_extension_depth_margin]
-value = 1.9595784800363578
+value = 1
 min = 1
-max = 5
+max = 8
 step = 1
 
 [singular_extension_depth_reduction]
-value = 5.026283656228637
+value = 4.857465124187223
 min = 2
-max = 10
+max = 14
 step = 1
 
 [singular_extension_margin_multiplier]
-value = 2.807685181131771
+value = 3.946316049928113
 min = 1
 max = 6
 step = 1
@@ -183,81 +183,113 @@ step = 1
 
 # Killer move bonuses
 [move_score_mate_killer]
-value = 1000
+value = 1000.0606625941157
 min = 500
 max = 2000
 step = 100
 
 [move_score_killer_1]
-value = 750
+value = 750.2765732253972
 min = 300
 max = 1500
 step = 75
 
 [move_score_killer_2]
-value = 400
+value = 399.70915956471924
 min = 150
 max = 800
 step = 50
 
 # History score maximum
 [move_score_history_max]
-value = 500
+value = 500.36647410165904
 min = 200
 max = 1000
 step = 50
 
 # Distant killer bonuses (from 2 plies ago)
 [move_score_distant_killer_1]
-value = 300
+value = 300.2295819304878
 min = 100
 max = 600
 step = 50
 
 [move_score_distant_killer_2]
-value = 200
+value = 199.39800909766447
 min = 50
 max = 400
 step = 25
 
 # Countermove bonus
 [move_score_countermove]
-value = 150
+value = 148.8269295695675
 min = 50
 max = 400
 step = 25
 
 # Pawn push bonuses
 [move_score_pawn_push_7th]
-value = 250
+value = 250.4067827184979
 min = 100
 max = 500
 step = 25
 
 [move_score_pawn_push_6th]
-value = 50
+value = 50.68655144790817
 min = 0
 max = 200
 step = 15
 
 # History table divisors (scale i16 history to score range)
 [countermove_history_divisor]
-value = 128
+value = 127.83761668551792
 min = 32
 max = 512
 step = 32
 
 [followup_history_divisor]
-value = 128
+value = 128.7189891302896
 min = 32
 max = 512
 step = 32
 
 [capture_history_divisor]
-value = 128
+value = 128.26404476964566
 min = 32
 max = 512
 step = 32
+
+# =============================================================================
+# LMR HISTORY PARAMETERS
+# =============================================================================
+# History-based LMR: adjust reduction based on move's historical performance
+# Good divisor: reduce less if history > highest_history_score / divisor
+# Bad divisor: reduce more if history < -highest_history_score / divisor
+
+[lmr_history_good_divisor]
+value = 12.597641386005051
+min = 2
+max = 24
+step = 1
+
+[lmr_history_bad_divisor]
+value = 6.605741085453157
+min = 2
+max = 32
+step = 2
+
+# Continuation history thresholds (countermove_history + followup_history combined)
+[lmr_continuation_good_threshold]
+value = 2000.0252471736455
+min = 500
+max = 8000
+step = 500
+
+[lmr_continuation_bad_threshold]
+value = -4000
+min = -16000
+max = -1000
+step = 500
 
 # =============================================================================
 # EVALUATION PARAMETERS
@@ -266,68 +298,68 @@ step = 32
 
 # Rook file bonuses (relates to STS "Open Files and Diagonals" category)
 [rook_open_file_bonus]
-value = 25.570844181938096
+value = 25.822957895806887
 min = 10
 max = 50
 step = 5
 
 [rook_semi_open_file_bonus]
-value = 11.696036839800367
+value = 5.80409941321573
 min = 5
 max = 30
 step = 3
 
 # Knight outposts (relates to STS "Knight Outposts" category)
 [value_knight_outpost]
-value = 6.550266279842803
+value = 16.025589012551816
 min = 0
-max = 20
+max = 30
 step = 2
 
 # Passed pawn bonuses (relates to STS "7th Rank" and pawn advancement)
 [value_rook_behind_passed_pawn]
-value = 19.438896538282666
+value = 29.918286329012126
 min = 5
 max = 50
 step = 5
 
 [value_guarded_passed_pawn]
-value = 29.688855863060883
+value = 30.708415886022976
 min = 10
 max = 60
 step = 5
 
 # Pawn structure penalties
 [doubled_pawn_penalty]
-value = 14.387428179685521
+value = 19.80266617402068
 min = 5
 max = 30
 step = 3
 
 [isolated_pawn_penalty]
-value = 11.193007354968577
+value = 11.90129710135131
 min = 3
 max = 25
 step = 2
 
 [value_backward_pawn_penalty]
-value = 16.680008294408285
+value = 16.976520063954826
 min = 5
 max = 30
 step = 3
 
 # Bishop pair bonus
 [value_bishop_pair]
-value = 11.046431693660178
+value = 6.3617884052836855
 min = 0
 max = 30
 step = 3
 
 # Space evaluation (relates to STS "Center Control" category)
 [space_bonus_per_square]
-value = 4.1093749981304395
+value = 7.080230241271177
 min = 0
-max = 8
+max = 12
 step = 1
 
 # =============================================================================
