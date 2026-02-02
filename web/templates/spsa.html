@@ -420,25 +420,90 @@
                 }
             });
 
+            // Calculate auto-scaled Y-axis bounds with headroom/legroom
+            function calculateYAxisBounds(data, paramBounds) {
+                // Filter out null values
+                const validData = data.filter(v => v !== null && v !== undefined);
+                if (validData.length === 0) {
+                    return { min: paramBounds.min, max: paramBounds.max, hitMin: false, hitMax: false };
+                }
+
+                const dataMin = Math.min(...validData);
+                const dataMax = Math.max(...validData);
+                const dataRange = dataMax - dataMin;
+
+                // Add 15% padding above and below (or minimum padding if range is tiny)
+                const padding = Math.max(dataRange * 0.15, (paramBounds.max - paramBounds.min) * 0.02);
+
+                let yMin = dataMin - padding;
+                let yMax = dataMax + padding;
+
+                // Track if we're hitting the actual bounds
+                let hitMin = false;
+                let hitMax = false;
+
+                // Clamp to actual parameter bounds
+                if (yMin <= paramBounds.min) {
+                    yMin = paramBounds.min;
+                    hitMin = true;
+                }
+                if (yMax >= paramBounds.max) {
+                    yMax = paramBounds.max;
+                    hitMax = true;
+                }
+
+                return { min: yMin, max: yMax, hitMin, hitMax };
+            }
+
             // Create mini charts for each parameter
             paramNames.forEach((name, index) => {
                 const canvas = document.getElementById('param-' + (index + 1));
                 if (canvas) {
                     const ctx = canvas.getContext('2d');
-                    const bounds = paramBounds[name] || {};
+                    const bounds = paramBounds[name] || { min: 0, max: 100 };
+                    const data = paramsData[name] || [];
+                    const yBounds = calculateYAxisBounds(data, bounds);
+
+                    // Create datasets - main line plus optional bound indicator lines
+                    const datasets = [{
+                        label: name,
+                        data: data,
+                        borderColor: colors[index % colors.length],
+                        backgroundColor: 'transparent',
+                        tension: 0.3,
+                        pointRadius: 2,
+                        spanGaps: false  // Show gaps where data is null (new params)
+                    }];
+
+                    // Add dashed lines at bounds if they're visible in the chart
+                    if (yBounds.hitMin) {
+                        datasets.push({
+                            label: 'Min bound',
+                            data: Array(iterationNumbers.length).fill(bounds.min),
+                            borderColor: 'rgba(220, 53, 69, 0.5)',
+                            borderWidth: 1,
+                            borderDash: [4, 4],
+                            pointRadius: 0,
+                            fill: false
+                        });
+                    }
+                    if (yBounds.hitMax) {
+                        datasets.push({
+                            label: 'Max bound',
+                            data: Array(iterationNumbers.length).fill(bounds.max),
+                            borderColor: 'rgba(220, 53, 69, 0.5)',
+                            borderWidth: 1,
+                            borderDash: [4, 4],
+                            pointRadius: 0,
+                            fill: false
+                        });
+                    }
+
                     new Chart(ctx, {
                         type: 'line',
                         data: {
                             labels: iterationNumbers,
-                            datasets: [{
-                                label: name,
-                                data: paramsData[name],
-                                borderColor: colors[index % colors.length],
-                                backgroundColor: 'transparent',
-                                tension: 0.3,
-                                pointRadius: 2,
-                                spanGaps: false  // Show gaps where data is null (new params)
-                            }]
+                            datasets: datasets
                         },
                         options: {
                             responsive: true,
@@ -454,8 +519,8 @@
                                 },
                                 y: {
                                     display: true,
-                                    min: bounds.min,
-                                    max: bounds.max,
+                                    min: yBounds.min,
+                                    max: yBounds.max,
                                     ticks: {
                                         maxTicksLimit: 3
                                     }
