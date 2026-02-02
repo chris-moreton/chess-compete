@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="refresh" content="600">
     <title>SPSA Parameter Tuning</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -161,6 +160,57 @@
             color: white;
             border-color: #0066cc;
         }
+        .progress-container {
+            margin-top: 15px;
+        }
+        .progress-bar-wrapper {
+            background: #e0e0e0;
+            border-radius: 4px;
+            height: 24px;
+            overflow: hidden;
+            display: flex;
+        }
+        .progress-bar-segment {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+            color: white;
+            transition: width 0.3s ease;
+        }
+        .progress-iteration {
+            background: #28a745;
+        }
+        .progress-reference {
+            background: #dc3545;
+        }
+        .progress-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 5px;
+            font-size: 12px;
+            color: #666;
+        }
+        .progress-legend {
+            display: flex;
+            gap: 20px;
+            margin-top: 8px;
+            font-size: 12px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+        .legend-dot.green { background: #28a745; }
+        .legend-dot.red { background: #dc3545; }
     </style>
 </head>
 <body>
@@ -201,17 +251,56 @@
         </div>
 
         {% if in_progress %}
-        <div class="in-progress-banner">
-            <h3>Iteration {{ in_progress.iteration_number }}{% if in_progress.effective_iteration %} (eff: {{ in_progress.effective_iteration }}){% endif %} In Progress</h3>
+        <div class="in-progress-banner" id="progress-banner">
+            <h3>Iteration <span id="current-iteration">{{ in_progress.iteration_number }}</span>{% if in_progress.effective_iteration %} (eff: {{ in_progress.effective_iteration }}){% endif %} In Progress</h3>
+            <p id="status-text">
             {% if in_progress.status in ['pending', 'in_progress'] %}
-            <p><strong>Phase 1:</strong> SPSA Games (plus vs minus): {{ in_progress.games_played }}/{{ in_progress.target_games }}</p>
+            <strong>Phase 1:</strong> SPSA Games (plus vs minus): <span id="games-count">{{ in_progress.games_played }}/{{ in_progress.target_games }}</span>
             {% elif in_progress.status == 'building' %}
-            <p><strong>Building:</strong> Master is building new base engine with updated parameters...</p>
+            <strong>Building:</strong> Master is building new base engine with updated parameters...
             {% elif in_progress.status == 'ref_pending' %}
-            <p><strong>Phase 2:</strong> Reference Games (base vs Stockfish): {{ in_progress.ref_games_played }}/{{ in_progress.ref_target_games }}</p>
+            <strong>Phase 2:</strong> Reference Games (base vs Stockfish): <span id="ref-games-count">{{ in_progress.ref_games_played }}/{{ in_progress.ref_target_games }}</span>
             {% else %}
-            <p>Status: {{ in_progress.status }}</p>
+            Status: {{ in_progress.status }}
             {% endif %}
+            </p>
+            <div class="progress-container">
+                <div class="progress-bar-wrapper">
+                    <div class="progress-bar-segment progress-iteration" id="progress-iteration" style="width: {{ (in_progress.games_played / (in_progress.target_games + in_progress.ref_target_games) * 100)|round(1) }}%">
+                        {% if in_progress.games_played > 0 %}{{ in_progress.games_played }}{% endif %}
+                    </div>
+                    <div class="progress-bar-segment progress-reference" id="progress-reference" style="width: {{ (in_progress.ref_games_played / (in_progress.target_games + in_progress.ref_target_games) * 100)|round(1) }}%">
+                        {% if in_progress.ref_games_played > 0 %}{{ in_progress.ref_games_played }}{% endif %}
+                    </div>
+                </div>
+                <div class="progress-labels">
+                    <span>0</span>
+                    <span id="total-games">{{ in_progress.target_games + in_progress.ref_target_games }}</span>
+                </div>
+                <div class="progress-legend">
+                    <div class="legend-item"><div class="legend-dot green"></div> SPSA Games ({{ in_progress.target_games }})</div>
+                    <div class="legend-item"><div class="legend-dot red"></div> Reference Games ({{ in_progress.ref_target_games }})</div>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="in-progress-banner" id="progress-banner" style="display: none;">
+            <h3>Iteration <span id="current-iteration"></span> In Progress</h3>
+            <p id="status-text"></p>
+            <div class="progress-container">
+                <div class="progress-bar-wrapper">
+                    <div class="progress-bar-segment progress-iteration" id="progress-iteration" style="width: 0%"></div>
+                    <div class="progress-bar-segment progress-reference" id="progress-reference" style="width: 0%"></div>
+                </div>
+                <div class="progress-labels">
+                    <span>0</span>
+                    <span id="total-games">0</span>
+                </div>
+                <div class="progress-legend">
+                    <div class="legend-item"><div class="legend-dot green"></div> SPSA Games</div>
+                    <div class="legend-item"><div class="legend-dot red"></div> Reference Games</div>
+                </div>
+            </div>
         </div>
         {% endif %}
 
@@ -640,6 +729,87 @@
 
             // Initial chart build
             buildAllCharts();
+
+            // Track current iteration for detecting new iterations
+            let lastKnownIteration = {{ in_progress.iteration_number if in_progress else 'null' }};
+
+            // Poll the backend for status updates
+            async function pollSpsaStatus() {
+                try {
+                    const response = await fetch('/api/spsa/status');
+                    const data = await response.json();
+
+                    if (data.iteration_number === null) {
+                        // No iterations at all
+                        return;
+                    }
+
+                    // Check if a new iteration started (or iteration completed and new one began)
+                    if (lastKnownIteration !== null && data.iteration_number !== lastKnownIteration) {
+                        // New iteration detected - full page reload
+                        window.location.reload();
+                        return;
+                    }
+
+                    // If we were showing completed state and now there's an in-progress iteration
+                    if (lastKnownIteration === null && data.status !== 'complete') {
+                        window.location.reload();
+                        return;
+                    }
+
+                    // Same iteration - update progress bar and counts
+                    if (data.status !== 'complete') {
+                        updateProgressDisplay(data);
+                    }
+                } catch (error) {
+                    console.error('Error polling SPSA status:', error);
+                }
+            }
+
+            function updateProgressDisplay(data) {
+                const banner = document.getElementById('progress-banner');
+                const statusText = document.getElementById('status-text');
+                const progressIteration = document.getElementById('progress-iteration');
+                const progressReference = document.getElementById('progress-reference');
+                const totalGames = document.getElementById('total-games');
+
+                if (!banner) return;
+
+                // Show banner if hidden
+                banner.style.display = 'block';
+
+                // Update total
+                const total = data.target_games + data.ref_target_games;
+                if (totalGames) totalGames.textContent = total;
+
+                // Calculate percentages
+                const iterPct = total > 0 ? (data.games_played / total * 100) : 0;
+                const refPct = total > 0 ? (data.ref_games_played / total * 100) : 0;
+
+                // Update progress bar widths
+                if (progressIteration) {
+                    progressIteration.style.width = iterPct + '%';
+                    progressIteration.textContent = data.games_played > 0 ? data.games_played : '';
+                }
+                if (progressReference) {
+                    progressReference.style.width = refPct + '%';
+                    progressReference.textContent = data.ref_games_played > 0 ? data.ref_games_played : '';
+                }
+
+                // Update status text
+                if (statusText) {
+                    if (data.status === 'pending' || data.status === 'in_progress') {
+                        statusText.innerHTML = `<strong>Phase 1:</strong> SPSA Games (plus vs minus): <span id="games-count">${data.games_played}/${data.target_games}</span>`;
+                    } else if (data.status === 'building') {
+                        statusText.innerHTML = '<strong>Building:</strong> Master is building new base engine with updated parameters...';
+                    } else if (data.status === 'ref_pending') {
+                        statusText.innerHTML = `<strong>Phase 2:</strong> Reference Games (base vs Stockfish): <span id="ref-games-count">${data.ref_games_played}/${data.ref_target_games}</span>`;
+                    }
+                }
+            }
+
+            // Poll every 60 seconds
+            setInterval(pollSpsaStatus, 60000);
         </script>
 
         {% else %}

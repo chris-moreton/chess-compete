@@ -764,3 +764,52 @@ def register_routes(app):
     def elo_stats():
         """Elo statistics calculator - probability of detecting Elo differences."""
         return render_template('elo_stats.html')
+
+    @app.route('/api/spsa/status')
+    def spsa_status():
+        """API endpoint for SPSA iteration status polling.
+
+        Returns JSON with current iteration info for live dashboard updates.
+        All database access happens server-side - no credentials exposed to frontend.
+        """
+        from flask import jsonify
+
+        # Find the current in-progress iteration, or the latest completed one
+        in_progress = SpsaIteration.query.filter(
+            SpsaIteration.status.in_(['pending', 'in_progress', 'building', 'ref_pending'])
+        ).order_by(SpsaIteration.iteration_number.desc()).first()
+
+        if in_progress:
+            return jsonify({
+                'iteration_number': in_progress.iteration_number,
+                'status': in_progress.status,
+                'games_played': in_progress.games_played,
+                'target_games': in_progress.target_games,
+                'ref_games_played': in_progress.ref_games_played,
+                'ref_target_games': in_progress.ref_target_games
+            })
+
+        # No in-progress iteration, return the latest completed one
+        latest = SpsaIteration.query.filter(
+            SpsaIteration.status == 'complete'
+        ).order_by(SpsaIteration.iteration_number.desc()).first()
+
+        if latest:
+            return jsonify({
+                'iteration_number': latest.iteration_number,
+                'status': 'complete',
+                'games_played': latest.games_played,
+                'target_games': latest.target_games,
+                'ref_games_played': latest.ref_games_played,
+                'ref_target_games': latest.ref_target_games
+            })
+
+        # No iterations at all
+        return jsonify({
+            'iteration_number': None,
+            'status': None,
+            'games_played': 0,
+            'target_games': 0,
+            'ref_games_played': 0,
+            'ref_target_games': 0
+        })
