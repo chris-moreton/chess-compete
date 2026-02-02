@@ -134,6 +134,32 @@
             padding-bottom: 10px;
             border-bottom: 2px solid #333;
         }
+        .filter-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+        .filter-controls label {
+            font-weight: bold;
+            color: #333;
+        }
+        .filter-controls button {
+            padding: 6px 12px;
+            border: 1px solid #ddd;
+            background: #f5f5f5;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .filter-controls button:hover {
+            background: #e5e5e5;
+        }
+        .filter-controls button.active {
+            background: #0066cc;
+            color: white;
+            border-color: #0066cc;
+        }
     </style>
 </head>
 <body>
@@ -187,6 +213,15 @@
             {% endif %}
         </div>
         {% endif %}
+
+        <!-- Filter Controls -->
+        <div class="filter-controls">
+            <label>Show iterations:</label>
+            <button id="filter-50" onclick="setFilter(50)">Last 50</button>
+            <button id="filter-100" onclick="setFilter(100)">Last 100</button>
+            <button id="filter-250" onclick="setFilter(250)">Last 250</button>
+            <button id="filter-all" class="active" onclick="setFilter('all')">All</button>
+        </div>
 
         <!-- Elo vs Stockfish Chart -->
         <div class="chart-container">
@@ -260,16 +295,24 @@
         </table>
 
         <script>
-            // Data from server
-            const iterationNumbers = {{ iteration_numbers|tojson }};
-            const refEloData = {{ ref_elo_data|tojson }};
-            const refIterationNumbers = {{ ref_iteration_numbers|tojson }};
-            const refGameResults = {{ ref_game_results|tojson }};
-            const paramsData = {{ params_data|tojson }};
+            // Data from server (full datasets)
+            const allIterationNumbers = {{ iteration_numbers|tojson }};
+            const allRefEloData = {{ ref_elo_data|tojson }};
+            const allRefIterationNumbers = {{ ref_iteration_numbers|tojson }};
+            const allRefGameResults = {{ ref_game_results|tojson }};
+            const allParamsData = {{ params_data|tojson }};
             const paramNames = {{ param_names|tojson }};
-            const stabilityData = {{ stability_data|tojson }};
-            const stabilityIterations = {{ stability_iterations|tojson }};
+            const allStabilityData = {{ stability_data|tojson }};
+            const allStabilityIterations = {{ stability_iterations|tojson }};
             const paramBounds = {{ param_bounds|tojson }};
+
+            // Current filter setting
+            let currentFilter = 'all';
+
+            // Chart instances (for destruction on filter change)
+            let refEloChart = null;
+            let stabilityChart = null;
+            let paramCharts = {};
 
             // Color palette for charts (18+ colors for all parameters)
             const colors = [
@@ -279,74 +322,126 @@
                 '#FFC107', '#9E9E9E', '#00E676', '#FF4081', '#7C4DFF'
             ];
 
-            // Elo vs Stockfish Chart (only shows iterations with reference data)
-            const refEloCtx = document.getElementById('refEloChart').getContext('2d');
-            if (refEloData.length > 0) {
-                // Calculate 10-iteration moving average
-                function movingAverage(data, window) {
-                    return data.map((_, i) => {
-                        if (i < window - 1) return null;  // Not enough data yet
-                        let sum = 0;
-                        for (let j = 0; j < window; j++) {
-                            sum += data[i - j];
-                        }
-                        return sum / window;
-                    });
+            // Filter data to last N iterations
+            function filterData(data, n) {
+                if (n === 'all' || n >= data.length) return data;
+                return data.slice(-n);
+            }
+
+            // Filter object data (like paramsData) to last N iterations
+            function filterObjectData(obj, n) {
+                if (n === 'all') return obj;
+                const result = {};
+                for (const key in obj) {
+                    result[key] = filterData(obj[key], n);
                 }
+                return result;
+            }
 
-                const maWindow = 10;
-                const movingAvgData = movingAverage(refEloData, maWindow);
+            // Set filter and rebuild all charts
+            function setFilter(n) {
+                currentFilter = n;
 
-                new Chart(refEloCtx, {
-                    type: 'line',
-                    data: {
-                        labels: refIterationNumbers,
-                        datasets: [{
-                            label: 'Estimated Elo',
-                            data: refEloData,
-                            borderColor: '#4CAF50',
-                            borderWidth: 1,
-                            fill: false,
-                            tension: 0.3,
-                            pointRadius: 0,
-                            pointHoverRadius: 4
-                        }, {
-                            label: `${maWindow}-iter Moving Avg`,
-                            data: movingAvgData,
-                            borderColor: '#FF9800',
-                            borderWidth: 3,
-                            fill: false,
-                            tension: 0.3,
-                            pointRadius: 0,
-                            pointHoverRadius: 0,
-                            spanGaps: true
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            legend: {
-                                display: true,
-                                position: 'top'
-                            },
-                            tooltip: {
-                                callbacks: {
-                                    afterBody: function(context) {
-                                        const dataIndex = context[0].dataIndex;
-                                        const results = refGameResults[dataIndex];
-                                        if (results) {
-                                            const total = results.wins + results.losses + results.draws;
-                                            const score = total > 0 ? ((results.wins + results.draws * 0.5) / total * 100).toFixed(1) : 0;
-                                            return `W: ${results.wins}  L: ${results.losses}  D: ${results.draws}  (${score}%)`;
+                // Update button states
+                document.querySelectorAll('.filter-controls button').forEach(btn => {
+                    btn.classList.remove('active');
+                });
+                document.getElementById('filter-' + n).classList.add('active');
+
+                // Rebuild all charts
+                buildAllCharts();
+            }
+
+            // Calculate 10-iteration moving average
+            function movingAverage(data, window) {
+                return data.map((_, i) => {
+                    if (i < window - 1) return null;
+                    let sum = 0;
+                    for (let j = 0; j < window; j++) {
+                        sum += data[i - j];
+                    }
+                    return sum / window;
+                });
+            }
+
+            function buildAllCharts() {
+                // Get filtered data
+                const iterationNumbers = filterData(allIterationNumbers, currentFilter);
+                const refEloData = filterData(allRefEloData, currentFilter);
+                const refIterationNumbers = filterData(allRefIterationNumbers, currentFilter);
+                const refGameResults = filterData(allRefGameResults, currentFilter);
+                const paramsData = filterObjectData(allParamsData, currentFilter);
+                const stabilityIterations = filterData(allStabilityIterations, currentFilter);
+                const stabilityData = filterObjectData(allStabilityData, currentFilter);
+
+                // Destroy existing charts
+                if (refEloChart) refEloChart.destroy();
+                if (stabilityChart) stabilityChart.destroy();
+                for (const key in paramCharts) {
+                    if (paramCharts[key]) paramCharts[key].destroy();
+                }
+                paramCharts = {};
+
+                // Build Elo vs Stockfish Chart
+                const refEloCtx = document.getElementById('refEloChart').getContext('2d');
+                if (refEloData.length > 0) {
+                    const maWindow = 10;
+                    const movingAvgData = movingAverage(refEloData, maWindow);
+
+                    refEloChart = new Chart(refEloCtx, {
+                        type: 'line',
+                        data: {
+                            labels: refIterationNumbers,
+                            datasets: [{
+                                label: 'Estimated Elo',
+                                data: refEloData,
+                                borderColor: '#4CAF50',
+                                borderWidth: 1,
+                                fill: false,
+                                tension: 0.3,
+                                pointRadius: 0,
+                                pointHoverRadius: 4
+                            }, {
+                                label: `${maWindow}-iter Moving Avg`,
+                                data: movingAvgData,
+                                borderColor: '#FF9800',
+                                borderWidth: 3,
+                                fill: false,
+                                tension: 0.3,
+                                pointRadius: 0,
+                                pointHoverRadius: 0,
+                                spanGaps: true
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: {
+                                    display: true,
+                                    position: 'top'
+                                },
+                                tooltip: {
+                                    callbacks: {
+                                        afterBody: function(context) {
+                                            const dataIndex = context[0].dataIndex;
+                                            const results = refGameResults[dataIndex];
+                                            if (results) {
+                                                const total = results.wins + results.losses + results.draws;
+                                                const score = total > 0 ? ((results.wins + results.draws * 0.5) / total * 100).toFixed(1) : 0;
+                                                let text = `W: ${results.wins}  L: ${results.losses}  D: ${results.draws}  (${score}%)`;
+                                                if (results.duration_mins !== null && results.duration_mins !== undefined) {
+                                                    text += `\nDuration: ${results.duration_mins.toFixed(1)} min`;
+                                                }
+                                                return text;
+                                            }
+                                            return '';
                                         }
-                                        return '';
                                     }
                                 }
-                            }
-                        },
-                        scales: {
-                            x: {
+                            },
+                            scales: {
+                                x: {
                                 title: {
                                     display: true,
                                     text: 'Iteration'
@@ -361,68 +456,135 @@
                         }
                     }
                 });
-            } else {
-                // Show message when no reference data yet
-                refEloCtx.font = '14px sans-serif';
-                refEloCtx.fillStyle = '#666';
-                refEloCtx.textAlign = 'center';
-                refEloCtx.fillText('No reference game data yet. Data will appear after iterations complete with reference games enabled.',
-                    refEloCtx.canvas.width / 2, refEloCtx.canvas.height / 2);
-            }
+                }
 
-            // Parameter Stability/Convergence Chart
-            const stabilityCtx = document.getElementById('stabilityChart').getContext('2d');
-            const stabilityDatasets = paramNames.map((name, index) => ({
-                label: name,
-                data: stabilityData[name],
-                borderColor: colors[index % colors.length],
-                backgroundColor: 'transparent',
-                tension: 0.3,
-                pointRadius: 0,
-                borderWidth: 2,
-                spanGaps: true  // Connect lines across gaps for params added mid-tuning
-            }));
+                // Build Stability/Convergence Chart
+                const stabilityCtx = document.getElementById('stabilityChart').getContext('2d');
+                const stabilityDatasets = paramNames.map((name, index) => ({
+                    label: name,
+                    data: stabilityData[name] || [],
+                    borderColor: colors[index % colors.length],
+                    backgroundColor: 'transparent',
+                    tension: 0.3,
+                    pointRadius: 0,
+                    borderWidth: 2,
+                    spanGaps: true
+                }));
 
-            new Chart(stabilityCtx, {
-                type: 'line',
-                data: {
-                    labels: stabilityIterations,
-                    datasets: stabilityDatasets
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            display: true,
-                            position: 'right',
-                            labels: {
-                                boxWidth: 12,
-                                font: { size: 10 }
-                            }
-                        }
+                stabilityChart = new Chart(stabilityCtx, {
+                    type: 'line',
+                    data: {
+                        labels: stabilityIterations,
+                        datasets: stabilityDatasets
                     },
-                    scales: {
-                        x: {
-                            title: {
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
                                 display: true,
-                                text: 'Iteration'
+                                position: 'right',
+                                labels: {
+                                    boxWidth: 12,
+                                    font: { size: 10 }
+                                }
                             }
                         },
-                        y: {
-                            title: {
-                                display: true,
-                                text: 'Volatility (% of initial value)'
+                        scales: {
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: 'Iteration'
+                                }
                             },
-                            min: 0
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'Volatility (% of initial value)'
+                                },
+                                min: 0
+                            }
                         }
                     }
-                }
-            });
+                });
+
+                // Build mini charts for each parameter
+                paramNames.forEach((name, index) => {
+                    const canvas = document.getElementById('param-' + (index + 1));
+                    if (canvas) {
+                        const ctx = canvas.getContext('2d');
+                        const bounds = paramBounds[name] || { min: 0, max: 100 };
+                        const data = paramsData[name] || [];
+                        const yBounds = calculateYAxisBounds(data, bounds);
+
+                        const datasets = [{
+                            label: name,
+                            data: data,
+                            borderColor: colors[index % colors.length],
+                            backgroundColor: 'transparent',
+                            tension: 0.3,
+                            pointRadius: 2,
+                            spanGaps: false
+                        }];
+
+                        if (yBounds.hitMin) {
+                            datasets.push({
+                                label: 'Min bound',
+                                data: Array(iterationNumbers.length).fill(bounds.min),
+                                borderColor: 'rgba(220, 53, 69, 0.5)',
+                                borderWidth: 1,
+                                borderDash: [4, 4],
+                                pointRadius: 0,
+                                fill: false
+                            });
+                        }
+                        if (yBounds.hitMax) {
+                            datasets.push({
+                                label: 'Max bound',
+                                data: Array(iterationNumbers.length).fill(bounds.max),
+                                borderColor: 'rgba(220, 53, 69, 0.5)',
+                                borderWidth: 1,
+                                borderDash: [4, 4],
+                                pointRadius: 0,
+                                fill: false
+                            });
+                        }
+
+                        paramCharts[name] = new Chart(ctx, {
+                            type: 'line',
+                            data: {
+                                labels: iterationNumbers,
+                                datasets: datasets
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                plugins: {
+                                    legend: {
+                                        display: false
+                                    }
+                                },
+                                scales: {
+                                    x: {
+                                        display: false
+                                    },
+                                    y: {
+                                        display: true,
+                                        min: yBounds.min,
+                                        max: yBounds.max,
+                                        ticks: {
+                                            maxTicksLimit: 3
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    }
+                });
+            }
 
             // Calculate auto-scaled Y-axis bounds with headroom/legroom
             function calculateYAxisBounds(data, paramBounds) {
-                // Filter out null values
                 const validData = data.filter(v => v !== null && v !== undefined);
                 if (validData.length === 0) {
                     return { min: paramBounds.min, max: paramBounds.max, hitMin: false, hitMax: false };
@@ -433,113 +595,33 @@
                 const dataRange = dataMax - dataMin;
                 const boundsRange = paramBounds.max - paramBounds.min;
 
-                // Add 20% padding above and below based on DATA range
-                // Use minimum padding of 1% of data magnitude to handle near-zero ranges
                 const minPadding = Math.max(Math.abs(dataMin), Math.abs(dataMax), 1) * 0.01;
                 const padding = Math.max(dataRange * 0.20, minPadding);
 
                 let yMin = dataMin - padding;
                 let yMax = dataMax + padding;
 
-                // Track if data is actually near the bounds (within 15% of bounds range)
-                // Only then do we show bound indicators and extend to bounds
                 const nearBoundThreshold = boundsRange * 0.15;
                 let hitMin = false;
                 let hitMax = false;
 
                 if (dataMin - paramBounds.min < nearBoundThreshold) {
-                    // Data is close to min bound - extend chart to show the bound
                     yMin = paramBounds.min;
                     hitMin = true;
                 }
                 if (paramBounds.max - dataMax < nearBoundThreshold) {
-                    // Data is close to max bound - extend chart to show the bound
                     yMax = paramBounds.max;
                     hitMax = true;
                 }
 
-                // Final clamp to never exceed actual bounds
                 yMin = Math.max(yMin, paramBounds.min);
                 yMax = Math.min(yMax, paramBounds.max);
 
                 return { min: yMin, max: yMax, hitMin, hitMax };
             }
 
-            // Create mini charts for each parameter
-            paramNames.forEach((name, index) => {
-                const canvas = document.getElementById('param-' + (index + 1));
-                if (canvas) {
-                    const ctx = canvas.getContext('2d');
-                    const bounds = paramBounds[name] || { min: 0, max: 100 };
-                    const data = paramsData[name] || [];
-                    const yBounds = calculateYAxisBounds(data, bounds);
-
-                    // Create datasets - main line plus optional bound indicator lines
-                    const datasets = [{
-                        label: name,
-                        data: data,
-                        borderColor: colors[index % colors.length],
-                        backgroundColor: 'transparent',
-                        tension: 0.3,
-                        pointRadius: 2,
-                        spanGaps: false  // Show gaps where data is null (new params)
-                    }];
-
-                    // Add dashed lines at bounds if they're visible in the chart
-                    if (yBounds.hitMin) {
-                        datasets.push({
-                            label: 'Min bound',
-                            data: Array(iterationNumbers.length).fill(bounds.min),
-                            borderColor: 'rgba(220, 53, 69, 0.5)',
-                            borderWidth: 1,
-                            borderDash: [4, 4],
-                            pointRadius: 0,
-                            fill: false
-                        });
-                    }
-                    if (yBounds.hitMax) {
-                        datasets.push({
-                            label: 'Max bound',
-                            data: Array(iterationNumbers.length).fill(bounds.max),
-                            borderColor: 'rgba(220, 53, 69, 0.5)',
-                            borderWidth: 1,
-                            borderDash: [4, 4],
-                            pointRadius: 0,
-                            fill: false
-                        });
-                    }
-
-                    new Chart(ctx, {
-                        type: 'line',
-                        data: {
-                            labels: iterationNumbers,
-                            datasets: datasets
-                        },
-                        options: {
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            plugins: {
-                                legend: {
-                                    display: false
-                                }
-                            },
-                            scales: {
-                                x: {
-                                    display: false
-                                },
-                                y: {
-                                    display: true,
-                                    min: yBounds.min,
-                                    max: yBounds.max,
-                                    ticks: {
-                                        maxTicksLimit: 3
-                                    }
-                                }
-                            }
-                        }
-                    });
-                }
-            });
+            // Initial chart build
+            buildAllCharts();
         </script>
 
         {% else %}

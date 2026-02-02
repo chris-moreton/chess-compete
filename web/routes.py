@@ -622,10 +622,15 @@ def register_routes(app):
             iteration_numbers.append(it.iteration_number)
             elo_data.append(float(it.elo_diff) if it.elo_diff else 0)
             ref_elo_data.append(float(it.ref_elo_estimate) if it.ref_elo_estimate else None)
+            # Calculate duration in minutes
+            duration_mins = None
+            if it.created_at and it.completed_at:
+                duration_mins = (it.completed_at - it.created_at).total_seconds() / 60
             ref_game_results.append({
                 'wins': it.ref_wins or 0,
                 'losses': it.ref_losses or 0,
-                'draws': it.ref_draws or 0
+                'draws': it.ref_draws or 0,
+                'duration_mins': duration_mins
             })
             if it.base_parameters:
                 for name in param_names:
