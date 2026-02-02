@@ -11,7 +11,7 @@
 
 [time_control]
 timelow = 0.25       # Minimum seconds per move
-timehigh = 1.0       # Maximum seconds per move (random within range)
+timehigh = 0.5       # Maximum seconds per move (random within range)
 
 # =============================================================================
 # GAMES PER ITERATION
