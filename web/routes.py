@@ -616,11 +616,17 @@ def register_routes(app):
         iteration_numbers = []
         elo_data = []
         ref_elo_data = []
+        ref_game_results = []  # W/L/D for each iteration's reference games
 
         for it in iterations:
             iteration_numbers.append(it.iteration_number)
             elo_data.append(float(it.elo_diff) if it.elo_diff else 0)
             ref_elo_data.append(float(it.ref_elo_estimate) if it.ref_elo_estimate else None)
+            ref_game_results.append({
+                'wins': it.ref_wins or 0,
+                'losses': it.ref_losses or 0,
+                'draws': it.ref_draws or 0
+            })
             if it.base_parameters:
                 for name in param_names:
                     # Use None for params that don't exist in this iteration
@@ -707,10 +713,12 @@ def register_routes(app):
         # Uses ref_min_iteration defined above to exclude buggy early data
         ref_iteration_numbers = []
         ref_elo_filtered = []
+        ref_results_filtered = []
         for i, elo in enumerate(ref_elo_data):
             if elo is not None and iteration_numbers[i] >= ref_min_iteration:
                 ref_iteration_numbers.append(iteration_numbers[i])
                 ref_elo_filtered.append(elo)
+                ref_results_filtered.append(ref_game_results[i])
 
         # Get latest effective iteration from completed iterations
         latest_effective_iteration = None
@@ -726,6 +734,7 @@ def register_routes(app):
             elo_data=elo_data,
             ref_elo_data=ref_elo_filtered,
             ref_iteration_numbers=ref_iteration_numbers,
+            ref_game_results=ref_results_filtered,
             latest_ref_elo=latest_ref_elo,
             current_params=current_params,
             param_changes=param_changes,

@@ -264,6 +264,7 @@
             const iterationNumbers = {{ iteration_numbers|tojson }};
             const refEloData = {{ ref_elo_data|tojson }};
             const refIterationNumbers = {{ ref_iteration_numbers|tojson }};
+            const refGameResults = {{ ref_game_results|tojson }};
             const paramsData = {{ params_data|tojson }};
             const paramNames = {{ param_names|tojson }};
             const stabilityData = {{ stability_data|tojson }};
@@ -328,6 +329,20 @@
                             legend: {
                                 display: true,
                                 position: 'top'
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    afterBody: function(context) {
+                                        const dataIndex = context[0].dataIndex;
+                                        const results = refGameResults[dataIndex];
+                                        if (results) {
+                                            const total = results.wins + results.losses + results.draws;
+                                            const score = total > 0 ? ((results.wins + results.draws * 0.5) / total * 100).toFixed(1) : 0;
+                                            return `W: ${results.wins}  L: ${results.losses}  D: ${results.draws}  (${score}%)`;
+                                        }
+                                        return '';
+                                    }
+                                }
                             }
                         },
                         scales: {
