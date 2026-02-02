@@ -431,26 +431,36 @@
                 const dataMin = Math.min(...validData);
                 const dataMax = Math.max(...validData);
                 const dataRange = dataMax - dataMin;
+                const boundsRange = paramBounds.max - paramBounds.min;
 
-                // Add 15% padding above and below (or minimum padding if range is tiny)
-                const padding = Math.max(dataRange * 0.15, (paramBounds.max - paramBounds.min) * 0.02);
+                // Add 20% padding above and below based on DATA range
+                // Use minimum padding of 1% of data magnitude to handle near-zero ranges
+                const minPadding = Math.max(Math.abs(dataMin), Math.abs(dataMax), 1) * 0.01;
+                const padding = Math.max(dataRange * 0.20, minPadding);
 
                 let yMin = dataMin - padding;
                 let yMax = dataMax + padding;
 
-                // Track if we're hitting the actual bounds
+                // Track if data is actually near the bounds (within 15% of bounds range)
+                // Only then do we show bound indicators and extend to bounds
+                const nearBoundThreshold = boundsRange * 0.15;
                 let hitMin = false;
                 let hitMax = false;
 
-                // Clamp to actual parameter bounds
-                if (yMin <= paramBounds.min) {
+                if (dataMin - paramBounds.min < nearBoundThreshold) {
+                    // Data is close to min bound - extend chart to show the bound
                     yMin = paramBounds.min;
                     hitMin = true;
                 }
-                if (yMax >= paramBounds.max) {
+                if (paramBounds.max - dataMax < nearBoundThreshold) {
+                    // Data is close to max bound - extend chart to show the bound
                     yMax = paramBounds.max;
                     hitMax = true;
                 }
+
+                // Final clamp to never exceed actual bounds
+                yMin = Math.max(yMin, paramBounds.min);
+                yMax = Math.min(yMax, paramBounds.max);
 
                 return { min: yMin, max: yMax, hitMin, hitMax };
             }
