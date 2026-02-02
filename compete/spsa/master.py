@@ -377,14 +377,20 @@ def update_parameters(params: dict, gradient: dict, a_k: float) -> dict:
     """
     Update parameters using gradient estimate.
 
-    θ_new = θ_old + a_k * gradient
+    θ_new = θ_old + a_k * gradient * step
+
+    The step multiplier compensates for the gradient being divided by step
+    in calculate_gradient(). This ensures parameters with different step
+    sizes move proportionally to their step (i.e., a parameter with step=500
+    moves in increments ~500x larger than one with step=1).
 
     Respects min/max bounds for each parameter.
     """
     for name, cfg in params.items():
         if name in gradient:
             old_value = cfg['value']
-            new_value = old_value + a_k * gradient[name]
+            step = cfg['step']
+            new_value = old_value + a_k * gradient[name] * step
 
             # Clamp to bounds
             new_value = max(cfg['min'], min(cfg['max'], new_value))
