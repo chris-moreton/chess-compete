@@ -265,6 +265,17 @@
             <span class="run-description">{{ selected_run.description }}</span>
             {% endif %}
         </div>
+        <script>
+            function selectRun(runId) {
+                const params = new URLSearchParams(window.location.search);
+                if (runId) {
+                    params.set('run', runId);
+                } else {
+                    params.delete('run');
+                }
+                window.location.href = '/spsa' + (params.toString() ? '?' + params.toString() : '');
+            }
+        </script>
         {% endif %}
 
         {% if iterations %}
@@ -883,7 +894,7 @@
             {% else %}
             <p>No SPSA tuning data yet. Run the SPSA tuner to see parameter progression here.</p>
             {% endif %}
-            <pre>python -m compete --spsa --timelow 0.25 --timehigh 0.5</pre>
+            <pre>python -m compete --spsa</pre>
         </div>
         {% endif %}
     </div>
