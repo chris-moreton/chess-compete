@@ -107,8 +107,8 @@ def main():
                         help="Include inactive engines in cup competition")
     parser.add_argument("--spsa", action="store_true",
                         help="SPSA worker mode: poll for iterations and run games")
-    parser.add_argument("--spsa-batch", type=int, default=10, metavar="N",
-                        help="SPSA: games per batch before database update (default: 10)")
+    parser.add_argument("--spsa-batch", type=int, default=1, metavar="N",
+                        help="SPSA: games per batch before database update (default: 1)")
 
     args = parser.parse_args()
 
