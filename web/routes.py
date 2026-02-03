@@ -741,8 +741,9 @@ def register_routes(app):
         # Build sampled iteration numbers for stability chart x-axis
         stability_iterations = [iteration_numbers[i] for i in range(0, len(iteration_numbers), sample_rate)]
 
-        # Get the latest ref_elo for display (only from iteration 110+)
-        ref_min_iteration = 110
+        # Get the latest ref_elo for display
+        # Run 1 had buggy data before iteration 110, so filter those out
+        ref_min_iteration = 110 if selected_run.id == 1 else 0
         latest_ref_elo = None
         for i in range(len(ref_elo_data) - 1, -1, -1):
             if ref_elo_data[i] is not None and iteration_numbers[i] >= ref_min_iteration:
@@ -769,7 +770,7 @@ def register_routes(app):
                     rolling_elo_n = len(last_n)  # Actual number used
 
         # Build filtered data for ref_elo chart (only iterations with reference data)
-        # Uses ref_min_iteration defined above to exclude buggy early data
+        # Uses ref_min_iteration to exclude buggy early data (run 1 only)
         ref_iteration_numbers = []
         ref_elo_filtered = []
         ref_results_filtered = []
