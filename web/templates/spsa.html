@@ -248,6 +248,13 @@
                 <h3>Est. Elo vs SF</h3>
                 <div class="value">{{ "%.0f"|format(latest_ref_elo) if latest_ref_elo else '-' }}</div>
             </div>
+            <div class="summary-card">
+                <h3>Elo (last ~{{ rolling_elo_target_games }})</h3>
+                <div class="value">{{ "%.0f"|format(rolling_elo_avg) if rolling_elo_avg else '-' }}</div>
+                {% if rolling_elo_n > 0 %}
+                <div style="font-size: 11px; color: #666;">avg of {{ rolling_elo_n }} iterations</div>
+                {% endif %}
+            </div>
         </div>
 
         {% if in_progress %}

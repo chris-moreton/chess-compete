@@ -721,6 +721,25 @@ def register_routes(app):
                 latest_ref_elo = ref_elo_data[i]
                 break
 
+        # Calculate rolling average Elo over last ~X reference games
+        # n = ceil(target_games / ref_games_per_iteration)
+        import math
+        rolling_elo_target_games = 1000  # Default: average over last ~1000 ref games
+        rolling_elo_avg = None
+        rolling_elo_n = 0
+        ref_games_per_iter = latest.ref_target_games if latest and latest.ref_target_games else 75
+        if ref_games_per_iter > 0:
+            rolling_elo_n = math.ceil(rolling_elo_target_games / ref_games_per_iter)
+            # Get last n iterations with valid ref_elo
+            valid_ref_elos = [(iteration_numbers[i], ref_elo_data[i])
+                             for i in range(len(ref_elo_data))
+                             if ref_elo_data[i] is not None and iteration_numbers[i] >= ref_min_iteration]
+            if valid_ref_elos:
+                last_n = valid_ref_elos[-rolling_elo_n:] if len(valid_ref_elos) >= rolling_elo_n else valid_ref_elos
+                if last_n:
+                    rolling_elo_avg = sum(elo for _, elo in last_n) / len(last_n)
+                    rolling_elo_n = len(last_n)  # Actual number used
+
         # Build filtered data for ref_elo chart (only iterations with reference data)
         # Uses ref_min_iteration defined above to exclude buggy early data
         ref_iteration_numbers = []
@@ -748,6 +767,9 @@ def register_routes(app):
             ref_iteration_numbers=ref_iteration_numbers,
             ref_game_results=ref_results_filtered,
             latest_ref_elo=latest_ref_elo,
+            rolling_elo_avg=rolling_elo_avg,
+            rolling_elo_target_games=rolling_elo_target_games,
+            rolling_elo_n=rolling_elo_n,
             current_params=current_params,
             param_changes=param_changes,
             in_progress=in_progress,
