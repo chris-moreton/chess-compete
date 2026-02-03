@@ -163,6 +163,14 @@ def create_iteration(iteration_number: int, effective_iteration: int, plus_path:
     def _create():
         app = create_app()
         with app.app_context():
+            existing = SpsaIteration.query.filter(
+                SpsaIteration.iteration_number == iteration_number
+            ).first()
+            if existing:
+                raise RuntimeError(
+                    f"Iteration {iteration_number} already exists (id={existing.id}, status={existing.status}). "
+                    "Another master may be running."
+                )
             iteration = SpsaIteration(
                 iteration_number=iteration_number,
                 effective_iteration=effective_iteration,
