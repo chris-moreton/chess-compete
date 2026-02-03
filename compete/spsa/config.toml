@@ -19,7 +19,7 @@ timehigh = 0.5       # Maximum seconds per move (random within range)
 
 [games]
 games_per_iteration = 300  # Target games before calculating gradient
-batch_size = 10             # Games per worker batch (for status updates)
+batch_size = 1              # Games per worker batch (for status updates)
 
 # =============================================================================
 # SPSA ALGORITHM HYPERPARAMETERS
