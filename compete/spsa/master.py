@@ -88,7 +88,7 @@ def save_params(params: dict):
     for name, cfg in params.items():
         # Find and replace the value line for this parameter
         # Pattern: value = <number>
-        pattern = rf'(\[{re.escape(name)}\][^\[]*value\s*=\s*)[\d.]+'
+        pattern = rf'(\[{re.escape(name)}\][^\[]*value\s*=\s*)-?[\d.]+'
         replacement = rf'\g<1>{cfg["value"]}'
         content = re.sub(pattern, replacement, content, flags=re.DOTALL)
 
@@ -365,12 +365,10 @@ def calculate_gradient(results: dict, params: dict, c_k: float) -> tuple[dict, f
     for name, cfg in params.items():
         if name in signs:
             sign = signs[name]
-            # Gradient estimate: elo_diff * sign / (2 * c_k)
-            # Note: We do NOT divide by step here. The step scaling is applied
-            # in update_parameters() so that parameters with larger step sizes
-            # move by proportionally larger amounts (important for params with
-            # wide ranges like [-16000, -1000] vs narrow ranges like [1, 10])
-            gradient[name] = elo_diff * sign / (2 * c_k)
+            # Gradient estimate: elo_diff * sign / (2 * c_k * step)
+            # This follows standard SPSA scaling so step does not get applied twice.
+            step = params[name]['step']
+            gradient[name] = elo_diff * sign / (2 * c_k * step)
 
     return gradient, elo_diff
 
@@ -379,20 +377,14 @@ def update_parameters(params: dict, gradient: dict, a_k: float) -> dict:
     """
     Update parameters using gradient estimate.
 
-    θ_new = θ_old + a_k * gradient * step
-
-    The step multiplier ensures parameters with larger step sizes move
-    proportionally faster. A parameter with step=500 moves ~500x faster
-    than one with step=1, which is essential for exploring wide ranges
-    (e.g., [-16000, -1000]) in reasonable time.
+    θ_new = θ_old + a_k * gradient
 
     Respects min/max bounds for each parameter.
     """
     for name, cfg in params.items():
         if name in gradient:
             old_value = cfg['value']
-            step = cfg['step']
-            new_value = old_value + a_k * gradient[name] * step
+            new_value = old_value + a_k * gradient[name]
 
             # Clamp to bounds
             new_value = max(cfg['min'], min(cfg['max'], new_value))
@@ -538,6 +530,26 @@ def get_incomplete_iteration() -> dict | None:
     return with_db_retry(_get)
 
 
+def get_iteration_results(iteration_id: int) -> dict:
+    """Fetch stored SPSA results for a completed/ref_pending iteration."""
+    from web.app import create_app
+    from web.database import db
+    from web.models import SpsaIteration
+
+    def _get():
+        app = create_app()
+        with app.app_context():
+            iteration = db.session.get(SpsaIteration, iteration_id)
+            if not iteration:
+                raise RuntimeError(f"Iteration {iteration_id} not found!")
+            return {
+                'gradient_estimate': iteration.gradient_estimate or {},
+                'elo_diff': float(iteration.elo_diff) if iteration.elo_diff is not None else None,
+            }
+
+    return with_db_retry(_get)
+
+
 def run_master():
     """Main SPSA master loop with two-phase iteration."""
     print(f"\n{'='*60}")
@@ -648,10 +660,10 @@ def run_master():
             if status == 'ref_pending':
                 # Already past SPSA phase, just need to finish ref games
                 print(f"\nResuming ref phase: {resume_info['ref_games_played']}/{resume_info['ref_target_games']} ref games")
-                # We need gradient/elo_diff for marking complete, but they should already be saved
-                # For now, skip directly to ref completion
-                gradient = {}  # Will be overwritten from DB if needed
-                elo_diff = 0.0
+                # Load stored SPSA results so we don't overwrite them on completion
+                stored = get_iteration_results(iteration_id)
+                gradient = stored.get('gradient_estimate', {}) or {}
+                elo_diff = stored.get('elo_diff', 0.0) or 0.0
 
             elif status in ('pending', 'in_progress'):
                 # SPSA phase - check if games are complete
