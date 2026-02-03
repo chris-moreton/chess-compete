@@ -235,11 +235,29 @@ class EpdTestResult(db.Model):
         return f'<EpdTestResult {self.position_id}: {status}>'
 
 
+class SpsaRun(db.Model):
+    """A logical SPSA tuning run, grouping iterations together."""
+    __tablename__ = 'spsa_runs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    is_active = db.Column(db.Boolean, default=True)  # Only one should be active at a time
+
+    # Relationships
+    iterations = db.relationship('SpsaIteration', backref='run', lazy='dynamic')
+
+    def __repr__(self):
+        return f'<SpsaRun {self.id}: {self.name}>'
+
+
 class SpsaIteration(db.Model):
     """A single SPSA tuning iteration tracking games between perturbed engine pairs."""
     __tablename__ = 'spsa_iterations'
 
     id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.Integer, db.ForeignKey('spsa_runs.id'), nullable=True)
     iteration_number = db.Column(db.Integer, nullable=False)
     effective_iteration = db.Column(db.Integer)  # Used for learning rate calculation (can be reset)
 
@@ -289,6 +307,8 @@ class SpsaIteration(db.Model):
     __table_args__ = (
         db.Index('idx_spsa_iteration_number', 'iteration_number'),
         db.Index('idx_spsa_status', 'status'),
+        db.Index('idx_spsa_run_id', 'run_id'),
+        db.UniqueConstraint('run_id', 'iteration_number', name='uq_spsa_run_iteration'),
     )
 
     def __repr__(self):

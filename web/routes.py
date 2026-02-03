@@ -7,7 +7,7 @@ from web.queries import (
     get_dashboard_data, get_unique_hostnames, get_time_range,
     clear_elo_cache, recalculate_all_and_store
 )
-from web.models import Cup, CupRound, CupMatch, Engine, Game, EpdTestRun, EpdTestResult, SpsaIteration
+from web.models import Cup, CupRound, CupMatch, Engine, Game, EpdTestRun, EpdTestResult, SpsaIteration, SpsaRun
 from web.database import db
 from sqlalchemy import func, case, and_, or_
 
@@ -581,10 +581,29 @@ def register_routes(app):
         except Exception:
             pass  # Use default if config not found
 
-        # Calculate effective_iteration_offset from database
+        # Get all runs for the dropdown
+        all_runs = SpsaRun.query.order_by(SpsaRun.id.desc()).all()
+
+        # Get selected run from query param, default to active run
+        selected_run_id = request.args.get('run', type=int)
+        if selected_run_id:
+            selected_run = SpsaRun.query.get(selected_run_id)
+        else:
+            # Default to active run, or most recent if none active
+            selected_run = SpsaRun.query.filter_by(is_active=True).first()
+            if not selected_run and all_runs:
+                selected_run = all_runs[0]  # Most recent
+
+        # If no runs exist yet, show empty state
+        if not selected_run:
+            return render_template('spsa.html', iterations=[], params_data={}, elo_data=[],
+                                   ref_ratio=ref_ratio, all_runs=[], selected_run=None)
+
+        # Calculate effective_iteration_offset from database (for selected run)
         # offset = iteration_number - effective_iteration (from latest iteration with effective_iteration set)
         effective_iteration_offset = 0
         latest_with_eff = SpsaIteration.query.filter(
+            SpsaIteration.run_id == selected_run.id,
             SpsaIteration.effective_iteration.isnot(None)
         ).order_by(SpsaIteration.iteration_number.desc()).first()
         if latest_with_eff and latest_with_eff.effective_iteration:
@@ -602,13 +621,15 @@ def register_routes(app):
         except Exception:
             pass  # Use empty bounds if config not found
 
-        # Get all completed iterations ordered by iteration number
+        # Get all completed iterations for selected run, ordered by iteration number
         iterations = SpsaIteration.query.filter(
+            SpsaIteration.run_id == selected_run.id,
             SpsaIteration.status == 'complete'
         ).order_by(SpsaIteration.iteration_number.asc()).all()
 
         if not iterations:
-            return render_template('spsa.html', iterations=[], params_data={}, elo_data=[], ref_ratio=ref_ratio)
+            return render_template('spsa.html', iterations=[], params_data={}, elo_data=[],
+                                   ref_ratio=ref_ratio, all_runs=all_runs, selected_run=selected_run)
 
         # Get parameter names from ALL iterations (union of all params seen)
         # This handles cases where new params are added mid-tuning
@@ -679,8 +700,9 @@ def register_routes(app):
                     'pct_change': pct_change
                 }
 
-        # Get in-progress iteration if any (two-phase: pending, in_progress, building, ref_pending)
+        # Get in-progress iteration for selected run (two-phase: pending, in_progress, building, ref_pending)
         in_progress = SpsaIteration.query.filter(
+            SpsaIteration.run_id == selected_run.id,
             SpsaIteration.status.in_(['pending', 'in_progress', 'building', 'ref_pending'])
         ).order_by(SpsaIteration.iteration_number.desc()).first()
 
@@ -779,7 +801,9 @@ def register_routes(app):
             ref_ratio=ref_ratio,
             effective_iteration_offset=effective_iteration_offset,
             latest_effective_iteration=latest_effective_iteration,
-            param_bounds=param_bounds
+            param_bounds=param_bounds,
+            all_runs=all_runs,
+            selected_run=selected_run
         )
 
     @app.route('/elo-stats')
@@ -793,13 +817,24 @@ def register_routes(app):
 
         Returns JSON with current iteration info for live dashboard updates.
         All database access happens server-side - no credentials exposed to frontend.
+        Accepts optional 'run' query parameter to filter by run_id.
         """
         from flask import jsonify
 
+        # Get run_id from query param (optional)
+        run_id = request.args.get('run', type=int)
+
+        # Build base query filter
+        base_filter = []
+        if run_id:
+            base_filter.append(SpsaIteration.run_id == run_id)
+
         # Find the current in-progress iteration, or the latest completed one
-        in_progress = SpsaIteration.query.filter(
+        in_progress_query = SpsaIteration.query.filter(
+            *base_filter,
             SpsaIteration.status.in_(['pending', 'in_progress', 'building', 'ref_pending'])
-        ).order_by(SpsaIteration.iteration_number.desc()).first()
+        ).order_by(SpsaIteration.iteration_number.desc())
+        in_progress = in_progress_query.first()
 
         if in_progress:
             return jsonify({
@@ -812,9 +847,11 @@ def register_routes(app):
             })
 
         # No in-progress iteration, return the latest completed one
-        latest = SpsaIteration.query.filter(
+        latest_query = SpsaIteration.query.filter(
+            *base_filter,
             SpsaIteration.status == 'complete'
-        ).order_by(SpsaIteration.iteration_number.desc()).first()
+        ).order_by(SpsaIteration.iteration_number.desc())
+        latest = latest_query.first()
 
         if latest:
             return jsonify({

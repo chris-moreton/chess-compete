@@ -19,6 +19,32 @@
             margin-right: 15px;
             color: #0066cc;
         }
+        .run-selector {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding: 10px 15px;
+            background: #e8f4fd;
+            border: 1px solid #b8daff;
+            border-radius: 6px;
+        }
+        .run-selector label {
+            font-weight: bold;
+            color: #333;
+        }
+        .run-selector select {
+            padding: 6px 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 14px;
+            min-width: 200px;
+        }
+        .run-description {
+            font-size: 12px;
+            color: #666;
+            font-style: italic;
+        }
         .summary-cards {
             display: flex;
             gap: 20px;
@@ -225,6 +251,22 @@
             <a href="/elo-stats">Elo Stats</a>
         </div>
 
+        {% if all_runs %}
+        <div class="run-selector">
+            <label for="run-select">Run:</label>
+            <select id="run-select" onchange="selectRun(this.value)">
+                {% for run in all_runs %}
+                <option value="{{ run.id }}" {% if selected_run and run.id == selected_run.id %}selected{% endif %}>
+                    {{ run.name }}{% if run.is_active %} (active){% endif %}
+                </option>
+                {% endfor %}
+            </select>
+            {% if selected_run and selected_run.description %}
+            <span class="run-description">{{ selected_run.description }}</span>
+            {% endif %}
+        </div>
+        {% endif %}
+
         {% if iterations %}
 
         <!-- Summary Cards -->
@@ -397,6 +439,19 @@
         </table>
 
         <script>
+            // Run selection
+            const selectedRunId = {{ selected_run.id if selected_run else 'null' }};
+
+            function selectRun(runId) {
+                const params = new URLSearchParams(window.location.search);
+                if (runId) {
+                    params.set('run', runId);
+                } else {
+                    params.delete('run');
+                }
+                window.location.href = '/spsa' + (params.toString() ? '?' + params.toString() : '');
+            }
+
             // Data from server (full datasets)
             const allIterationNumbers = {{ iteration_numbers|tojson }};
             const allRefEloData = {{ ref_elo_data|tojson }};
@@ -743,7 +798,8 @@
             // Poll the backend for status updates
             async function pollSpsaStatus() {
                 try {
-                    const response = await fetch('/api/spsa/status');
+                    const url = selectedRunId ? `/api/spsa/status?run=${selectedRunId}` : '/api/spsa/status';
+                    const response = await fetch(url);
                     const data = await response.json();
 
                     if (data.iteration_number === null) {
@@ -821,7 +877,12 @@
 
         {% else %}
         <div class="no-data">
+            {% if selected_run %}
+            <p>No completed iterations for run "{{ selected_run.name }}" yet.</p>
+            <p>Run the SPSA tuner to see parameter progression here.</p>
+            {% else %}
             <p>No SPSA tuning data yet. Run the SPSA tuner to see parameter progression here.</p>
+            {% endif %}
             <pre>python -m compete --spsa --timelow 0.25 --timehigh 0.5</pre>
         </div>
         {% endif %}

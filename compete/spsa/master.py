@@ -63,6 +63,30 @@ def with_db_retry(func, max_retries=5, retry_delay=10):
     raise RuntimeError(f"Database operation failed after {max_retries} attempts: {last_error}")
 
 
+def get_active_run() -> tuple[int, str]:
+    """
+    Get the active SPSA run from the database.
+
+    Returns (run_id, run_name). Raises RuntimeError if no active run exists.
+    """
+    from web.app import create_app
+    from web.models import SpsaRun
+
+    def _get():
+        app = create_app()
+        with app.app_context():
+            run = SpsaRun.query.filter_by(is_active=True).first()
+            if not run:
+                raise RuntimeError(
+                    "No active SPSA run found. Create one in the database first:\n"
+                    "  INSERT INTO spsa_runs (name, description, is_active) "
+                    "VALUES ('Run N', 'Description', TRUE);"
+                )
+            return run.id, run.name
+
+    return with_db_retry(_get)
+
+
 def load_params() -> dict:
     """
     Load parameters from params.toml.
@@ -102,19 +126,20 @@ def load_config() -> dict:
         return tomllib.load(f)
 
 
-def generate_perturbations(params: dict, c_k: float) -> tuple[dict, dict, dict]:
+def generate_perturbations(params: dict, c_k: float, iteration: int) -> tuple[dict, dict, dict]:
     """
     Generate perturbed parameter sets for SPSA.
 
     Args:
-        params: Current parameter values with min/max/step
+        params: Current parameter values with min/max/step/active_from_iteration
         c_k: Perturbation coefficient for this iteration
+        iteration: Current iteration number (for phased activation)
 
     Returns:
         (plus_params, minus_params, signs)
-        - plus_params: dict of {param_name: value} for θ + c_k * Δ * step
-        - minus_params: dict of {param_name: value} for θ - c_k * Δ * step
-        - signs: dict of {param_name: +1 or -1} (the Δ values)
+        - plus_params: dict of {param_name: value} for θ + c_k * Δ * step (active) or θ (inactive)
+        - minus_params: dict of {param_name: value} for θ - c_k * Δ * step (active) or θ (inactive)
+        - signs: dict of {param_name: +1 or -1} for ACTIVE params only
     """
     plus_params = {}
     minus_params = {}
@@ -122,9 +147,20 @@ def generate_perturbations(params: dict, c_k: float) -> tuple[dict, dict, dict]:
 
     for name, cfg in params.items():
         value = cfg['value']
-        step = cfg['step']
         min_val = cfg['min']
         max_val = cfg['max']
+
+        # Check if this param is active at the current iteration
+        active_from = cfg.get('active_from_iteration', 1)
+        if iteration < active_from:
+            # Inactive param: use current value without perturbation
+            plus_params[name] = value
+            minus_params[name] = value
+            # Don't add to signs - will be skipped in gradient/update
+            continue
+
+        # Active param: apply perturbation
+        step = cfg['step']
 
         # Random sign: +1 or -1 (Bernoulli ±1)
         sign = random.choice([-1, 1])
@@ -143,7 +179,7 @@ def generate_perturbations(params: dict, c_k: float) -> tuple[dict, dict, dict]:
     return plus_params, minus_params, signs
 
 
-def create_iteration(iteration_number: int, effective_iteration: int, plus_path: str, minus_path: str,
+def create_iteration(run_id: int, iteration_number: int, effective_iteration: int, plus_path: str, minus_path: str,
                      ref_path: str | None, ref_target_games: int,
                      config: dict, base_params: dict, plus_params: dict,
                      minus_params: dict, signs: dict) -> int:
@@ -163,15 +199,19 @@ def create_iteration(iteration_number: int, effective_iteration: int, plus_path:
     def _create():
         app = create_app()
         with app.app_context():
+            # Check for duplicate iteration number within this run
             existing = SpsaIteration.query.filter(
+                SpsaIteration.run_id == run_id,
                 SpsaIteration.iteration_number == iteration_number
             ).first()
             if existing:
                 raise RuntimeError(
-                    f"Iteration {iteration_number} already exists (id={existing.id}, status={existing.status}). "
+                    f"Iteration {iteration_number} already exists in run {run_id} "
+                    f"(id={existing.id}, status={existing.status}). "
                     "Another master may be running."
                 )
             iteration = SpsaIteration(
+                run_id=run_id,
                 iteration_number=iteration_number,
                 effective_iteration=effective_iteration,
                 plus_engine_path=plus_path,
@@ -479,8 +519,8 @@ def migrate_database():
             print("  Migration complete.")
 
 
-def get_last_complete_iteration_number() -> int:
-    """Get the last COMPLETED iteration number, or 0 if none."""
+def get_last_complete_iteration_number(run_id: int) -> int:
+    """Get the last COMPLETED iteration number for the given run, or 0 if none."""
     from web.app import create_app
     from web.models import SpsaIteration
 
@@ -488,6 +528,7 @@ def get_last_complete_iteration_number() -> int:
         app = create_app()
         with app.app_context():
             last = SpsaIteration.query.filter(
+                SpsaIteration.run_id == run_id,
                 SpsaIteration.status == 'complete'
             ).order_by(SpsaIteration.iteration_number.desc()).first()
             if last:
@@ -497,17 +538,18 @@ def get_last_complete_iteration_number() -> int:
     return with_db_retry(_get)
 
 
-def get_incomplete_iteration() -> dict | None:
-    """Get an incomplete iteration that needs to be resumed, or None."""
+def get_incomplete_iteration(run_id: int) -> dict | None:
+    """Get an incomplete iteration for the given run that needs to be resumed, or None."""
     from web.app import create_app
     from web.models import SpsaIteration
 
     def _get():
         app = create_app()
         with app.app_context():
-            # Find any iteration that's not marked complete
+            # Find any iteration in this run that's not marked complete
             # Statuses: pending, in_progress (SPSA phase), building, ref_pending (ref phase)
             iteration = SpsaIteration.query.filter(
+                SpsaIteration.run_id == run_id,
                 SpsaIteration.status.in_(['pending', 'in_progress', 'building', 'ref_pending'])
             ).order_by(SpsaIteration.iteration_number.desc()).first()
 
@@ -566,6 +608,10 @@ def run_master():
 
     # Run any pending migrations
     migrate_database()
+
+    # Get the active run
+    run_id, run_name = get_active_run()
+    print(f"Active run: {run_name} (id={run_id})")
 
     # Load configuration
     config = load_config()
@@ -627,15 +673,15 @@ def run_master():
     for name, cfg in params.items():
         print(f"  {name}: {cfg['value']} (range: {cfg['min']}-{cfg['max']}, step: {cfg['step']})")
 
-    # Check for incomplete iteration to resume
-    incomplete = get_incomplete_iteration()
+    # Check for incomplete iteration to resume (within this run)
+    incomplete = get_incomplete_iteration(run_id)
     if incomplete:
         status = incomplete.get('status', 'pending')
         print(f"\nResuming incomplete iteration {incomplete['iteration_number']} (status: {status})")
         start_iteration = incomplete['iteration_number']
         resume_info = incomplete
     else:
-        start_iteration = get_last_complete_iteration_number() + 1
+        start_iteration = get_last_complete_iteration_number(run_id) + 1
         resume_info = None
         print(f"\nStarting from iteration {start_iteration}")
 
@@ -695,10 +741,17 @@ def run_master():
 
         else:
             # New iteration - create it
-            plus_params, minus_params, signs = generate_perturbations(params, c_k)
+            plus_params, minus_params, signs = generate_perturbations(params, c_k, k)
 
-            print("\nPerturbations:")
+            # Count active vs inactive params
+            active_count = len(signs)
+            inactive_count = len(params) - active_count
+            print(f"\nActive parameters: {active_count}, Inactive (frozen): {inactive_count}")
+
+            print("\nPerturbations (active params only):")
             for name in params:
+                if name not in signs:
+                    continue  # Skip inactive params
                 base = params[name]['value']
                 plus = plus_params[name]
                 minus = minus_params[name]
@@ -715,7 +768,7 @@ def run_master():
             # Create iteration record (no base_engine_path yet)
             print("\nCreating iteration record...")
             iteration_id = create_iteration(
-                k, effective_k, str(plus_path), str(minus_path), ref_path, ref_target_games,
+                run_id, k, effective_k, str(plus_path), str(minus_path), ref_path, ref_target_games,
                 config, params, plus_params, minus_params, signs
             )
             print(f"  Iteration ID: {iteration_id}")

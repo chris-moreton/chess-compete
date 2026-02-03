@@ -4,16 +4,19 @@
 # The master controller reads this, generates perturbed versions,
 # and updates it after each iteration based on gradient estimates.
 #
-# Format: parameter_name = { value = X, min = Y, max = Z, step = S }
+# Format: parameter_name = { value = X, min = Y, max = Z, step = S, active_from_iteration = N }
 # - value: current value (updated by SPSA)
 # - min/max: bounds to prevent nonsensical values
 # - step: perturbation delta (δ) for SPSA
+# - active_from_iteration: iteration number when this param starts being tuned (default: 1)
 #
-# Reset to iteration 118 values (best Stockfish performance: 2593 Elo)
-# Added probcut and multi-cut parameters for Phase 2 tuning
+# Phased tuning approach:
+#   Phase 1 (iter 1+):   Core search pruning - 15 params (highest Elo impact)
+#   Phase 2 (iter 75+):  Move ordering + extensions - 23 params
+#   Phase 3 (iter 150+): Evaluation weights - 10 params
 
 # =============================================================================
-# SEARCH PARAMETERS
+# PHASE 1: CORE SEARCH PARAMETERS (active from iteration 1)
 # =============================================================================
 
 # Reverse futility pruning (beta pruning)
@@ -23,12 +26,14 @@ value = 346.5265238840795
 min = 50
 max = 400
 step = 20
+active_from_iteration = 1
 
 [beta_prune_max_depth]
 value = 6.852508396202083
 min = 6
 max = 12
 step = 1
+active_from_iteration = 1
 
 # Null move pruning
 # Reduction = base + depth/6 (approximately)
@@ -37,12 +42,14 @@ value = 2.5585105719916648
 min = 2
 max = 6
 step = 1
+active_from_iteration = 1
 
 [null_move_min_depth]
 value = 4.1205128917458875
 min = 1
 max = 14
 step = 1
+active_from_iteration = 1
 
 # SEE (Static Exchange Evaluation) pruning
 # At depth N, prune captures with SEE < -margin * N^2
@@ -51,12 +58,14 @@ value = 19.627811522494294
 min = 5
 max = 70
 step = 5
+active_from_iteration = 1
 
 [see_prune_max_depth]
 value = 10.36997195128076
 min = 3
 max = 14
 step = 1
+active_from_iteration = 1
 
 # Alpha (futility) pruning margins
 # If static eval + margin[depth] < alpha, prune
@@ -65,12 +74,14 @@ value = 142.88496193020694
 min = 50
 max = 240
 step = 8
+active_from_iteration = 1
 
 [alpha_prune_margin_per_depth]
 value = 116.19012587684348
 min = 32
 max = 160
 step = 4
+active_from_iteration = 1
 
 # Late Move Pruning (LMP) thresholds
 # After N moves at depth D, skip remaining quiet moves
@@ -79,106 +90,143 @@ value = 4.421008995477191
 min = 2
 max = 16
 step = 2
+active_from_iteration = 1
 
 [lmp_threshold_depth2]
 value = 18.901094648568268
 min = 1
 max = 24
 step = 2
+active_from_iteration = 1
 
 [lmp_threshold_depth3]
 value = 31.66431764693722
 min = 2
 max = 48
 step = 2
+active_from_iteration = 1
+
+# LMR History parameters (core to search efficiency)
+# History-based LMR: adjust reduction based on move's historical performance
+[lmr_history_good_divisor]
+value = 19.095304201348608
+min = 2
+max = 40
+step = 1
+active_from_iteration = 1
+
+[lmr_history_bad_divisor]
+value = 13.133708020075803
+min = 1
+max = 32
+step = 1
+active_from_iteration = 1
+
+# Continuation history thresholds (countermove_history + followup_history combined)
+[lmr_continuation_good_threshold]
+value = 8000
+min = 0
+max = 8000
+step = 250
+active_from_iteration = 1
+
+[lmr_continuation_bad_threshold]
+value = -4000
+min = -16000
+max = -1000
+step = 500
+active_from_iteration = 1
 
 # =============================================================================
-# PROBCUT PARAMETERS (NEW)
+# PHASE 2: MOVE ORDERING + EXTENSIONS (active from iteration 75)
 # =============================================================================
+
+# PROBCUT PARAMETERS
 # At high depth, do a shallow search with raised beta
 # If a capture fails high, the position is probably winning and can be cut
-
 [probcut_min_depth]
 value = 11.862585245598297
 min = 2
 max = 20
 step = 1
+active_from_iteration = 75
 
 [probcut_margin]
 value = 286.0372357002084
 min = 50
 max = 300
 step = 25
+active_from_iteration = 75
 
 [probcut_depth_reduction]
 value = 2
 min = 2
 max = 6
 step = 1
+active_from_iteration = 75
 
-# =============================================================================
-# MULTI-CUT PARAMETERS (NEW)
-# =============================================================================
+# MULTI-CUT PARAMETERS
 # At high depth, if multiple moves fail high at shallow depth,
 # assume the position is good and return a beta cutoff
-
 [multicut_min_depth]
 value = 28.050665120286705
 min = 6
 max = 40
 step = 1
+active_from_iteration = 75
 
 [multicut_depth_reduction]
 value = 8.072011309909497
 min = 2
 max = 10
 step = 1
+active_from_iteration = 75
 
 [multicut_moves_to_try]
 value = 9.59256584369884
 min = 3
 max = 16
 step = 1
+active_from_iteration = 75
 
 [multicut_required_cutoffs]
 value = 3.2313579565433397
 min = 3
 max = 10
 step = 1
+active_from_iteration = 75
 
-# =============================================================================
 # SINGULAR EXTENSION PARAMETERS
-# =============================================================================
 # If the hash move is significantly better than all alternatives, extend its search.
-# This catches critical forcing sequences where one move is clearly best.
-
 [singular_extension_min_depth]
 value = 15.729768131927756
 min = 4
 max = 20
 step = 1
+active_from_iteration = 75
 
 [singular_extension_depth_margin]
 value = 2.2205582008673677
 min = 1
 max = 8
 step = 1
+active_from_iteration = 75
 
 [singular_extension_depth_reduction]
 value = 7.624930624013606
 min = 2
 max = 10
 step = 1
+active_from_iteration = 75
 
 [singular_extension_margin_multiplier]
 value = 4
 min = 1
 max = 6
 step = 1
+active_from_iteration = 75
 
-# =============================================================================
 # MOVE ORDERING PARAMETERS
-# =============================================================================
 # These control move scoring for alpha-beta search efficiency
 
 # Killer move bonuses
@@ -187,18 +235,21 @@ value = 500
 min = 500
 max = 2000
 step = 100
+active_from_iteration = 75
 
 [move_score_killer_1]
 value = 341.88829289937485
 min = 200
 max = 1500
 step = 75
+active_from_iteration = 75
 
 [move_score_killer_2]
 value = 211.02791004336842
 min = 150
 max = 800
 step = 50
+active_from_iteration = 75
 
 # History score maximum
 [move_score_history_max]
@@ -206,6 +257,7 @@ value = 459.70616739211084
 min = 200
 max = 1000
 step = 50
+active_from_iteration = 75
 
 # Distant killer bonuses (from 2 plies ago)
 [move_score_distant_killer_1]
@@ -213,12 +265,14 @@ value = 340.6440992900626
 min = 50
 max = 600
 step = 25
+active_from_iteration = 75
 
 [move_score_distant_killer_2]
 value = 291.80154210113153
 min = 50
 max = 400
 step = 25
+active_from_iteration = 75
 
 # Countermove bonus
 [move_score_countermove]
@@ -226,6 +280,7 @@ value = 150.5435372850623
 min = 50
 max = 400
 step = 25
+active_from_iteration = 75
 
 # Pawn push bonuses
 [move_score_pawn_push_7th]
@@ -233,12 +288,14 @@ value = 100
 min = 50
 max = 500
 step = 15
+active_from_iteration = 75
 
 [move_score_pawn_push_6th]
 value = 55.023222196789476
 min = 0
 max = 200
 step = 15
+active_from_iteration = 75
 
 # History table divisors (scale i16 history to score range)
 [countermove_history_divisor]
@@ -246,53 +303,24 @@ value = 131.27374617217873
 min = 16
 max = 512
 step = 32
+active_from_iteration = 75
 
 [followup_history_divisor]
 value = 107.15714933691245
 min = 16
 max = 1024
 step = 16
+active_from_iteration = 75
 
 [capture_history_divisor]
 value = 968.2242591408135
 min = 16
 max = 1024
 step = 32
+active_from_iteration = 75
 
 # =============================================================================
-# LMR HISTORY PARAMETERS
-# =============================================================================
-# History-based LMR: adjust reduction based on move's historical performance
-# Good divisor: reduce less if history > highest_history_score / divisor
-# Bad divisor: reduce more if history < -highest_history_score / divisor
-
-[lmr_history_good_divisor]
-value = 19.095304201348608
-min = 2
-max = 40
-step = 1
-
-[lmr_history_bad_divisor]
-value = 13.133708020075803
-min = 1
-max = 32
-step = 1
-
-# Continuation history thresholds (countermove_history + followup_history combined)
-[lmr_continuation_good_threshold]
-value = 8000
-min = 0
-max = 8000
-step = 250
-
-[lmr_continuation_bad_threshold]
-value = -4000
-min = -16000
-max = -1000
-step = 500
-
-# =============================================================================
-# EVALUATION PARAMETERS
+# PHASE 3: EVALUATION PARAMETERS (active from iteration 150)
 # =============================================================================
 # These control positional evaluation weights - critical for strategic play
 
@@ -302,12 +330,14 @@ value = 17.797503204005974
 min = 5
 max = 50
 step = 3
+active_from_iteration = 150
 
 [rook_semi_open_file_bonus]
 value = 20.82498674907698
 min = 5
 max = 30
 step = 3
+active_from_iteration = 150
 
 # Knight outposts (relates to STS "Knight Outposts" category)
 [value_knight_outpost]
@@ -315,6 +345,7 @@ value = 9.913842225607794
 min = 0
 max = 30
 step = 2
+active_from_iteration = 150
 
 # Passed pawn bonuses (relates to STS "7th Rank" and pawn advancement)
 [value_rook_behind_passed_pawn]
@@ -322,12 +353,14 @@ value = 45.74282150153337
 min = 5
 max = 70
 step = 5
+active_from_iteration = 150
 
 [value_guarded_passed_pawn]
 value = 42.151550603189676
 min = 10
 max = 60
 step = 5
+active_from_iteration = 150
 
 # Pawn structure penalties
 [doubled_pawn_penalty]
@@ -335,18 +368,21 @@ value = 28.324468284025006
 min = 5
 max = 40
 step = 3
+active_from_iteration = 150
 
 [isolated_pawn_penalty]
 value = 12.533866962337866
 min = 0
 max = 25
 step = 2
+active_from_iteration = 150
 
 [value_backward_pawn_penalty]
 value = 22.987261965447907
 min = 5
 max = 40
 step = 3
+active_from_iteration = 150
 
 # Bishop pair bonus
 [value_bishop_pair]
@@ -354,6 +390,7 @@ value = 16.370228060484102
 min = 0
 max = 30
 step = 3
+active_from_iteration = 150
 
 # Space evaluation (relates to STS "Center Control" category)
 [space_bonus_per_square]
@@ -361,29 +398,4 @@ value = 19.441489428008335
 min = 0
 max = 20
 step = 1
-
-# =============================================================================
-# FUTURE PARAMETERS (Phase 3+)
-# =============================================================================
-# Uncomment these when expanding the parameter set
-
-# # LMR (Late Move Reduction) formula coefficients
-# # reduction = floor(base + ln(depth) * ln(move_count) / divisor)
-# [lmr_base]
-# value = 0.75
-# min = 0.25
-# max = 1.25
-# step = 0.1
-#
-# [lmr_divisor]
-# value = 2.5
-# min = 1.5
-# max = 4.0
-# step = 0.25
-
-# # Threat extension margin
-# [threat_extension_margin]
-# value = 400
-# min = 200
-# max = 600
-# step = 50
+active_from_iteration = 150
