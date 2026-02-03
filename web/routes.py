@@ -628,8 +628,14 @@ def register_routes(app):
         ).order_by(SpsaIteration.iteration_number.asc()).all()
 
         if not iterations:
+            # Still need to check for in-progress iteration even with no completed ones
+            in_progress = SpsaIteration.query.filter(
+                SpsaIteration.run_id == selected_run.id,
+                SpsaIteration.status.in_(['pending', 'in_progress', 'building', 'ref_pending'])
+            ).order_by(SpsaIteration.iteration_number.desc()).first()
             return render_template('spsa.html', iterations=[], params_data={}, elo_data=[],
-                                   ref_ratio=ref_ratio, all_runs=all_runs, selected_run=selected_run)
+                                   ref_ratio=ref_ratio, all_runs=all_runs, selected_run=selected_run,
+                                   in_progress=in_progress)
 
         # Get parameter names from ALL iterations (union of all params seen)
         # This handles cases where new params are added mid-tuning
