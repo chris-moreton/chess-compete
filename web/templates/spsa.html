@@ -887,13 +887,146 @@
         </script>
 
         {% else %}
+
+        {% if in_progress %}
+        <div class="in-progress-banner" id="progress-banner">
+            <h3>Iteration <span id="current-iteration">{{ in_progress.iteration_number }}</span>{% if in_progress.effective_iteration %} (eff: {{ in_progress.effective_iteration }}){% endif %} In Progress</h3>
+            <p id="status-text">
+            {% if in_progress.status in ['pending', 'in_progress'] %}
+            <strong>Phase 1:</strong> SPSA Games (plus vs minus): <span id="games-count">{{ in_progress.games_played }}/{{ in_progress.target_games }}</span>
+            {% elif in_progress.status == 'building' %}
+            <strong>Building:</strong> Master is building new base engine with updated parameters...
+            {% elif in_progress.status == 'ref_pending' %}
+            <strong>Phase 2:</strong> Reference Games (base vs Stockfish): <span id="ref-games-count">{{ in_progress.ref_games_played }}/{{ in_progress.ref_target_games }}</span>
+            {% else %}
+            Status: {{ in_progress.status }}
+            {% endif %}
+            </p>
+            <div class="progress-container">
+                <div class="progress-bar-wrapper">
+                    <div class="progress-bar-segment progress-iteration" id="progress-iteration" style="width: {{ (in_progress.games_played / (in_progress.target_games + in_progress.ref_target_games) * 100)|round(1) }}%">
+                        {% if in_progress.games_played > 0 %}{{ in_progress.games_played }}{% endif %}
+                    </div>
+                    <div class="progress-bar-segment progress-reference" id="progress-reference" style="width: {{ (in_progress.ref_games_played / (in_progress.target_games + in_progress.ref_target_games) * 100)|round(1) }}%">
+                        {% if in_progress.ref_games_played > 0 %}{{ in_progress.ref_games_played }}{% endif %}
+                    </div>
+                </div>
+                <div class="progress-labels">
+                    <span>0</span>
+                    <span id="total-games">{{ in_progress.target_games + in_progress.ref_target_games }}</span>
+                </div>
+                <div class="progress-legend">
+                    <div class="legend-item"><div class="legend-dot green"></div> SPSA Games ({{ in_progress.target_games }})</div>
+                    <div class="legend-item"><div class="legend-dot red"></div> Reference Games ({{ in_progress.ref_target_games }})</div>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="in-progress-banner" id="progress-banner" style="display: none;">
+            <h3>Iteration <span id="current-iteration"></span> In Progress</h3>
+            <p id="status-text"></p>
+            <div class="progress-container">
+                <div class="progress-bar-wrapper">
+                    <div class="progress-bar-segment progress-iteration" id="progress-iteration" style="width: 0%"></div>
+                    <div class="progress-bar-segment progress-reference" id="progress-reference" style="width: 0%"></div>
+                </div>
+                <div class="progress-labels">
+                    <span>0</span>
+                    <span id="total-games">0</span>
+                </div>
+                <div class="progress-legend">
+                    <div class="legend-item"><div class="legend-dot green"></div> SPSA Games</div>
+                    <div class="legend-item"><div class="legend-dot red"></div> Reference Games</div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <script>
+            const selectedRunId = {{ selected_run.id if selected_run else 'null' }};
+            let lastKnownIteration = {{ in_progress.iteration_number if in_progress else 'null' }};
+
+            async function pollSpsaStatus() {
+                try {
+                    const url = selectedRunId ? `/api/spsa/status?run=${selectedRunId}` : '/api/spsa/status';
+                    const response = await fetch(url);
+                    const data = await response.json();
+
+                    if (data.iteration_number === null) {
+                        return;
+                    }
+
+                    // Check if a new iteration started
+                    if (lastKnownIteration !== null && data.iteration_number !== lastKnownIteration) {
+                        window.location.reload();
+                        return;
+                    }
+
+                    // If we were showing no iterations and now there's one
+                    if (lastKnownIteration === null && data.status !== 'complete') {
+                        window.location.reload();
+                        return;
+                    }
+
+                    // Same iteration - update progress bar and counts
+                    if (data.status !== 'complete') {
+                        updateProgressDisplay(data);
+                    } else {
+                        // Iteration completed - reload to show it
+                        window.location.reload();
+                    }
+                } catch (error) {
+                    console.error('Error polling SPSA status:', error);
+                }
+            }
+
+            function updateProgressDisplay(data) {
+                const banner = document.getElementById('progress-banner');
+                const statusText = document.getElementById('status-text');
+                const progressIteration = document.getElementById('progress-iteration');
+                const progressReference = document.getElementById('progress-reference');
+                const totalGames = document.getElementById('total-games');
+
+                if (!banner) return;
+
+                banner.style.display = 'block';
+
+                const total = data.target_games + data.ref_target_games;
+                if (totalGames) totalGames.textContent = total;
+
+                const iterPct = total > 0 ? (data.games_played / total * 100) : 0;
+                const refPct = total > 0 ? (data.ref_games_played / total * 100) : 0;
+
+                if (progressIteration) {
+                    progressIteration.style.width = iterPct + '%';
+                    progressIteration.textContent = data.games_played > 0 ? data.games_played : '';
+                }
+                if (progressReference) {
+                    progressReference.style.width = refPct + '%';
+                    progressReference.textContent = data.ref_games_played > 0 ? data.ref_games_played : '';
+                }
+
+                if (statusText) {
+                    if (data.status === 'pending' || data.status === 'in_progress') {
+                        statusText.innerHTML = `<strong>Phase 1:</strong> SPSA Games (plus vs minus): <span id="games-count">${data.games_played}/${data.target_games}</span>`;
+                    } else if (data.status === 'building') {
+                        statusText.innerHTML = '<strong>Building:</strong> Master is building new base engine with updated parameters...';
+                    } else if (data.status === 'ref_pending') {
+                        statusText.innerHTML = `<strong>Phase 2:</strong> Reference Games (base vs Stockfish): <span id="ref-games-count">${data.ref_games_played}/${data.ref_target_games}</span>`;
+                    }
+                }
+            }
+
+            setInterval(pollSpsaStatus, 5000);
+        </script>
+
         <div class="no-data">
             {% if selected_run %}
             <p>No completed iterations for run "{{ selected_run.name }}" yet.</p>
-            <p>Run the SPSA tuner to see parameter progression here.</p>
             {% else %}
-            <p>No SPSA tuning data yet. Run the SPSA tuner to see parameter progression here.</p>
+            <p>No SPSA tuning data yet.</p>
             {% endif %}
+            <p>Run the SPSA tuner to see parameter progression here:</p>
             <pre>python -m compete --spsa</pre>
         </div>
         {% endif %}
