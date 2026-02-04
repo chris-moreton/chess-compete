@@ -218,6 +218,41 @@ PARAM_MAPPINGS = {
     ),
 }
 
+# Piece value pairs need special handling (opening, endgame tuples)
+# Format: (opening_param, endgame_param) -> (regex_pattern, replacement_template)
+PIECE_VALUE_MAPPINGS = {
+    'pawn': {
+        'opening_param': 'pawn_value_opening',
+        'endgame_param': 'pawn_value_endgame',
+        'pattern': r'pub const PAWN_VALUE_PAIR: ScorePair = \(\d+, \d+\);',
+        'template': 'pub const PAWN_VALUE_PAIR: ScorePair = ({opening}, {endgame});'
+    },
+    'knight': {
+        'opening_param': 'knight_value_opening',
+        'endgame_param': 'knight_value_endgame',
+        'pattern': r'pub const KNIGHT_VALUE_PAIR: ScorePair = \(\d+, \d+\);',
+        'template': 'pub const KNIGHT_VALUE_PAIR: ScorePair = ({opening}, {endgame});'
+    },
+    'bishop': {
+        'opening_param': 'bishop_value_opening',
+        'endgame_param': 'bishop_value_endgame',
+        'pattern': r'pub const BISHOP_VALUE_PAIR: ScorePair = \(\d+, \d+\);',
+        'template': 'pub const BISHOP_VALUE_PAIR: ScorePair = ({opening}, {endgame});'
+    },
+    'rook': {
+        'opening_param': 'rook_value_opening',
+        'endgame_param': 'rook_value_endgame',
+        'pattern': r'pub const ROOK_VALUE_PAIR: ScorePair = \(\d+, \d+\);',
+        'template': 'pub const ROOK_VALUE_PAIR: ScorePair = ({opening}, {endgame});'
+    },
+    'queen': {
+        'opening_param': 'queen_value_opening',
+        'endgame_param': 'queen_value_endgame',
+        'pattern': r'pub const QUEEN_VALUE_PAIR: ScorePair = \(\d+, \d+\);',
+        'template': 'pub const QUEEN_VALUE_PAIR: ScorePair = ({opening}, {endgame});'
+    },
+}
+
 # Array parameters need special handling
 # These are computed from base + index * per_depth
 ARRAY_PARAM_MAPPINGS = {
@@ -310,6 +345,24 @@ def apply_parameters(content: str, params: dict) -> str:
         mapping = ARRAY_PARAM_MAPPINGS['lmp_move_thresholds']
         replacement = mapping['template'].format(values=values_str)
         content = re.sub(mapping['pattern'], replacement, content)
+
+    # Apply piece value pairs (opening, endgame tuples)
+    for piece, mapping in PIECE_VALUE_MAPPINGS.items():
+        opening_param = mapping['opening_param']
+        endgame_param = mapping['endgame_param']
+        if opening_param in params or endgame_param in params:
+            # Get values, using defaults if one is missing
+            defaults = {
+                'pawn_value_opening': 100, 'pawn_value_endgame': 200,
+                'knight_value_opening': 620, 'knight_value_endgame': 680,
+                'bishop_value_opening': 650, 'bishop_value_endgame': 725,
+                'rook_value_opening': 1000, 'rook_value_endgame': 1100,
+                'queen_value_opening': 2000, 'queen_value_endgame': 2300,
+            }
+            opening = int(round(params.get(opening_param, defaults[opening_param])))
+            endgame = int(round(params.get(endgame_param, defaults[endgame_param])))
+            replacement = mapping['template'].format(opening=opening, endgame=endgame)
+            content = re.sub(mapping['pattern'], replacement, content)
 
     return content
 

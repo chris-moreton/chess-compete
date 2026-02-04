@@ -14,6 +14,7 @@
 #   Phase 1 (iter 1+):   Core search pruning - 15 params (highest Elo impact)
 #   Phase 2 (iter 75+):  Move ordering + extensions - 23 params
 #   Phase 3 (iter 150+): Evaluation weights - 10 params
+#   Phase 4 (iter 225+): Piece values - 10 params (tapered opening/endgame)
 
 # =============================================================================
 # PHASE 1: CORE SEARCH PARAMETERS (active from iteration 1)
@@ -22,30 +23,30 @@
 # Reverse futility pruning (beta pruning)
 # If static eval - margin * depth > beta, prune
 [beta_prune_margin_per_depth]
-value = 346.5265238840795
+value = 345.8295963799478
 min = 50
 max = 400
 step = 20
 active_from_iteration = 1
 
 [beta_prune_max_depth]
-value = 6.852508396202083
+value = 7.541668543205382
 min = 6
 max = 12
-step = 1
+step = 0.5
 active_from_iteration = 1
 
 # Null move pruning
 # Reduction = base + depth/6 (approximately)
 [null_move_reduce_depth_base]
-value = 2.5585105719916648
+value = 4.676098042858942
 min = 2
 max = 6
-step = 1
+step = 0.5
 active_from_iteration = 1
 
 [null_move_min_depth]
-value = 4.1205128917458875
+value = 3.5263995169074174
 min = 1
 max = 14
 step = 1
@@ -54,14 +55,14 @@ active_from_iteration = 1
 # SEE (Static Exchange Evaluation) pruning
 # At depth N, prune captures with SEE < -margin * N^2
 [see_prune_margin]
-value = 19.627811522494294
+value = 21.637165740679727
 min = 5
 max = 70
 step = 5
 active_from_iteration = 1
 
 [see_prune_max_depth]
-value = 10.36997195128076
+value = 10.830655814211092
 min = 3
 max = 14
 step = 1
@@ -70,14 +71,14 @@ active_from_iteration = 1
 # Alpha (futility) pruning margins
 # If static eval + margin[depth] < alpha, prune
 [alpha_prune_margin_base]
-value = 142.88496193020694
+value = 145.00893510028138
 min = 50
 max = 240
 step = 8
 active_from_iteration = 1
 
 [alpha_prune_margin_per_depth]
-value = 116.19012587684348
+value = 113.25521267969886
 min = 32
 max = 160
 step = 4
@@ -86,21 +87,21 @@ active_from_iteration = 1
 # Late Move Pruning (LMP) thresholds
 # After N moves at depth D, skip remaining quiet moves
 [lmp_threshold_depth1]
-value = 4.421008995477191
+value = 10.620964304526437
 min = 2
 max = 16
 step = 2
 active_from_iteration = 1
 
 [lmp_threshold_depth2]
-value = 18.901094648568268
+value = 13.899409164517442
 min = 1
 max = 24
 step = 2
 active_from_iteration = 1
 
 [lmp_threshold_depth3]
-value = 31.66431764693722
+value = 31.883301394956405
 min = 2
 max = 48
 step = 2
@@ -109,14 +110,14 @@ active_from_iteration = 1
 # LMR History parameters (core to search efficiency)
 # History-based LMR: adjust reduction based on move's historical performance
 [lmr_history_good_divisor]
-value = 19.095304201348608
+value = 15.1353250326687
 min = 2
 max = 40
 step = 1
 active_from_iteration = 1
 
 [lmr_history_bad_divisor]
-value = 13.133708020075803
+value = 16.4357513449103
 min = 1
 max = 32
 step = 1
@@ -124,14 +125,14 @@ active_from_iteration = 1
 
 # Continuation history thresholds (countermove_history + followup_history combined)
 [lmr_continuation_good_threshold]
-value = 8000
+value = 7999.967415192885
 min = 0
 max = 8000
 step = 250
 active_from_iteration = 1
 
 [lmr_continuation_bad_threshold]
-value = -4000
+value = -4000.0351778747477
 min = -16000
 max = -1000
 step = 500
@@ -399,3 +400,85 @@ min = 0
 max = 20
 step = 1
 active_from_iteration = 150
+
+# =============================================================================
+# PHASE 4: PIECE VALUES (active from iteration 225)
+# =============================================================================
+# Tapered evaluation: each piece has opening and endgame values
+# Final value = opening_value * phase + endgame_value * (1 - phase)
+# where phase goes from 1.0 (opening) to 0.0 (endgame)
+
+# Pawn values (base unit for piece values)
+[pawn_value_opening]
+value = 100
+min = 80
+max = 120
+step = 5
+active_from_iteration = 225
+
+[pawn_value_endgame]
+value = 200
+min = 150
+max = 250
+step = 10
+active_from_iteration = 225
+
+# Knight values
+[knight_value_opening]
+value = 620
+min = 550
+max = 700
+step = 15
+active_from_iteration = 225
+
+[knight_value_endgame]
+value = 680
+min = 600
+max = 750
+step = 15
+active_from_iteration = 225
+
+# Bishop values
+[bishop_value_opening]
+value = 650
+min = 580
+max = 720
+step = 15
+active_from_iteration = 225
+
+[bishop_value_endgame]
+value = 725
+min = 650
+max = 800
+step = 15
+active_from_iteration = 225
+
+# Rook values
+[rook_value_opening]
+value = 1000
+min = 900
+max = 1100
+step = 20
+active_from_iteration = 225
+
+[rook_value_endgame]
+value = 1100
+min = 1000
+max = 1200
+step = 20
+active_from_iteration = 225
+
+# Queen values
+[queen_value_opening]
+value = 2000
+min = 1800
+max = 2200
+step = 40
+active_from_iteration = 225
+
+[queen_value_endgame]
+value = 2300
+min = 2100
+max = 2500
+step = 40
+active_from_iteration = 225
