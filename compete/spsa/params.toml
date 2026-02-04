@@ -23,62 +23,63 @@
 # Reverse futility pruning (beta pruning)
 # If static eval - margin * depth > beta, prune
 [beta_prune_margin_per_depth]
-value = 345.8295963799478
+value = 345.7744036116247
 min = 50
 max = 400
 step = 20
 active_from_iteration = 1
 
 [beta_prune_max_depth]
-value = 7.541668543205382
+value = 9.174952821765466
 min = 6
 max = 12
-step = 0.5
+step = 0.25
 active_from_iteration = 1
 
 # Null move pruning
 # Reduction = base + depth/6 (approximately)
+# FROZEN: converged to lower bound, keeping at 2
 [null_move_reduce_depth_base]
-value = 4.676098042858942
+value = 2
 min = 2
 max = 6
 step = 0.5
-active_from_iteration = 1
+active_from_iteration = 99999
 
 [null_move_min_depth]
-value = 3.5263995169074174
+value = 4.017352217306312
 min = 1
 max = 14
-step = 1
+step = 0.5
 active_from_iteration = 1
 
 # SEE (Static Exchange Evaluation) pruning
 # At depth N, prune captures with SEE < -margin * N^2
 [see_prune_margin]
-value = 21.637165740679727
+value = 21.804987888603346
 min = 5
 max = 70
 step = 5
 active_from_iteration = 1
 
 [see_prune_max_depth]
-value = 10.830655814211092
+value = 10.144587005050525
 min = 3
 max = 14
-step = 1
+step = 0.5
 active_from_iteration = 1
 
 # Alpha (futility) pruning margins
 # If static eval + margin[depth] < alpha, prune
 [alpha_prune_margin_base]
-value = 145.00893510028138
+value = 144.3862806800281
 min = 50
 max = 240
 step = 8
 active_from_iteration = 1
 
 [alpha_prune_margin_per_depth]
-value = 113.25521267969886
+value = 113.99570450955855
 min = 32
 max = 160
 step = 4
@@ -87,21 +88,21 @@ active_from_iteration = 1
 # Late Move Pruning (LMP) thresholds
 # After N moves at depth D, skip remaining quiet moves
 [lmp_threshold_depth1]
-value = 10.620964304526437
+value = 8.498273846293426
 min = 2
 max = 16
 step = 2
 active_from_iteration = 1
 
 [lmp_threshold_depth2]
-value = 13.899409164517442
+value = 17.10729678876092
 min = 1
 max = 24
 step = 2
 active_from_iteration = 1
 
 [lmp_threshold_depth3]
-value = 31.883301394956405
+value = 33.62486892203604
 min = 2
 max = 48
 step = 2
@@ -110,14 +111,14 @@ active_from_iteration = 1
 # LMR History parameters (core to search efficiency)
 # History-based LMR: adjust reduction based on move's historical performance
 [lmr_history_good_divisor]
-value = 15.1353250326687
+value = 13.414723259413336
 min = 2
 max = 40
 step = 1
 active_from_iteration = 1
 
 [lmr_history_bad_divisor]
-value = 16.4357513449103
+value = 7.527054924085187
 min = 1
 max = 32
 step = 1
@@ -125,14 +126,14 @@ active_from_iteration = 1
 
 # Continuation history thresholds (countermove_history + followup_history combined)
 [lmr_continuation_good_threshold]
-value = 7999.967415192885
+value = 7999.921785719507
 min = 0
 max = 8000
 step = 250
 active_from_iteration = 1
 
 [lmr_continuation_bad_threshold]
-value = -4000.0351778747477
+value = -4000.038119855167
 min = -16000
 max = -1000
 step = 500
@@ -146,14 +147,14 @@ active_from_iteration = 1
 # At high depth, do a shallow search with raised beta
 # If a capture fails high, the position is probably winning and can be cut
 [probcut_min_depth]
-value = 11.862585245598297
+value = 10.0578581884667
 min = 2
 max = 20
 step = 1
 active_from_iteration = 75
 
 [probcut_margin]
-value = 286.0372357002084
+value = 285.84973328435876
 min = 50
 max = 300
 step = 25
@@ -170,28 +171,28 @@ active_from_iteration = 75
 # At high depth, if multiple moves fail high at shallow depth,
 # assume the position is good and return a beta cutoff
 [multicut_min_depth]
-value = 28.050665120286705
+value = 28.089644198886432
 min = 6
 max = 40
 step = 1
 active_from_iteration = 75
 
 [multicut_depth_reduction]
-value = 8.072011309909497
+value = 6.552496968567956
 min = 2
 max = 10
 step = 1
 active_from_iteration = 75
 
 [multicut_moves_to_try]
-value = 9.59256584369884
+value = 13.023204449878541
 min = 3
 max = 16
 step = 1
 active_from_iteration = 75
 
 [multicut_required_cutoffs]
-value = 3.2313579565433397
+value = 5.998784833020325
 min = 3
 max = 10
 step = 1
@@ -200,28 +201,28 @@ active_from_iteration = 75
 # SINGULAR EXTENSION PARAMETERS
 # If the hash move is significantly better than all alternatives, extend its search.
 [singular_extension_min_depth]
-value = 15.729768131927756
+value = 12.193871602112171
 min = 4
 max = 20
 step = 1
 active_from_iteration = 75
 
 [singular_extension_depth_margin]
-value = 2.2205582008673677
+value = 2.259537279467092
 min = 1
 max = 8
 step = 1
 active_from_iteration = 75
 
 [singular_extension_depth_reduction]
-value = 7.624930624013606
+value = 8.724286270172147
 min = 2
 max = 10
 step = 1
 active_from_iteration = 75
 
 [singular_extension_margin_multiplier]
-value = 4
+value = 2.1976282574101944
 min = 1
 max = 6
 step = 1
@@ -232,21 +233,21 @@ active_from_iteration = 75
 
 # Killer move bonuses
 [move_score_mate_killer]
-value = 500
+value = 500.0140993653096
 min = 500
 max = 2000
 step = 100
 active_from_iteration = 75
 
 [move_score_killer_1]
-value = 341.88829289937485
+value = 341.8905453119177
 min = 200
 max = 1500
 step = 75
 active_from_iteration = 75
 
 [move_score_killer_2]
-value = 211.02791004336842
+value = 211.05835207135829
 min = 150
 max = 800
 step = 50
@@ -254,7 +255,7 @@ active_from_iteration = 75
 
 # History score maximum
 [move_score_history_max]
-value = 459.70616739211084
+value = 459.72266934731783
 min = 200
 max = 1000
 step = 50
@@ -262,14 +263,14 @@ active_from_iteration = 75
 
 # Distant killer bonuses (from 2 plies ago)
 [move_score_distant_killer_1]
-value = 340.6440992900626
+value = 340.6656946918449
 min = 50
 max = 600
 step = 25
 active_from_iteration = 75
 
 [move_score_distant_killer_2]
-value = 291.80154210113153
+value = 291.8572280826263
 min = 50
 max = 400
 step = 25
@@ -277,7 +278,7 @@ active_from_iteration = 75
 
 # Countermove bonus
 [move_score_countermove]
-value = 150.5435372850623
+value = 150.56965981269053
 min = 50
 max = 400
 step = 25
@@ -285,14 +286,14 @@ active_from_iteration = 75
 
 # Pawn push bonuses
 [move_score_pawn_push_7th]
-value = 100
+value = 100.03623235868854
 min = 50
 max = 500
 step = 15
 active_from_iteration = 75
 
 [move_score_pawn_push_6th]
-value = 55.023222196789476
+value = 54.85244883696345
 min = 0
 max = 200
 step = 15
@@ -300,21 +301,21 @@ active_from_iteration = 75
 
 # History table divisors (scale i16 history to score range)
 [countermove_history_divisor]
-value = 131.27374617217873
+value = 131.1484018120265
 min = 16
 max = 512
 step = 32
 active_from_iteration = 75
 
 [followup_history_divisor]
-value = 107.15714933691245
+value = 107.29958525814705
 min = 16
 max = 1024
 step = 16
 active_from_iteration = 75
 
 [capture_history_divisor]
-value = 968.2242591408135
+value = 968.171767373162
 min = 16
 max = 1024
 step = 32
