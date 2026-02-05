@@ -78,21 +78,28 @@ class APIClient:
             return None
 
     def report_spsa_results(self, iteration_id: int, games: int,
-                           plus_wins: int, minus_wins: int, draws: int) -> bool:
+                           plus_wins: int, minus_wins: int, draws: int,
+                           worker_name: str = None, avg_nps: int = None) -> bool:
         """
         Report SPSA game results.
 
         Returns True on success.
         """
         try:
+            payload = {
+                'games': games,
+                'plus_wins': plus_wins,
+                'minus_wins': minus_wins,
+                'draws': draws
+            }
+            if worker_name:
+                payload['worker_name'] = worker_name
+            if avg_nps:
+                payload['avg_nps'] = avg_nps
+
             resp = self.session.post(
                 f'{self.base_url}/api/spsa/iterations/{iteration_id}/results',
-                json={
-                    'games': games,
-                    'plus_wins': plus_wins,
-                    'minus_wins': minus_wins,
-                    'draws': draws
-                },
+                json=payload,
                 timeout=30
             )
             resp.raise_for_status()
@@ -102,21 +109,28 @@ class APIClient:
             return False
 
     def report_ref_results(self, iteration_id: int, games: int,
-                          wins: int, losses: int, draws: int) -> bool:
+                          wins: int, losses: int, draws: int,
+                          worker_name: str = None, avg_nps: int = None) -> bool:
         """
         Report reference game results.
 
         Returns True on success.
         """
         try:
+            payload = {
+                'games': games,
+                'wins': wins,
+                'losses': losses,
+                'draws': draws
+            }
+            if worker_name:
+                payload['worker_name'] = worker_name
+            if avg_nps:
+                payload['avg_nps'] = avg_nps
+
             resp = self.session.post(
                 f'{self.base_url}/api/spsa/iterations/{iteration_id}/ref-results',
-                json={
-                    'games': games,
-                    'wins': wins,
-                    'losses': losses,
-                    'draws': draws
-                },
+                json=payload,
                 timeout=30
             )
             resp.raise_for_status()
@@ -856,9 +870,12 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                     nonlocal games_total
                     completed = results['plus_wins'] + results['minus_wins'] + results['draws']
                     if completed > 0:
+                        # Get NPS from results if available
+                        batch_nps = results.get('avg_nps')
                         success = api.report_spsa_results(
                             iteration_id, completed,
-                            results['plus_wins'], results['minus_wins'], results['draws']
+                            results['plus_wins'], results['minus_wins'], results['draws'],
+                            worker_name=hostname, avg_nps=batch_nps
                         )
                         if not success:
                             print("  Warning: Failed to report results to API")
@@ -919,9 +936,12 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                     nonlocal ref_games_total
                     completed = results['wins'] + results['losses'] + results['draws']
                     if completed > 0:
+                        # Get NPS from results if available
+                        batch_nps = results.get('avg_nps')
                         success = api.report_ref_results(
                             iteration_id, completed,
-                            results['wins'], results['losses'], results['draws']
+                            results['wins'], results['losses'], results['draws'],
+                            worker_name=hostname, avg_nps=batch_nps
                         )
                         if not success:
                             print("  Warning: Failed to report results to API")

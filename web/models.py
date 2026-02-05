@@ -313,3 +313,51 @@ class SpsaIteration(db.Model):
 
     def __repr__(self):
         return f'<SpsaIteration {self.iteration_number}: {self.status} ({self.games_played}/{self.target_games})>'
+
+
+class SpsaWorker(db.Model):
+    """Summary of an SPSA worker's current state and lifetime stats."""
+    __tablename__ = 'spsa_workers'
+
+    id = db.Column(db.Integer, primary_key=True)
+    worker_name = db.Column(db.String(100), unique=True, nullable=False)
+    last_iteration_id = db.Column(db.Integer, db.ForeignKey('spsa_iterations.id'))
+    last_phase = db.Column(db.String(20))  # 'spsa' or 'ref'
+    total_games = db.Column(db.Integer, nullable=False, default=0)
+    total_spsa_games = db.Column(db.Integer, nullable=False, default=0)
+    total_ref_games = db.Column(db.Integer, nullable=False, default=0)
+    avg_nps = db.Column(db.Integer)  # Rolling average NPS
+    last_seen_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    first_seen_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    # Relationships
+    last_iteration = db.relationship('SpsaIteration', foreign_keys=[last_iteration_id])
+    heartbeats = db.relationship('SpsaWorkerHeartbeat', backref='worker', lazy='dynamic',
+                                 cascade='all, delete-orphan')
+
+    def __repr__(self):
+        return f'<SpsaWorker {self.worker_name}: {self.total_games} games>'
+
+
+class SpsaWorkerHeartbeat(db.Model):
+    """Individual heartbeat/report from an SPSA worker."""
+    __tablename__ = 'spsa_worker_heartbeats'
+
+    id = db.Column(db.Integer, primary_key=True)
+    worker_id = db.Column(db.Integer, db.ForeignKey('spsa_workers.id', ondelete='CASCADE'), nullable=False)
+    iteration_id = db.Column(db.Integer, db.ForeignKey('spsa_iterations.id'))
+    phase = db.Column(db.String(20), nullable=False)  # 'spsa' or 'ref'
+    games_reported = db.Column(db.Integer, nullable=False)
+    avg_nps = db.Column(db.Integer)  # NPS for this batch
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    # Relationships
+    iteration = db.relationship('SpsaIteration', foreign_keys=[iteration_id])
+
+    __table_args__ = (
+        db.Index('idx_spsa_worker_heartbeats_worker', 'worker_id'),
+        db.Index('idx_spsa_worker_heartbeats_created', 'created_at'),
+    )
+
+    def __repr__(self):
+        return f'<SpsaWorkerHeartbeat {self.worker_id}: {self.games_reported} games>'

@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SPSA Workers</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: #1e1e1e;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+        }
+        .stat-card .value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #4fc3f7;
+        }
+        .stat-card .label {
+            color: #888;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+        .workers-table, .heartbeats-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .workers-table th, .workers-table td,
+        .heartbeats-table th, .heartbeats-table td {
+            padding: 10px 15px;
+            text-align: left;
+            border-bottom: 1px solid #333;
+        }
+        .workers-table th, .heartbeats-table th {
+            background: #1a1a1a;
+            color: #888;
+            font-weight: normal;
+            text-transform: uppercase;
+            font-size: 0.85em;
+        }
+        .workers-table tbody tr:hover,
+        .heartbeats-table tbody tr:hover {
+            background: #252525;
+        }
+        .status-active {
+            color: #4caf50;
+            font-weight: bold;
+        }
+        .status-idle {
+            color: #ff9800;
+        }
+        .status-offline {
+            color: #666;
+        }
+        .phase-spsa {
+            color: #9c27b0;
+        }
+        .phase-ref {
+            color: #2196f3;
+        }
+        .section-title {
+            color: #fff;
+            font-size: 1.3em;
+            margin: 30px 0 10px 0;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #333;
+        }
+        .nps-value {
+            color: #4caf50;
+            font-family: monospace;
+        }
+        .nav-links {
+            margin-bottom: 20px;
+        }
+        .nav-links a {
+            color: #4fc3f7;
+            text-decoration: none;
+            margin-right: 20px;
+        }
+        .nav-links a:hover {
+            text-decoration: underline;
+        }
+        .refresh-note {
+            color: #666;
+            font-size: 0.85em;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SPSA Workers</h1>
+
+        <div class="nav-links">
+            <a href="/">&larr; Dashboard</a>
+            <a href="/spsa">SPSA Tuning</a>
+        </div>
+
+        <!-- Summary Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="value">{{ active_workers }}</div>
+                <div class="label">Active Workers</div>
+            </div>
+            <div class="stat-card">
+                <div class="value">{{ total_workers }}</div>
+                <div class="label">Total Workers</div>
+            </div>
+            <div class="stat-card">
+                <div class="value">{{ "{:,}".format(total_games) }}</div>
+                <div class="label">Total Games</div>
+            </div>
+            <div class="stat-card">
+                <div class="value">{% if avg_nps %}{{ "{:,}".format(avg_nps) }}{% else %}-{% endif %}</div>
+                <div class="label">Avg NPS</div>
+            </div>
+        </div>
+
+        <!-- Workers Table -->
+        <h2 class="section-title">Workers</h2>
+        {% if workers %}
+        <table class="workers-table">
+            <thead>
+                <tr>
+                    <th>Worker</th>
+                    <th>Status</th>
+                    <th>Last Seen</th>
+                    <th>Phase</th>
+                    <th>SPSA Games</th>
+                    <th>Ref Games</th>
+                    <th>Total Games</th>
+                    <th>Avg NPS</th>
+                    <th>First Seen</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for w in workers %}
+                <tr>
+                    <td><strong>{{ w.name }}</strong></td>
+                    <td class="status-{{ w.status }}">{{ w.status }}</td>
+                    <td>{{ w.last_seen }}</td>
+                    <td class="phase-{{ w.last_phase or 'unknown' }}">{{ w.last_phase or '-' }}</td>
+                    <td>{{ "{:,}".format(w.total_spsa_games) }}</td>
+                    <td>{{ "{:,}".format(w.total_ref_games) }}</td>
+                    <td>{{ "{:,}".format(w.total_games) }}</td>
+                    <td class="nps-value">{% if w.avg_nps %}{{ "{:,}".format(w.avg_nps) }}{% else %}-{% endif %}</td>
+                    <td>{{ w.first_seen_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="color: #888;">No workers have reported yet.</p>
+        {% endif %}
+
+        <!-- Recent Heartbeats -->
+        <h2 class="section-title">Recent Activity</h2>
+        {% if heartbeats %}
+        <table class="heartbeats-table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Worker</th>
+                    <th>Phase</th>
+                    <th>Games</th>
+                    <th>NPS</th>
+                    <th>Iteration</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for h in heartbeats %}
+                <tr>
+                    <td>{{ h.time }}</td>
+                    <td><strong>{{ h.worker_name }}</strong></td>
+                    <td class="phase-{{ h.phase }}">{{ h.phase }}</td>
+                    <td>{{ h.games }}</td>
+                    <td class="nps-value">{% if h.nps %}{{ "{:,}".format(h.nps) }}{% else %}-{% endif %}</td>
+                    <td>{{ h.iteration_id or '-' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="color: #888;">No activity recorded yet.</p>
+        {% endif %}
+
+        <p class="refresh-note">Page auto-refreshes every 30 seconds</p>
+    </div>
+
+    <script>
+        // Auto-refresh every 30 seconds
+        setTimeout(function() {
+            location.reload();
+        }, 30000);
+    </script>
+</body>
+</html>

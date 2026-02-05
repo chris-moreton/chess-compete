@@ -8,7 +8,11 @@ from web.queries import (
     get_dashboard_data, get_unique_hostnames, get_time_range,
     clear_elo_cache, recalculate_all_and_store
 )
-from web.models import Cup, CupRound, CupMatch, Engine, Game, EpdTestRun, EpdTestResult, SpsaIteration, SpsaRun
+from datetime import datetime
+from web.models import (
+    Cup, CupRound, CupMatch, Engine, Game, EpdTestRun, EpdTestResult,
+    SpsaIteration, SpsaRun, SpsaWorker, SpsaWorkerHeartbeat
+)
 from web.database import db
 from sqlalchemy import func, case, and_, or_
 
@@ -957,6 +961,60 @@ def register_routes(app):
             'games_played': iteration.games_played,
         })
 
+    def record_worker_activity(worker_name: str, iteration_id: int, phase: str,
+                                games: int, avg_nps: int = None):
+        """
+        Record worker activity in the tracking tables.
+
+        Updates the worker summary and creates a heartbeat record.
+        """
+        if not worker_name:
+            return  # Skip if no worker name provided
+
+        try:
+            # Get or create worker record
+            worker = SpsaWorker.query.filter_by(worker_name=worker_name).first()
+            if not worker:
+                worker = SpsaWorker(
+                    worker_name=worker_name,
+                    first_seen_at=datetime.utcnow()
+                )
+                db.session.add(worker)
+                db.session.flush()  # Get the ID
+
+            # Update worker summary
+            worker.last_iteration_id = iteration_id
+            worker.last_phase = phase
+            worker.total_games += games
+            if phase == 'spsa':
+                worker.total_spsa_games += games
+            else:
+                worker.total_ref_games += games
+            worker.last_seen_at = datetime.utcnow()
+
+            # Update rolling average NPS (simple moving average)
+            if avg_nps:
+                if worker.avg_nps:
+                    # Weight new reading at 20%
+                    worker.avg_nps = int(worker.avg_nps * 0.8 + avg_nps * 0.2)
+                else:
+                    worker.avg_nps = avg_nps
+
+            # Create heartbeat record
+            heartbeat = SpsaWorkerHeartbeat(
+                worker_id=worker.id,
+                iteration_id=iteration_id,
+                phase=phase,
+                games_reported=games,
+                avg_nps=avg_nps
+            )
+            db.session.add(heartbeat)
+            db.session.commit()
+        except Exception as e:
+            # Don't fail the main request if tracking fails
+            db.session.rollback()
+            print(f"Warning: Failed to record worker activity: {e}")
+
     @app.route('/api/spsa/iterations/<int:iteration_id>/results', methods=['POST'])
     def spsa_report_results(iteration_id):
         """
@@ -970,7 +1028,9 @@ def register_routes(app):
             "games": N,
             "plus_wins": N,
             "minus_wins": N,
-            "draws": N
+            "draws": N,
+            "worker_name": "optional-hostname",
+            "avg_nps": optional-integer
         }
         """
         if not verify_worker_api_key():
@@ -1012,6 +1072,11 @@ def register_routes(app):
             db.session.rollback()
             return jsonify({'error': str(e)}), 500
 
+        # Record worker activity (optional, won't fail the request)
+        worker_name = data.get('worker_name') or request.headers.get('X-Worker-Host')
+        avg_nps = data.get('avg_nps')
+        record_worker_activity(worker_name, iteration_id, 'spsa', data['games'], avg_nps)
+
         return jsonify({'status': 'ok'})
 
     @app.route('/api/spsa/iterations/<int:iteration_id>/ref-results', methods=['POST'])
@@ -1027,7 +1092,9 @@ def register_routes(app):
             "games": N,
             "wins": N,
             "losses": N,
-            "draws": N
+            "draws": N,
+            "worker_name": "optional-hostname",
+            "avg_nps": optional-integer
         }
         """
         if not verify_worker_api_key():
@@ -1069,4 +1136,96 @@ def register_routes(app):
             db.session.rollback()
             return jsonify({'error': str(e)}), 500
 
+        # Record worker activity (optional, won't fail the request)
+        worker_name = data.get('worker_name') or request.headers.get('X-Worker-Host')
+        avg_nps = data.get('avg_nps')
+        record_worker_activity(worker_name, iteration_id, 'ref', data['games'], avg_nps)
+
         return jsonify({'status': 'ok'})
+
+    # =========================================================================
+    # SPSA Workers Dashboard
+    # =========================================================================
+
+    @app.route('/spsa/workers')
+    def spsa_workers():
+        """Dashboard showing SPSA worker activity and statistics."""
+        # Get all workers ordered by last seen
+        workers = SpsaWorker.query.order_by(SpsaWorker.last_seen_at.desc()).all()
+
+        # Calculate time since last seen for each worker
+        now = datetime.utcnow()
+        workers_data = []
+        for w in workers:
+            time_since = now - w.last_seen_at
+            if time_since.total_seconds() < 60:
+                last_seen_str = f"{int(time_since.total_seconds())}s ago"
+                status = 'active'
+            elif time_since.total_seconds() < 3600:
+                last_seen_str = f"{int(time_since.total_seconds() / 60)}m ago"
+                status = 'active' if time_since.total_seconds() < 300 else 'idle'
+            elif time_since.total_seconds() < 86400:
+                last_seen_str = f"{int(time_since.total_seconds() / 3600)}h ago"
+                status = 'idle'
+            else:
+                last_seen_str = f"{int(time_since.total_seconds() / 86400)}d ago"
+                status = 'offline'
+
+            workers_data.append({
+                'id': w.id,
+                'name': w.worker_name,
+                'status': status,
+                'last_seen': last_seen_str,
+                'last_seen_at': w.last_seen_at,
+                'first_seen_at': w.first_seen_at,
+                'last_phase': w.last_phase,
+                'last_iteration_id': w.last_iteration_id,
+                'total_games': w.total_games,
+                'total_spsa_games': w.total_spsa_games,
+                'total_ref_games': w.total_ref_games,
+                'avg_nps': w.avg_nps,
+            })
+
+        # Get recent heartbeats (last 100)
+        heartbeats = SpsaWorkerHeartbeat.query.order_by(
+            SpsaWorkerHeartbeat.created_at.desc()
+        ).limit(100).all()
+
+        heartbeats_data = []
+        for h in heartbeats:
+            time_since = now - h.created_at
+            if time_since.total_seconds() < 60:
+                time_str = f"{int(time_since.total_seconds())}s ago"
+            elif time_since.total_seconds() < 3600:
+                time_str = f"{int(time_since.total_seconds() / 60)}m ago"
+            else:
+                time_str = f"{int(time_since.total_seconds() / 3600)}h ago"
+
+            heartbeats_data.append({
+                'worker_name': h.worker.worker_name,
+                'phase': h.phase,
+                'games': h.games_reported,
+                'nps': h.avg_nps,
+                'iteration_id': h.iteration_id,
+                'time': time_str,
+                'created_at': h.created_at,
+            })
+
+        # Calculate summary stats
+        total_workers = len(workers)
+        active_workers = sum(1 for w in workers_data if w['status'] == 'active')
+        total_games = sum(w.total_games for w in workers)
+        avg_nps_all = None
+        nps_values = [w.avg_nps for w in workers if w.avg_nps]
+        if nps_values:
+            avg_nps_all = sum(nps_values) // len(nps_values)
+
+        return render_template(
+            'spsa_workers.html',
+            workers=workers_data,
+            heartbeats=heartbeats_data,
+            total_workers=total_workers,
+            active_workers=active_workers,
+            total_games=total_games,
+            avg_nps=avg_nps_all,
+        )
