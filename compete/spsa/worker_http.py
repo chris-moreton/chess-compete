@@ -8,7 +8,7 @@ Results are reported back via HTTP API.
 This worker does NOT require direct database access - it communicates
 entirely through the web API, making it suitable for remote Docker workers.
 
-Environment variables:
+Environment variables (can be set in .env file):
     SPSA_API_URL: Base URL of the chess-compete web API (e.g., https://myapp.herokuapp.com)
     SPSA_API_KEY: API key for authentication
     COMPUTER_NAME: Optional hostname identifier for logging
@@ -22,7 +22,13 @@ import time
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from pathlib import Path
 
+from dotenv import load_dotenv
 import requests
+
+# Load environment variables from .env file in chess-compete root
+SPSA_DIR = Path(__file__).parent
+CHESS_COMPETE_DIR = SPSA_DIR.parent.parent
+load_dotenv(CHESS_COMPETE_DIR / '.env')
 
 try:
     import tomllib
