@@ -301,11 +301,15 @@ def run_spsa_games(
     total = {'plus_wins': 0, 'minus_wins': 0, 'draws': 0, 'errors': 0}
     batch = {'plus_wins': 0, 'minus_wins': 0, 'draws': 0}
 
-    # NPS tracking
+    # NPS tracking (overall)
     plus_nps_total = 0
     minus_nps_total = 0
     plus_nps_count = 0
     minus_nps_count = 0
+
+    # NPS tracking (per batch)
+    batch_nps_total = 0
+    batch_nps_count = 0
 
     def make_config(game_index: int, game_num: int) -> GameConfig:
         """Create a SPSA game config (plus vs minus)."""
@@ -346,6 +350,7 @@ def run_spsa_games(
     def process_result(config: GameConfig, result):
         """Process a completed SPSA game result."""
         nonlocal plus_nps_total, minus_nps_total, plus_nps_count, minus_nps_count
+        nonlocal batch_nps_total, batch_nps_count
 
         # Determine winner from plus engine's perspective
         if config.is_engine1_white:
@@ -363,9 +368,13 @@ def run_spsa_games(
             if result.white_nps:
                 plus_nps_total += result.white_nps
                 plus_nps_count += 1
+                batch_nps_total += result.white_nps
+                batch_nps_count += 1
             if result.black_nps:
                 minus_nps_total += result.black_nps
                 minus_nps_count += 1
+                batch_nps_total += result.black_nps
+                batch_nps_count += 1
         else:
             # Plus was black
             if result.result == "0-1":
@@ -381,9 +390,13 @@ def run_spsa_games(
             if result.white_nps:
                 minus_nps_total += result.white_nps
                 minus_nps_count += 1
+                batch_nps_total += result.white_nps
+                batch_nps_count += 1
             if result.black_nps:
                 plus_nps_total += result.black_nps
                 plus_nps_count += 1
+                batch_nps_total += result.black_nps
+                batch_nps_count += 1
 
     if concurrency > 1:
         # Continuous pipeline: always keep concurrency games running
@@ -445,10 +458,16 @@ def run_spsa_games(
 
                     # Check if we've completed a batch
                     if batch_completed >= batch_size:
-                        keep_adding = on_batch_complete(batch.copy())
+                        # Include avg NPS in batch results
+                        batch_result = batch.copy()
+                        if batch_nps_count > 0:
+                            batch_result['avg_nps'] = int(batch_nps_total / batch_nps_count)
+                        keep_adding = on_batch_complete(batch_result)
                         # Reset batch counters
                         for k in batch:
                             batch[k] = 0
+                        batch_nps_total = 0
+                        batch_nps_count = 0
                         batch_completed = 0
 
                     # Submit a new game if we should keep adding
@@ -462,7 +481,10 @@ def run_spsa_games(
 
             # Final batch update
             if sum(batch.values()) > 0:
-                on_batch_complete(batch.copy())
+                batch_result = batch.copy()
+                if batch_nps_count > 0:
+                    batch_result['avg_nps'] = int(batch_nps_total / batch_nps_count)
+                on_batch_complete(batch_result)
 
         progress.stop()
 
@@ -499,14 +521,22 @@ def run_spsa_games(
 
             # Check if we've completed a batch
             if batch_completed >= batch_size:
-                keep_going = on_batch_complete(batch.copy())
+                batch_result = batch.copy()
+                if batch_nps_count > 0:
+                    batch_result['avg_nps'] = int(batch_nps_total / batch_nps_count)
+                keep_going = on_batch_complete(batch_result)
                 for k in batch:
                     batch[k] = 0
+                batch_nps_total = 0
+                batch_nps_count = 0
                 batch_completed = 0
 
         # Final batch update
         if sum(batch.values()) > 0:
-            on_batch_complete(batch.copy())
+            batch_result = batch.copy()
+            if batch_nps_count > 0:
+                batch_result['avg_nps'] = int(batch_nps_total / batch_nps_count)
+            on_batch_complete(batch_result)
 
     # Calculate average NPS
     plus_avg_nps = plus_nps_total / plus_nps_count if plus_nps_count > 0 else 0
@@ -549,6 +579,10 @@ def run_ref_games(
     total = {'wins': 0, 'losses': 0, 'draws': 0, 'errors': 0}
     batch = {'wins': 0, 'losses': 0, 'draws': 0}
 
+    # NPS tracking (per batch) - only track base engine NPS
+    batch_nps_total = 0
+    batch_nps_count = 0
+
     def make_config(game_index: int, game_num: int) -> GameConfig:
         """Create a reference game config (base vs stockfish)."""
         opening_fen, opening_name = random.choice(OPENING_BOOK)
@@ -587,6 +621,8 @@ def run_ref_games(
 
     def process_result(config: GameConfig, result):
         """Process a completed reference game result."""
+        nonlocal batch_nps_total, batch_nps_count
+
         # Determine result from base engine's perspective
         if config.is_engine1_white:
             # Base was white
@@ -599,6 +635,10 @@ def run_ref_games(
             else:
                 batch['draws'] += 1
                 total['draws'] += 1
+            # Track base engine NPS (white)
+            if result.white_nps:
+                batch_nps_total += result.white_nps
+                batch_nps_count += 1
         else:
             # Base was black
             if result.result == "0-1":
@@ -610,6 +650,10 @@ def run_ref_games(
             else:
                 batch['draws'] += 1
                 total['draws'] += 1
+            # Track base engine NPS (black)
+            if result.black_nps:
+                batch_nps_total += result.black_nps
+                batch_nps_count += 1
 
     if concurrency > 1:
         # Continuous pipeline: always keep concurrency games running
@@ -671,10 +715,15 @@ def run_ref_games(
 
                     # Check if we've completed a batch
                     if batch_completed >= batch_size:
-                        keep_adding = on_batch_complete(batch.copy())
+                        batch_result = batch.copy()
+                        if batch_nps_count > 0:
+                            batch_result['avg_nps'] = int(batch_nps_total / batch_nps_count)
+                        keep_adding = on_batch_complete(batch_result)
                         # Reset batch counters
                         for k in batch:
                             batch[k] = 0
+                        batch_nps_total = 0
+                        batch_nps_count = 0
                         batch_completed = 0
 
                     # Submit a new game if we should keep adding
@@ -688,7 +737,10 @@ def run_ref_games(
 
             # Final batch update
             if sum(batch.values()) > 0:
-                on_batch_complete(batch.copy())
+                batch_result = batch.copy()
+                if batch_nps_count > 0:
+                    batch_result['avg_nps'] = int(batch_nps_total / batch_nps_count)
+                on_batch_complete(batch_result)
 
         progress.stop()
 
@@ -711,6 +763,8 @@ def run_ref_games(
                     pass
                 min_result = MinResult()
                 min_result.result = result
+                min_result.white_nps = None
+                min_result.black_nps = None
                 process_result(config, min_result)
                 batch_completed += 1
 
@@ -723,14 +777,22 @@ def run_ref_games(
 
             # Check if we've completed a batch
             if batch_completed >= batch_size:
-                keep_going = on_batch_complete(batch.copy())
+                batch_result = batch.copy()
+                if batch_nps_count > 0:
+                    batch_result['avg_nps'] = int(batch_nps_total / batch_nps_count)
+                keep_going = on_batch_complete(batch_result)
                 for k in batch:
                     batch[k] = 0
+                batch_nps_total = 0
+                batch_nps_count = 0
                 batch_completed = 0
 
         # Final batch update
         if sum(batch.values()) > 0:
-            on_batch_complete(batch.copy())
+            batch_result = batch.copy()
+            if batch_nps_count > 0:
+                batch_result['avg_nps'] = int(batch_nps_total / batch_nps_count)
+            on_batch_complete(batch_result)
 
     return total
 
