@@ -106,9 +106,15 @@ def main():
     parser.add_argument("--includeinactive", action="store_true",
                         help="Include inactive engines in cup competition")
     parser.add_argument("--spsa", action="store_true",
-                        help="SPSA worker mode: poll for iterations and run games")
-    parser.add_argument("--spsa-batch", type=int, default=1, metavar="N",
-                        help="SPSA: games per batch before database update (default: 1)")
+                        help="SPSA worker mode: poll for iterations and run games (direct DB)")
+    parser.add_argument("--spsa-http", action="store_true",
+                        help="SPSA HTTP worker mode: poll API for iterations (for remote workers)")
+    parser.add_argument("--spsa-batch", type=int, default=10, metavar="N",
+                        help="SPSA: games per batch before reporting (default: 10)")
+    parser.add_argument("--api-url", type=str, default=None,
+                        help="SPSA HTTP: API base URL (or set SPSA_API_URL env var)")
+    parser.add_argument("--api-key", type=str, default=None,
+                        help="SPSA HTTP: API key (or set SPSA_API_KEY env var)")
 
     args = parser.parse_args()
 
@@ -246,8 +252,26 @@ def main():
             print("Error: Failed to initialize some engines")
             sys.exit(1)
 
-    if args.spsa:
-        # SPSA worker mode: poll for iterations and run games
+    if args.spsa_http:
+        # SPSA HTTP worker mode: poll API for iterations (for remote/Docker workers)
+        from compete.spsa.worker_http import run_http_worker
+        api_url = args.api_url or os.environ.get('SPSA_API_URL')
+        api_key = args.api_key or os.environ.get('SPSA_API_KEY')
+        if not api_url:
+            print("Error: --api-url or SPSA_API_URL environment variable required")
+            sys.exit(1)
+        if not api_key:
+            print("Error: --api-key or SPSA_API_KEY environment variable required")
+            sys.exit(1)
+        run_http_worker(
+            api_url=api_url,
+            api_key=api_key,
+            concurrency=args.concurrency,
+            batch_size=args.spsa_batch,
+            poll_interval=10
+        )
+    elif args.spsa:
+        # SPSA worker mode: poll for iterations and run games (direct DB access)
         from compete.spsa import run_spsa_worker
         run_spsa_worker(
             concurrency=args.concurrency,
