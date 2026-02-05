@@ -1,0 +1,25 @@
+# Docker Compose for SPSA Workers
+#
+# Usage:
+#   1. Copy .env.example to .env and fill in your API key
+#   2. docker-compose up -d
+#   3. Scale workers: docker-compose up -d --scale worker=3
+#
+# Or run directly:
+#   docker-compose run --rm worker --concurrency 4
+
+services:
+  worker:
+    build: .
+    environment:
+      - SPSA_API_URL=${SPSA_API_URL:-https://chess-compete-production.up.railway.app}
+      - SPSA_API_KEY=${SPSA_API_KEY:?SPSA_API_KEY is required}
+      - COMPUTER_NAME=${COMPUTER_NAME:-docker-worker}
+    command: ["--concurrency", "${CONCURRENCY:-4}", "--spsa-batch", "10"]
+    restart: unless-stopped
+    # Limit resources per worker (adjust based on your hardware)
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
