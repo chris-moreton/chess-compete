@@ -513,6 +513,67 @@ Workers will:
 4. Update aggregate results atomically (no individual game saves)
 5. Continue until iteration is complete, then fetch next
 
+### Remote Workers (Docker)
+
+For running workers on remote machines without database access, use the HTTP worker mode. Workers communicate via API instead of direct database connection.
+
+#### Option 1: Docker (Recommended for Remote Machines)
+
+```bash
+# On the remote machine
+git clone https://github.com/chris-moreton/chess-compete.git
+cd chess-compete/docker
+
+# Configure
+cp .env.example .env
+# Edit .env:
+#   SPSA_API_KEY=your-api-key
+#   CONCURRENCY=4
+
+# Build and run
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f
+
+# Scale to multiple containers
+docker-compose up -d --scale worker=3
+
+# Stop
+docker-compose down
+```
+
+#### Option 2: Direct HTTP Worker (No Docker)
+
+If you have Python and Rust installed:
+
+```bash
+# Clone both repos
+git clone https://github.com/chris-moreton/chess-compete.git
+git clone https://github.com/chris-moreton/rusty-rival.git
+
+cd chess-compete
+python -m venv .venv
+source .venv/bin/activate  # or .venv\Scripts\activate on Windows
+pip install -r requirements.txt
+
+# Configure .env
+echo "SPSA_API_URL=https://chess-compete-production.up.railway.app" >> .env
+echo "SPSA_API_KEY=your-api-key" >> .env
+
+# Run the HTTP worker
+python -m compete --spsa-http -c 4
+```
+
+#### HTTP Worker vs Database Worker
+
+| Feature | `--spsa` (DB Worker) | `--spsa-http` (HTTP Worker) |
+|---------|---------------------|----------------------------|
+| Connection | Direct PostgreSQL | HTTPS API |
+| Credentials | DATABASE_URL | API key only |
+| Use case | Local/trusted machines | Remote/Docker workers |
+| Setup | Needs DB access | Just needs API URL + key |
+
 ### Engine Build Process
 
 When the master or workers build engines:
@@ -649,8 +710,11 @@ When using `--timelow` and `--timehigh`, a random time is selected for each matc
 
 | Option | Description |
 |--------|-------------|
-| `--spsa` | Enter SPSA worker mode (poll for iterations) |
-| `--spsa-batch N` | Games per batch before database update (default: 10) |
+| `--spsa` | SPSA worker mode with direct database access |
+| `--spsa-http` | SPSA worker mode via HTTP API (for remote/Docker workers) |
+| `--spsa-batch N` | Games per batch before reporting (default: 10) |
+| `--api-url URL` | API base URL for HTTP worker (or set `SPSA_API_URL`) |
+| `--api-key KEY` | API key for HTTP worker (or set `SPSA_API_KEY`) |
 
 ### Game Options
 
@@ -828,6 +892,9 @@ Remember that `--games N` in cup mode means N **pairs** of games (total = N × 2
 
 | Variable | Description |
 |----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string (required) |
+| `DATABASE_URL` | PostgreSQL connection string (required for DB worker) |
 | `ENGINES_DIR` | Override engines directory location (optional) |
 | `COMPUTER_NAME` | Override hostname in PGN output (optional) |
+| `SPSA_API_URL` | API endpoint for HTTP worker (required for `--spsa-http`) |
+| `SPSA_API_KEY` | API authentication key (required for `--spsa-http`) |
+| `SPSA_WORKER_API_KEY` | Server-side API key for authenticating workers (set on web server) |
