@@ -8,7 +8,7 @@ from web.queries import (
     get_dashboard_data, get_unique_hostnames, get_time_range,
     clear_elo_cache, recalculate_all_and_store
 )
-from datetime import datetime
+from datetime import datetime, timedelta
 from web.models import (
     Cup, CupRound, CupMatch, Engine, Game, EpdTestRun, EpdTestResult,
     SpsaIteration, SpsaRun, SpsaWorker, SpsaWorkerHeartbeat
@@ -1150,6 +1150,8 @@ def register_routes(app):
     @app.route('/spsa/workers')
     def spsa_workers():
         """Dashboard showing SPSA worker activity and statistics."""
+        from collections import defaultdict
+
         # Get all workers ordered by last seen
         workers = SpsaWorker.query.order_by(SpsaWorker.last_seen_at.desc()).all()
 
@@ -1186,7 +1188,63 @@ def register_routes(app):
                 'avg_nps': w.avg_nps,
             })
 
-        # Get recent heartbeats (last 100)
+        # Get all heartbeats for charts (last 7 days)
+        seven_days_ago = now - timedelta(days=7)
+        all_heartbeats = SpsaWorkerHeartbeat.query.filter(
+            SpsaWorkerHeartbeat.created_at >= seven_days_ago
+        ).order_by(SpsaWorkerHeartbeat.created_at.asc()).all()
+
+        # Build worker name lookup
+        worker_names = {w.id: w.worker_name for w in workers}
+
+        # --- Chart 1: Cumulative games over time per worker ---
+        # Group heartbeats by worker and accumulate games
+        games_timeline = defaultdict(list)  # worker_name -> [(timestamp, cumulative_games)]
+        worker_cumulative = defaultdict(int)
+
+        for h in all_heartbeats:
+            worker_name = worker_names.get(h.worker_id, 'unknown')
+            worker_cumulative[worker_name] += h.games_reported
+            games_timeline[worker_name].append({
+                'timestamp': h.created_at.isoformat(),
+                'games': worker_cumulative[worker_name]
+            })
+
+        # --- Chart 2: NPS trends over time per worker ---
+        nps_timeline = defaultdict(list)  # worker_name -> [(timestamp, nps)]
+        for h in all_heartbeats:
+            if h.avg_nps:
+                worker_name = worker_names.get(h.worker_id, 'unknown')
+                nps_timeline[worker_name].append({
+                    'timestamp': h.created_at.isoformat(),
+                    'nps': h.avg_nps
+                })
+
+        # --- Chart 3: Activity heatmap (hour of day vs day of week) ---
+        # Count games per (day_of_week, hour) bucket
+        activity_heatmap = defaultdict(int)  # (day, hour) -> game count
+        for h in all_heartbeats:
+            day = h.created_at.weekday()  # 0=Monday, 6=Sunday
+            hour = h.created_at.hour
+            activity_heatmap[(day, hour)] += h.games_reported
+
+        # Convert to list format for Chart.js matrix
+        heatmap_data = []
+        for day in range(7):
+            for hour in range(24):
+                count = activity_heatmap.get((day, hour), 0)
+                if count > 0:
+                    heatmap_data.append({'x': hour, 'y': day, 'v': count})
+
+        # --- Chart 4: Contribution pie chart ---
+        contribution_data = [
+            {'name': w['name'], 'games': w['total_games']}
+            for w in workers_data if w['total_games'] > 0
+        ]
+        # Sort by games descending
+        contribution_data.sort(key=lambda x: -x['games'])
+
+        # Get recent heartbeats for activity table (last 100)
         heartbeats = SpsaWorkerHeartbeat.query.order_by(
             SpsaWorkerHeartbeat.created_at.desc()
         ).limit(100).all()
@@ -1228,4 +1286,9 @@ def register_routes(app):
             active_workers=active_workers,
             total_games=total_games,
             avg_nps=avg_nps_all,
+            # Chart data
+            games_timeline=dict(games_timeline),
+            nps_timeline=dict(nps_timeline),
+            heatmap_data=heatmap_data,
+            contribution_data=contribution_data,
         )
