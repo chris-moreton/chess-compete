@@ -813,41 +813,11 @@
                 });
             }
 
-            // Calculate auto-scaled Y-axis bounds with headroom/legroom
+            // Show full parameter range on Y-axis (min to max bounds)
             function calculateYAxisBounds(data, paramBounds) {
-                const validData = data.filter(v => v !== null && v !== undefined);
-                if (validData.length === 0) {
-                    return { min: paramBounds.min, max: paramBounds.max, hitMin: false, hitMax: false };
-                }
-
-                const dataMin = Math.min(...validData);
-                const dataMax = Math.max(...validData);
-                const dataRange = dataMax - dataMin;
-                const boundsRange = paramBounds.max - paramBounds.min;
-
-                const minPadding = Math.max(Math.abs(dataMin), Math.abs(dataMax), 1) * 0.01;
-                const padding = Math.max(dataRange * 0.20, minPadding);
-
-                let yMin = dataMin - padding;
-                let yMax = dataMax + padding;
-
-                const nearBoundThreshold = boundsRange * 0.15;
-                let hitMin = false;
-                let hitMax = false;
-
-                if (dataMin - paramBounds.min < nearBoundThreshold) {
-                    yMin = paramBounds.min;
-                    hitMin = true;
-                }
-                if (paramBounds.max - dataMax < nearBoundThreshold) {
-                    yMax = paramBounds.max;
-                    hitMax = true;
-                }
-
-                yMin = Math.max(yMin, paramBounds.min);
-                yMax = Math.min(yMax, paramBounds.max);
-
-                return { min: yMin, max: yMax, hitMin, hitMax };
+                // Always show the full parameter range so we can see where the value sits
+                // relative to its allowed bounds
+                return { min: paramBounds.min, max: paramBounds.max, hitMin: false, hitMax: false };
             }
 
             // Initial chart build
