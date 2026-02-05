@@ -41,13 +41,28 @@ WORKDIR /app/rusty-rival
 RUN cargo build --release
 
 # Download and install Stockfish for reference games
-# Using sse41-popcnt build for broad CPU compatibility (avx2/vnni builds fail on many systems)
+# For ARM64 (Apple Silicon Macs), build from source for compatibility
+# For x86-64, use pre-built binary
 WORKDIR /app
-RUN curl -L https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-ubuntu-x86-64-sse41-popcnt.tar -o stockfish.tar && \
-    tar -xf stockfish.tar && \
-    mv stockfish/stockfish-ubuntu-x86-64-sse41-popcnt /usr/local/bin/stockfish && \
-    chmod +x /usr/local/bin/stockfish && \
-    rm -rf stockfish.tar stockfish
+RUN ARCH=$(uname -m) && \
+    echo "Detected architecture: $ARCH" && \
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
+        echo "Building Stockfish from source for ARM64..." && \
+        apt-get update && apt-get install -y g++ make && \
+        git clone --depth 1 --branch sf_17.1 https://github.com/official-stockfish/Stockfish.git stockfish-src && \
+        cd stockfish-src/src && \
+        make -j$(nproc) build ARCH=armv8 && \
+        mv stockfish /usr/local/bin/stockfish && \
+        cd /app && rm -rf stockfish-src && \
+        apt-get clean && rm -rf /var/lib/apt/lists/*; \
+    else \
+        echo "Downloading x86-64 Stockfish..." && \
+        curl -L https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-ubuntu-x86-64-sse41-popcnt.tar -o stockfish.tar && \
+        tar -xf stockfish.tar && \
+        mv stockfish/stockfish-ubuntu-x86-64-sse41-popcnt /usr/local/bin/stockfish && \
+        chmod +x /usr/local/bin/stockfish && \
+        rm -rf stockfish.tar stockfish; \
+    fi
 
 # Update config.toml to use correct paths for Docker environment
 WORKDIR /app/chess-compete
