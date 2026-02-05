@@ -2,7 +2,8 @@
 Flask routes for the competition dashboard.
 """
 
-from flask import render_template, request, redirect, url_for
+import os
+from flask import render_template, request, redirect, url_for, jsonify
 from web.queries import (
     get_dashboard_data, get_unique_hostnames, get_time_range,
     clear_elo_cache, recalculate_all_and_store
@@ -826,8 +827,6 @@ def register_routes(app):
         All database access happens server-side - no credentials exposed to frontend.
         Accepts optional 'run' query parameter to filter by run_id.
         """
-        from flask import jsonify
-
         # Get run_id from query param (optional)
         run_id = request.args.get('run', type=int)
 
@@ -879,3 +878,195 @@ def register_routes(app):
             'ref_games_played': 0,
             'ref_target_games': 0
         })
+
+    # =========================================================================
+    # SPSA Worker API Endpoints (for remote Docker workers)
+    # =========================================================================
+
+    def verify_worker_api_key():
+        """Verify the API key from request header. Returns True if valid."""
+        api_key = request.headers.get('X-API-Key')
+        expected_key = os.environ.get('SPSA_WORKER_API_KEY')
+        if not expected_key:
+            # No key configured = API disabled
+            return False
+        return api_key == expected_key
+
+    @app.route('/api/spsa/work')
+    def spsa_get_work():
+        """
+        Poll for pending SPSA work.
+
+        Workers call this to get the next iteration that needs games.
+        Returns iteration data including parameters (workers build engines locally).
+
+        Two-phase flow:
+        - status='ref_pending': Reference phase takes priority (base vs Stockfish)
+        - status='pending'/'in_progress': SPSA phase (plus vs minus)
+
+        Returns JSON with iteration data or empty object if no work available.
+        """
+        if not verify_worker_api_key():
+            return jsonify({'error': 'unauthorized'}), 401
+
+        # Get worker hostname for logging
+        worker_host = request.headers.get('X-Worker-Host', 'unknown')
+
+        # First check for ref_pending iterations (Phase 2 takes priority)
+        iteration = SpsaIteration.query.filter(
+            SpsaIteration.status == 'ref_pending',
+            SpsaIteration.ref_games_played < SpsaIteration.ref_target_games
+        ).order_by(SpsaIteration.iteration_number.desc()).first()
+
+        if iteration:
+            return jsonify({
+                'id': iteration.id,
+                'iteration_number': iteration.iteration_number,
+                'phase': 'ref',
+                'base_parameters': iteration.base_parameters,
+                'timelow_ms': iteration.timelow_ms,
+                'timehigh_ms': iteration.timehigh_ms,
+                'target_games': iteration.ref_target_games,
+                'games_played': iteration.ref_games_played,
+            })
+
+        # Check for SPSA phase iterations (pending or in_progress)
+        iteration = SpsaIteration.query.filter(
+            SpsaIteration.status.in_(['pending', 'in_progress']),
+            SpsaIteration.games_played < SpsaIteration.target_games
+        ).order_by(SpsaIteration.iteration_number.desc()).first()
+
+        if not iteration:
+            return jsonify({})  # No work available
+
+        # Mark as in_progress if pending
+        if iteration.status == 'pending':
+            iteration.status = 'in_progress'
+            db.session.commit()
+
+        return jsonify({
+            'id': iteration.id,
+            'iteration_number': iteration.iteration_number,
+            'phase': 'spsa',
+            'plus_parameters': iteration.plus_parameters,
+            'minus_parameters': iteration.minus_parameters,
+            'base_parameters': iteration.base_parameters,
+            'timelow_ms': iteration.timelow_ms,
+            'timehigh_ms': iteration.timehigh_ms,
+            'target_games': iteration.target_games,
+            'games_played': iteration.games_played,
+        })
+
+    @app.route('/api/spsa/iterations/<int:iteration_id>/results', methods=['POST'])
+    def spsa_report_results(iteration_id):
+        """
+        Report SPSA game results (plus vs minus).
+
+        Atomically increments game counters to avoid race conditions
+        when multiple workers report simultaneously.
+
+        Expects JSON body:
+        {
+            "games": N,
+            "plus_wins": N,
+            "minus_wins": N,
+            "draws": N
+        }
+        """
+        if not verify_worker_api_key():
+            return jsonify({'error': 'unauthorized'}), 401
+
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'missing JSON body'}), 400
+
+        # Validate required fields
+        required = ['games', 'plus_wins', 'minus_wins', 'draws']
+        for field in required:
+            if field not in data:
+                return jsonify({'error': f'missing field: {field}'}), 400
+            if not isinstance(data[field], int) or data[field] < 0:
+                return jsonify({'error': f'invalid value for {field}'}), 400
+
+        # Atomic increment using SQL
+        try:
+            db.session.execute(
+                db.text("""
+                    UPDATE spsa_iterations
+                    SET games_played = games_played + :games,
+                        plus_wins = plus_wins + :plus_wins,
+                        minus_wins = minus_wins + :minus_wins,
+                        draws = draws + :draws
+                    WHERE id = :id
+                """),
+                {
+                    'games': data['games'],
+                    'plus_wins': data['plus_wins'],
+                    'minus_wins': data['minus_wins'],
+                    'draws': data['draws'],
+                    'id': iteration_id
+                }
+            )
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 500
+
+        return jsonify({'status': 'ok'})
+
+    @app.route('/api/spsa/iterations/<int:iteration_id>/ref-results', methods=['POST'])
+    def spsa_report_ref_results(iteration_id):
+        """
+        Report reference game results (base vs Stockfish).
+
+        Atomically increments game counters to avoid race conditions
+        when multiple workers report simultaneously.
+
+        Expects JSON body:
+        {
+            "games": N,
+            "wins": N,
+            "losses": N,
+            "draws": N
+        }
+        """
+        if not verify_worker_api_key():
+            return jsonify({'error': 'unauthorized'}), 401
+
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'missing JSON body'}), 400
+
+        # Validate required fields
+        required = ['games', 'wins', 'losses', 'draws']
+        for field in required:
+            if field not in data:
+                return jsonify({'error': f'missing field: {field}'}), 400
+            if not isinstance(data[field], int) or data[field] < 0:
+                return jsonify({'error': f'invalid value for {field}'}), 400
+
+        # Atomic increment using SQL
+        try:
+            db.session.execute(
+                db.text("""
+                    UPDATE spsa_iterations
+                    SET ref_games_played = ref_games_played + :games,
+                        ref_wins = ref_wins + :wins,
+                        ref_losses = ref_losses + :losses,
+                        ref_draws = ref_draws + :draws
+                    WHERE id = :id
+                """),
+                {
+                    'games': data['games'],
+                    'wins': data['wins'],
+                    'losses': data['losses'],
+                    'draws': data['draws'],
+                    'id': iteration_id
+                }
+            )
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 500
+
+        return jsonify({'status': 'ok'})
