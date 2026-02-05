@@ -29,31 +29,32 @@ max = 400
 step = 20
 active_from_iteration = 1
 
-# FROZEN: only 6 discrete values, very volatile (max_chg=6.0), not suitable for SPSA
+# FREEZE CANDIDATE: only 6 discrete values [6-12], may not converge well
+# Consider freezing if it oscillates without settling
 [beta_prune_max_depth]
-value = 12
+value = 10
 min = 6
 max = 12
-step = 0.1
-active_from_iteration = 999999
+step = 0.2
+active_from_iteration = 1
 
 # Null move pruning
 # Reduction = base + depth/6 (approximately)
-# FROZEN: converged to lower bound, keeping at 2
+# FREEZE CANDIDATE: only 4 discrete values [2-6], previously converged to lower bound
 [null_move_reduce_depth_base]
 value = 2
 min = 2
 max = 6
-step = 0.1
-active_from_iteration = 99999
+step = 0.15
+active_from_iteration = 1
 
-# FROZEN: stuck at min bound (1), max_chg=12.12, converged
+# FREEZE CANDIDATE: previously stuck at min bound, discrete depth value
 [null_move_min_depth]
 value = 1
 min = 1
 max = 14
-step = 0.1
-active_from_iteration = 999999
+step = 0.4
+active_from_iteration = 1
 
 # SEE (Static Exchange Evaluation) pruning
 # At depth N, prune captures with SEE < -margin * N^2
@@ -64,13 +65,13 @@ max = 70
 step = 5
 active_from_iteration = 1
 
-# FROZEN: stuck at max bound (14), converged
+# FREEZE CANDIDATE: previously stuck at max bound, discrete depth value
 [see_prune_max_depth]
-value = 12.813380468863244
+value = 13
 min = 3
 max = 14
-step = 0.5
-active_from_iteration = 999999
+step = 0.4
+active_from_iteration = 1
 
 # Alpha (futility) pruning margins
 # If static eval + margin[depth] < alpha, prune
@@ -151,13 +152,13 @@ active_from_iteration = 1
 # PROBCUT PARAMETERS
 # At high depth, do a shallow search with raised beta
 # If a capture fails high, the position is probably winning and can be cut
-# FROZEN: stuck at max bound (20), converged
+# FREEZE CANDIDATE: previously stuck at max bound (20), discrete depth value
 [probcut_min_depth]
-value = 19.406690234431622
+value = 19
 min = 2
 max = 20
-step = 1
-active_from_iteration = 999999
+step = 0.5
+active_from_iteration = 75
 
 [probcut_margin]
 value = 286.1563085854844
@@ -166,13 +167,13 @@ max = 300
 step = 25
 active_from_iteration = 75
 
-# FROZEN: only 4 discrete values [2,6], too small for SPSA
+# FREEZE CANDIDATE: only 4 discrete values [2-6], very small range
 [probcut_depth_reduction]
-value = 3.2948968128051703
+value = 3
 min = 2
 max = 6
-step = 1
-active_from_iteration = 999999
+step = 0.15
+active_from_iteration = 75
 
 # MULTI-CUT PARAMETERS
 # At high depth, if multiple moves fail high at shallow depth,
@@ -198,13 +199,13 @@ max = 16
 step = 1
 active_from_iteration = 75
 
-# FROZEN: only 7 discrete values [3,10], near max bound, converged
+# FREEZE CANDIDATE: only 7 discrete values [3-10], small range
 [multicut_required_cutoffs]
-value = 8.6262625911045
+value = 9
 min = 3
 max = 10
-step = 1
-active_from_iteration = 999999
+step = 0.25
+active_from_iteration = 75
 
 # SINGULAR EXTENSION PARAMETERS
 # If the hash move is significantly better than all alternatives, extend its search.
@@ -215,13 +216,13 @@ max = 20
 step = 1
 active_from_iteration = 75
 
-# FROZEN: only 7 discrete values [1,8], too small for SPSA
+# FREEZE CANDIDATE: only 7 discrete values [1-8], small range
 [singular_extension_depth_margin]
-value = 5.7406306519948425
+value = 6
 min = 1
 max = 8
-step = 1
-active_from_iteration = 999999
+step = 0.25
+active_from_iteration = 75
 
 [singular_extension_depth_reduction]
 value = 5.2254906181050895
@@ -230,13 +231,13 @@ max = 10
 step = 1
 active_from_iteration = 75
 
-# FROZEN: only 5 discrete values [1,6], too small for SPSA
+# FREEZE CANDIDATE: only 5 discrete values [1-6], very small range
 [singular_extension_margin_multiplier]
-value = 1.708932035450105
+value = 2
 min = 1
 max = 6
-step = 1
-active_from_iteration = 999999
+step = 0.2
+active_from_iteration = 75
 
 # MOVE ORDERING PARAMETERS
 # These control move scoring for alpha-beta search efficiency
