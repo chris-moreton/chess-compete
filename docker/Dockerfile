@@ -12,7 +12,7 @@
 #              -e COMPUTER_NAME=worker-1 \
 #              spsa-worker --concurrency 4
 
-FROM rust:1.75-bookworm
+FROM rust:1.83-bookworm
 
 # Install Python and build dependencies
 RUN apt-get update && apt-get install -y \
