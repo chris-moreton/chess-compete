@@ -41,10 +41,11 @@ WORKDIR /app/rusty-rival
 RUN cargo build --release
 
 # Download and install Stockfish for reference games
+# Using sse41-popcnt build for broad CPU compatibility (avx2/vnni builds fail on many systems)
 WORKDIR /app
-RUN curl -L https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-ubuntu-x86-64-vnni512.tar -o stockfish.tar && \
+RUN curl -L https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-ubuntu-x86-64-sse41-popcnt.tar -o stockfish.tar && \
     tar -xf stockfish.tar && \
-    mv stockfish/stockfish-ubuntu-x86-64-vnni512 /usr/local/bin/stockfish && \
+    mv stockfish/stockfish-ubuntu-x86-64-sse41-popcnt /usr/local/bin/stockfish && \
     chmod +x /usr/local/bin/stockfish && \
     rm -rf stockfish.tar stockfish
 
