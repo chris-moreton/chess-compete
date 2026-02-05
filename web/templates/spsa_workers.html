@@ -298,6 +298,7 @@
                     <th>Phase</th>
                     <th>Games</th>
                     <th>NPS</th>
+                    <th>Run</th>
                     <th>Iteration</th>
                 </tr>
             </thead>
@@ -309,7 +310,8 @@
                     <td class="phase-{{ h.phase }}">{{ h.phase }}</td>
                     <td>{{ h.games }}</td>
                     <td class="nps-value">{% if h.nps %}{{ "{:,}".format(h.nps) }}{% else %}-{% endif %}</td>
-                    <td>{{ h.iteration_id or '-' }}</td>
+                    <td>{{ h.run_number or '-' }}</td>
+                    <td>{{ h.iteration_number or '-' }}</td>
                 </tr>
                 {% endfor %}
             </tbody>

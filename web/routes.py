@@ -1259,12 +1259,14 @@ def register_routes(app):
             else:
                 time_str = f"{int(time_since.total_seconds() / 3600)}h ago"
 
+            iteration = h.iteration
             heartbeats_data.append({
                 'worker_name': h.worker.worker_name,
                 'phase': h.phase,
                 'games': h.games_reported,
                 'nps': h.avg_nps,
-                'iteration_id': h.iteration_id,
+                'run_number': iteration.run_id if iteration else None,
+                'iteration_number': iteration.iteration_number if iteration else None,
                 'time': time_str,
                 'created_at': h.created_at,
             })
