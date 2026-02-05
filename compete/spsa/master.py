@@ -383,11 +383,17 @@ def calculate_gradient(results: dict, params: dict, c_k: float) -> tuple[dict, f
     """
     Calculate gradient estimate from game results.
 
-    SPSA gradient estimate:
-        g_k(θ) ≈ (L(θ + c_k*Δ) - L(θ - c_k*Δ)) / (2 * c_k * Δ)
+    Modified SPSA gradient formula that normalizes by parameter range:
+        gradient = elo_diff * sign * step / (2 * c_k)
 
-    We use Elo difference as the loss function L.
-    Since we want to maximize Elo (not minimize), gradient points toward improvement.
+    This ensures that:
+    - Larger step = larger update (intuitive)
+    - Parameters update at similar % of their range regardless of scale
+    - step represents perturbation size AND controls update magnitude proportionally
+
+    The standard SPSA formula (dividing by step) causes:
+    - Small step → huge updates (parameters with small ranges go wild)
+    - Large step → tiny updates (parameters with large ranges never move)
 
     Returns:
         (gradient, elo_diff)
@@ -413,10 +419,10 @@ def calculate_gradient(results: dict, params: dict, c_k: float) -> tuple[dict, f
     for name, cfg in params.items():
         if name in signs:
             sign = signs[name]
-            # Gradient estimate: elo_diff * sign / (2 * c_k * step)
-            # This follows standard SPSA scaling so step does not get applied twice.
             step = params[name]['step']
-            gradient[name] = elo_diff * sign / (2 * c_k * step)
+            # Gradient proportional to step (not inversely proportional)
+            # This makes updates ~proportional to step/range for all parameters
+            gradient[name] = elo_diff * sign * step / (2 * c_k)
 
     return gradient, elo_diff
 
