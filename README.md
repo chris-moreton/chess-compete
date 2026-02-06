@@ -76,9 +76,10 @@ pip install -r requirements.txt
 
 ### Step 2: Database Setup
 
-Create a PostgreSQL database and run this schema:
+Create a PostgreSQL database and run the full schema:
 
 ```sql
+-- Engines
 CREATE TABLE engines (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) UNIQUE NOT NULL,
@@ -89,6 +90,9 @@ CREATE TABLE engines (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX idx_engines_active ON engines(active);
+
+-- Games
 CREATE TABLE games (
     id SERIAL PRIMARY KEY,
     white_engine_id INTEGER NOT NULL REFERENCES engines(id),
@@ -98,24 +102,192 @@ CREATE TABLE games (
     black_score NUMERIC(2,1) NOT NULL,
     date_played DATE NOT NULL,
     time_control VARCHAR(50),
+    time_per_move_ms INTEGER,
+    hostname VARCHAR(100),
     opening_name VARCHAR(100),
     opening_fen TEXT,
     pgn TEXT,
+    is_rated BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE elo_ratings (
-    id SERIAL PRIMARY KEY,
-    engine_id INTEGER NOT NULL UNIQUE REFERENCES engines(id),
-    elo NUMERIC(7,2) NOT NULL,
-    games_played INTEGER DEFAULT 0,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX idx_games_white_engine ON games(white_engine_id);
 CREATE INDEX idx_games_black_engine ON games(black_engine_id);
 CREATE INDEX idx_games_date ON games(date_played);
-CREATE INDEX idx_engines_active ON engines(active);
+
+-- Elo filter cache (for filtered rating views)
+CREATE TABLE elo_filter_cache (
+    id SERIAL PRIMARY KEY,
+    min_time_ms INTEGER NOT NULL DEFAULT 0,
+    max_time_ms INTEGER NOT NULL DEFAULT 999999999,
+    hostname VARCHAR(100),
+    engine_type VARCHAR(20),
+    last_game_id INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (min_time_ms, max_time_ms, hostname, engine_type)
+);
+
+CREATE TABLE elo_filter_ratings (
+    id SERIAL PRIMARY KEY,
+    filter_id INTEGER NOT NULL REFERENCES elo_filter_cache(id) ON DELETE CASCADE,
+    engine_id INTEGER NOT NULL REFERENCES engines(id) ON DELETE CASCADE,
+    elo NUMERIC(7,2) NOT NULL,
+    bayes_elo NUMERIC(7,2),
+    ordo NUMERIC(7,2),
+    games_played INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (filter_id, engine_id)
+);
+
+-- Cup competitions
+CREATE TABLE cups (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'in_progress',
+    num_participants INTEGER NOT NULL,
+    games_per_match INTEGER NOT NULL DEFAULT 10,
+    time_per_move_ms INTEGER,
+    time_low_ms INTEGER,
+    time_high_ms INTEGER,
+    winner_engine_id INTEGER REFERENCES engines(id),
+    hostname VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP
+);
+
+CREATE TABLE cup_rounds (
+    id SERIAL PRIMARY KEY,
+    cup_id INTEGER NOT NULL REFERENCES cups(id) ON DELETE CASCADE,
+    round_number INTEGER NOT NULL,
+    round_name VARCHAR(50),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    UNIQUE (cup_id, round_number)
+);
+
+CREATE TABLE cup_matches (
+    id SERIAL PRIMARY KEY,
+    round_id INTEGER NOT NULL REFERENCES cup_rounds(id) ON DELETE CASCADE,
+    match_order INTEGER NOT NULL,
+    engine1_id INTEGER NOT NULL REFERENCES engines(id),
+    engine2_id INTEGER REFERENCES engines(id),
+    engine1_seed INTEGER,
+    engine2_seed INTEGER,
+    engine1_points NUMERIC(4,1) DEFAULT 0,
+    engine2_points NUMERIC(4,1) DEFAULT 0,
+    games_played INTEGER DEFAULT 0,
+    winner_engine_id INTEGER REFERENCES engines(id),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    is_tiebreaker BOOLEAN DEFAULT FALSE,
+    decided_by_coin_flip BOOLEAN DEFAULT FALSE,
+    UNIQUE (round_id, match_order)
+);
+
+-- EPD test results
+CREATE TABLE epd_test_runs (
+    id SERIAL PRIMARY KEY,
+    epd_file VARCHAR(255) NOT NULL,
+    total_positions INTEGER NOT NULL,
+    timeout_seconds FLOAT NOT NULL,
+    score_tolerance INTEGER NOT NULL,
+    hostname VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE epd_test_results (
+    id SERIAL PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES epd_test_runs(id) ON DELETE CASCADE,
+    engine_id INTEGER NOT NULL REFERENCES engines(id) ON DELETE CASCADE,
+    position_id VARCHAR(255) NOT NULL,
+    position_index INTEGER NOT NULL,
+    fen TEXT NOT NULL,
+    test_type VARCHAR(10) NOT NULL,
+    expected_moves VARCHAR(255) NOT NULL,
+    solved BOOLEAN NOT NULL,
+    move_found VARCHAR(20),
+    solve_time_ms INTEGER,
+    final_depth INTEGER,
+    score_cp INTEGER,
+    score_mate INTEGER,
+    score_valid BOOLEAN,
+    timed_out BOOLEAN NOT NULL DEFAULT FALSE,
+    points_earned INTEGER
+);
+
+CREATE INDEX idx_epd_results_run ON epd_test_results(run_id);
+CREATE INDEX idx_epd_results_engine ON epd_test_results(engine_id);
+CREATE INDEX idx_epd_results_position ON epd_test_results(position_id);
+
+-- SPSA tuning
+CREATE TABLE spsa_runs (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_active BOOLEAN DEFAULT TRUE
+);
+
+CREATE TABLE spsa_iterations (
+    id SERIAL PRIMARY KEY,
+    run_id INTEGER REFERENCES spsa_runs(id),
+    iteration_number INTEGER NOT NULL,
+    effective_iteration INTEGER,
+    plus_engine_path VARCHAR(500) NOT NULL,
+    minus_engine_path VARCHAR(500) NOT NULL,
+    base_engine_path VARCHAR(500),
+    ref_engine_path VARCHAR(500),
+    timelow_ms INTEGER NOT NULL,
+    timehigh_ms INTEGER NOT NULL,
+    target_games INTEGER NOT NULL DEFAULT 150,
+    games_played INTEGER NOT NULL DEFAULT 0,
+    plus_wins INTEGER NOT NULL DEFAULT 0,
+    minus_wins INTEGER NOT NULL DEFAULT 0,
+    draws INTEGER NOT NULL DEFAULT 0,
+    ref_target_games INTEGER NOT NULL DEFAULT 100,
+    ref_games_played INTEGER NOT NULL DEFAULT 0,
+    ref_wins INTEGER NOT NULL DEFAULT 0,
+    ref_losses INTEGER NOT NULL DEFAULT 0,
+    ref_draws INTEGER NOT NULL DEFAULT 0,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    base_parameters JSONB,
+    plus_parameters JSONB,
+    minus_parameters JSONB,
+    perturbation_signs JSONB,
+    gradient_estimate JSONB,
+    elo_diff NUMERIC(7,2),
+    ref_elo_estimate NUMERIC(7,2),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP,
+    UNIQUE (run_id, iteration_number)
+);
+
+CREATE INDEX idx_spsa_iteration_number ON spsa_iterations(iteration_number);
+CREATE INDEX idx_spsa_status ON spsa_iterations(status);
+CREATE INDEX idx_spsa_run_id ON spsa_iterations(run_id);
+
+CREATE TABLE spsa_workers (
+    id SERIAL PRIMARY KEY,
+    worker_name VARCHAR(100) UNIQUE NOT NULL,
+    last_iteration_id INTEGER REFERENCES spsa_iterations(id),
+    last_phase VARCHAR(20),
+    total_games INTEGER NOT NULL DEFAULT 0,
+    total_spsa_games INTEGER NOT NULL DEFAULT 0,
+    total_ref_games INTEGER NOT NULL DEFAULT 0,
+    avg_nps INTEGER,
+    last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    first_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE spsa_worker_heartbeats (
+    id SERIAL PRIMARY KEY,
+    worker_id INTEGER NOT NULL REFERENCES spsa_workers(id) ON DELETE CASCADE,
+    iteration_id INTEGER REFERENCES spsa_iterations(id),
+    phase VARCHAR(20) NOT NULL,
+    games_reported INTEGER NOT NULL,
+    avg_nps INTEGER,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_spsa_worker_heartbeats_worker ON spsa_worker_heartbeats(worker_id);
+CREATE INDEX idx_spsa_worker_heartbeats_created ON spsa_worker_heartbeats(created_at);
 ```
 
 ### Step 3: Configure Environment
@@ -209,9 +381,6 @@ chess-compete/
     eet.epd    # EPD test files
   results/
     competitions/   # PGN output
-  migrations/
-    002_spsa_iterations.sql       # SPSA database schema
-    003_spsa_reference_games.sql  # SPSA reference game tracking
 ```
 
 ### Engine Discovery
@@ -595,37 +764,6 @@ The mapping from `params.toml` names to Rust constants is defined in `build.py`.
 - **Distributed**: Multiple workers can contribute to the same iteration
 - **Crash recovery**: Master resumes incomplete iterations; workers can restart safely
 - **Reference games**: Track actual engine strength by playing against Stockfish each iteration
-
-### Database Migration
-
-Run the SPSA migrations before first use:
-
-```bash
-python -c "
-import os
-from pathlib import Path
-from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
-
-load_dotenv()
-db_url = os.getenv('DATABASE_URL')
-engine = create_engine(db_url)
-
-# Run all SPSA migrations
-migrations = [
-    'migrations/002_spsa_iterations.sql',
-    'migrations/003_spsa_reference_games.sql',
-]
-
-with engine.connect() as conn:
-    for migration_file in migrations:
-        sql = Path(migration_file).read_text()
-        conn.execute(text(sql))
-        print(f'Applied: {migration_file}')
-    conn.commit()
-    print('All migrations completed!')
-"
-```
 
 ### Adding New Parameters
 
