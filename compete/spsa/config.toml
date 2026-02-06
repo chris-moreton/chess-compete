@@ -1,59 +1,16 @@
 # SPSA Tuning Configuration
 #
-# This file contains hyperparameters for the SPSA algorithm and
-# general tuning settings. Unlike params.toml, this file is not
-# automatically updated - modify manually to change tuning behavior.
+# Infrastructure settings only. Per-run tuning settings (time control,
+# SPSA hyperparameters, games per iteration, etc.) are stored in the
+# database on each spsa_runs row. The "Default" run provides template
+# values for new runs.
 
 # =============================================================================
-# TIME CONTROL
-# =============================================================================
-# Consistent naming with chess-compete CLI (--timelow, --timehigh)
-
-[time_control]
-timelow = 0.1       # Minimum seconds per move
-timehigh = 0.2       # Maximum seconds per move (random within range)
-
-# =============================================================================
-# GAMES PER ITERATION
+# WORKER SETTINGS
 # =============================================================================
 
 [games]
-games_per_iteration = 500  # Target games before calculating gradient
-batch_size = 1              # Games per worker batch (for status updates)
-
-# =============================================================================
-# SPSA ALGORITHM HYPERPARAMETERS
-# =============================================================================
-# Standard SPSA formulas:
-#   a_k = a / (k + A)^alpha      (step size, decreases over time)
-#   c_k = c / k^gamma            (perturbation size, decreases over time)
-#
-# Where k is the iteration number (1-indexed)
-#
-# These values are based on common recommendations:
-# - alpha = 0.602 (theoretical optimal for noisy gradient)
-# - gamma = 0.101 (slower decay for perturbations)
-# - A = ~10% of max iterations (stability early on)
-
-[spsa]
-max_iterations = 1500    # Stop after this many iterations
-a = 1.0                  # Step size numerator
-c = 1.0                  # Perturbation size multiplier (multiplied by param's step)
-A = 50                   # Stability constant (larger = more conservative early)
-alpha = 0.602            # Step size decay exponent
-gamma = 0.101            # Perturbation decay exponent
-
-# Effective iteration offset: effective_k = iteration_number - offset
-# Set this when absorbing parameters to reset learning rates
-# Example: if at iteration 400 and you want effective_k=50, set offset=350
-effective_iteration_offset = 118
-
-# Gradient safety: prevent single-iteration parameter blowout
-# Max ELO diff used in gradient calculation (caps outlier SPSA results)
-max_elo_diff = 100
-# Max gradient magnitude per parameter, as a multiple of step size
-# e.g., 3.0 means gradient is clipped to ±(3 * step)
-max_gradient_factor = 3.0
+batch_size = 1  # Games per worker batch (for status updates)
 
 # =============================================================================
 # BUILD CONFIGURATION
@@ -72,15 +29,14 @@ minus_engine_name = "spsa-minus"
 base_engine_name = "spsa-base"
 
 # =============================================================================
-# REFERENCE ENGINE (for tracking actual strength over time)
+# REFERENCE ENGINE (infrastructure — path and assumed Elo)
 # =============================================================================
+# Whether ref games are enabled and the ratio is per-run (in the database).
 
 [reference]
 # Path to reference engine (relative to chess-compete directory or absolute)
 engine_path = "../rusty-rival/engines/stockfish"
 engine_elo = 2600  # Assumed Elo of reference engine
-enabled = true     # Set to false to disable reference games
-ratio = 0.25       # Reference games per SPSA game (0.25 = 1 ref per 4 SPSA = 100 ref for 400 SPSA)
 
 # =============================================================================
 # DATABASE

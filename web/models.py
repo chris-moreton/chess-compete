@@ -244,6 +244,20 @@ class SpsaRun(db.Model):
     description = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     is_active = db.Column(db.Boolean, default=True)  # Only one should be active at a time
+    effective_iteration_offset = db.Column(db.Integer, nullable=False, default=0)
+    timelow = db.Column(db.Float, nullable=False, default=0.1)   # Seconds per move (low)
+    timehigh = db.Column(db.Float, nullable=False, default=0.2)  # Seconds per move (high)
+    games_per_iteration = db.Column(db.Integer, nullable=False, default=500)
+    max_iterations = db.Column(db.Integer, nullable=False, default=1500)
+    spsa_a = db.Column(db.Float, nullable=False, default=1.0)
+    spsa_c = db.Column(db.Float, nullable=False, default=1.0)
+    spsa_big_a = db.Column(db.Float, nullable=False, default=50)
+    spsa_alpha = db.Column(db.Float, nullable=False, default=0.602)
+    spsa_gamma = db.Column(db.Float, nullable=False, default=0.101)
+    max_elo_diff = db.Column(db.Float, nullable=False, default=100.0)
+    max_gradient_factor = db.Column(db.Float, nullable=False, default=3.0)
+    ref_enabled = db.Column(db.Boolean, nullable=False, default=True)
+    ref_ratio = db.Column(db.Float, nullable=False, default=0.25)
 
     # Relationships
     iterations = db.relationship('SpsaIteration', backref='run', lazy='dynamic')

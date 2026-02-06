@@ -573,21 +573,9 @@ def register_routes(app):
     @app.route('/spsa')
     def spsa_dashboard():
         """SPSA parameter tuning dashboard with progression graphs."""
-        import tomllib
-        from pathlib import Path
 
-        # Load SPSA config for ref_ratio
-        config_path = Path(__file__).parent.parent / 'compete' / 'spsa' / 'config.toml'
-        ref_ratio = 1.0  # Default
-        try:
-            with open(config_path, 'rb') as f:
-                spsa_config = tomllib.load(f)
-                ref_ratio = spsa_config.get('reference', {}).get('ratio', 1.0)
-        except Exception:
-            pass  # Use default if config not found
-
-        # Get all runs for the dropdown
-        all_runs = SpsaRun.query.order_by(SpsaRun.id.desc()).all()
+        # Get all runs for the dropdown (exclude Default template)
+        all_runs = SpsaRun.query.filter(SpsaRun.name != 'Default').order_by(SpsaRun.id.desc()).all()
 
         # Get selected run from query param, default to active run
         selected_run_id = request.args.get('run', type=int)
@@ -602,7 +590,10 @@ def register_routes(app):
         # If no runs exist yet, show empty state
         if not selected_run:
             return render_template('spsa.html', iterations=[], params_data={}, elo_data=[],
-                                   ref_ratio=ref_ratio, all_runs=[], selected_run=None)
+                                   ref_ratio=1.0, all_runs=[], selected_run=None)
+
+        # Read ref_ratio from selected run
+        ref_ratio = selected_run.ref_ratio
 
         # Calculate effective_iteration_offset from database (for selected run)
         # offset = iteration_number - effective_iteration (from latest iteration with effective_iteration set)

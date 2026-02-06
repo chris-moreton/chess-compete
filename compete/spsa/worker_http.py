@@ -804,11 +804,8 @@ def run_ref_games(
 
 
 def get_reference_engine_path(config: dict) -> str | None:
-    """Get the path to the reference engine (Stockfish), or None if disabled."""
-    if not config.get('reference', {}).get('enabled', False):
-        return None
-
-    ref_path = config['reference'].get('engine_path')
+    """Get the path to the reference engine (Stockfish), or None if not configured."""
+    ref_path = config.get('reference', {}).get('engine_path')
     if not ref_path:
         return None
 

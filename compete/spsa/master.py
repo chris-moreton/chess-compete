@@ -213,7 +213,8 @@ def _enforce_parameter_constraints(params: dict) -> None:
 
 def create_iteration(run_id: int, iteration_number: int, effective_iteration: int,
                      ref_path: str | None, ref_target_games: int,
-                     config: dict, base_params: dict, plus_params: dict,
+                     timelow: float, timehigh: float, games_per_iteration: int,
+                     base_params: dict, plus_params: dict,
                      minus_params: dict, signs: dict) -> int:
     """
     Create a new SPSA iteration record in the database.
@@ -246,9 +247,9 @@ def create_iteration(run_id: int, iteration_number: int, effective_iteration: in
                 iteration_number=iteration_number,
                 effective_iteration=effective_iteration,
                 ref_engine_path=ref_path,
-                timelow_ms=int(config['time_control']['timelow'] * 1000),
-                timehigh_ms=int(config['time_control']['timehigh'] * 1000),
-                target_games=config['games']['games_per_iteration'],
+                timelow_ms=int(timelow * 1000),
+                timehigh_ms=int(timehigh * 1000),
+                target_games=games_per_iteration,
                 ref_target_games=ref_target_games,
                 status='pending',
                 base_parameters={k: v['value'] for k, v in base_params.items()},
@@ -603,6 +604,82 @@ def migrate_database():
             db.session.commit()
             print("  spsa_params table created.")
 
+        # Add effective_iteration_offset column to spsa_runs (per-run offset)
+        try:
+            db.session.execute(db.text("SELECT effective_iteration_offset FROM spsa_runs LIMIT 1"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            print("  Adding effective_iteration_offset column to spsa_runs...")
+            db.session.execute(db.text(
+                "ALTER TABLE spsa_runs ADD COLUMN effective_iteration_offset INTEGER NOT NULL DEFAULT 0"
+            ))
+            # Seed Run 2 with the legacy offset (118); all others default to 0
+            db.session.execute(db.text(
+                "UPDATE spsa_runs SET effective_iteration_offset = 118 WHERE id = 2"
+            ))
+            db.session.commit()
+            print("  Migration complete (seeded Run 2 with offset=118).")
+
+        # Add timelow/timehigh columns to spsa_runs (per-run time control)
+        try:
+            db.session.execute(db.text("SELECT timelow FROM spsa_runs LIMIT 1"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            print("  Adding timelow/timehigh columns to spsa_runs...")
+            db.session.execute(db.text(
+                "ALTER TABLE spsa_runs ADD COLUMN timelow DOUBLE PRECISION NOT NULL DEFAULT 0.1"
+            ))
+            db.session.execute(db.text(
+                "ALTER TABLE spsa_runs ADD COLUMN timehigh DOUBLE PRECISION NOT NULL DEFAULT 0.2"
+            ))
+            # Run 3 keeps defaults (0.1-0.2); Runs 1 & 2 used 0.25-5.0
+            db.session.execute(db.text(
+                "UPDATE spsa_runs SET timelow = 0.25, timehigh = 5.0 WHERE id IN (1, 2)"
+            ))
+            db.session.commit()
+            print("  Migration complete (Runs 1&2: 0.25-5.0s, Run 3: 0.1-0.2s).")
+
+        # Add SPSA hyperparameter and reference columns to spsa_runs
+        try:
+            db.session.execute(db.text("SELECT games_per_iteration FROM spsa_runs LIMIT 1"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            print("  Adding SPSA/reference columns to spsa_runs...")
+            columns = [
+                ("games_per_iteration", "INTEGER NOT NULL DEFAULT 500"),
+                ("max_iterations", "INTEGER NOT NULL DEFAULT 1500"),
+                ("spsa_a", "DOUBLE PRECISION NOT NULL DEFAULT 1.0"),
+                ("spsa_c", "DOUBLE PRECISION NOT NULL DEFAULT 1.0"),
+                ("spsa_big_a", "DOUBLE PRECISION NOT NULL DEFAULT 50"),
+                ("spsa_alpha", "DOUBLE PRECISION NOT NULL DEFAULT 0.602"),
+                ("spsa_gamma", "DOUBLE PRECISION NOT NULL DEFAULT 0.101"),
+                ("max_elo_diff", "DOUBLE PRECISION NOT NULL DEFAULT 100.0"),
+                ("max_gradient_factor", "DOUBLE PRECISION NOT NULL DEFAULT 3.0"),
+                ("ref_enabled", "BOOLEAN NOT NULL DEFAULT TRUE"),
+                ("ref_ratio", "DOUBLE PRECISION NOT NULL DEFAULT 0.25"),
+            ]
+            for col_name, col_type in columns:
+                db.session.execute(db.text(
+                    f"ALTER TABLE spsa_runs ADD COLUMN {col_name} {col_type}"
+                ))
+            db.session.commit()
+            print("  All columns added (defaults match current config values).")
+
+        # Ensure a "Default" template run exists
+        default_exists = db.session.execute(
+            db.text("SELECT 1 FROM spsa_runs WHERE name = 'Default' LIMIT 1")
+        ).fetchone()
+        if not default_exists:
+            print("  Creating 'Default' template run...")
+            db.session.execute(db.text(
+                "INSERT INTO spsa_runs (name, is_active) VALUES ('Default', FALSE)"
+            ))
+            db.session.commit()
+            print("  Default run created.")
+
 
 def get_last_complete_iteration_number(run_id: int) -> int:
     """Get the last COMPLETED iteration number for the given run, or 0 if none."""
@@ -690,8 +767,8 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
     if not run_name:
         raise RuntimeError("Run name cannot be empty.")
 
-    # Get existing runs with params for "copy" option
-    all_runs = SpsaRun.query.order_by(SpsaRun.id).all()
+    # Get existing runs with params for "copy" option (exclude Default template)
+    all_runs = SpsaRun.query.filter(SpsaRun.name != 'Default').order_by(SpsaRun.id).all()
     runs_with_params = []
     for r in all_runs:
         count = SpsaParam.query.filter_by(run_id=r.id).count()
@@ -729,9 +806,25 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
         else:
             print("Invalid choice. Enter 1 or '2 <run_id>'.")
 
-    # Deactivate all runs, create the new one
+    # Copy run-level settings from the Default template run
+    default_run = SpsaRun.query.filter_by(name='Default').first()
+    if not default_run:
+        raise RuntimeError("No 'Default' template run found. Run migration first.")
+
+    # Deactivate all runs, create the new one with Default's settings
     SpsaRun.query.update({SpsaRun.is_active: False})
-    new_run = SpsaRun(name=run_name, is_active=True)
+    new_run = SpsaRun(
+        name=run_name, is_active=True,
+        timelow=default_run.timelow, timehigh=default_run.timehigh,
+        games_per_iteration=default_run.games_per_iteration,
+        max_iterations=default_run.max_iterations,
+        spsa_a=default_run.spsa_a, spsa_c=default_run.spsa_c,
+        spsa_big_a=default_run.spsa_big_a,
+        spsa_alpha=default_run.spsa_alpha, spsa_gamma=default_run.spsa_gamma,
+        max_elo_diff=default_run.max_elo_diff,
+        max_gradient_factor=default_run.max_gradient_factor,
+        ref_enabled=default_run.ref_enabled, ref_ratio=default_run.ref_ratio,
+    )
     db.session.add(new_run)
     db.session.flush()  # get ID
 
@@ -795,8 +888,8 @@ def select_run() -> tuple[int, str]:
                 print(f"Run '{args.run}' does not exist.")
                 return _create_new_run(db, SpsaRun, SpsaParam)
 
-        # No --run argument: show interactive menu
-        all_runs = SpsaRun.query.order_by(SpsaRun.id).all()
+        # No --run argument: show interactive menu (exclude Default template)
+        all_runs = SpsaRun.query.filter(SpsaRun.name != 'Default').order_by(SpsaRun.id).all()
 
         if not all_runs:
             raise RuntimeError(
@@ -849,6 +942,38 @@ def select_run() -> tuple[int, str]:
             print("Invalid choice. Enter a run number or 'N' for new.")
 
 
+def get_run_settings(run_id: int) -> dict:
+    """Load all per-run settings from the database."""
+    from web.app import create_app
+    from web.database import db
+    from web.models import SpsaRun
+
+    def _get():
+        app = create_app()
+        with app.app_context():
+            run = db.session.get(SpsaRun, run_id)
+            if not run:
+                raise RuntimeError(f"Run {run_id} not found!")
+            return {
+                'effective_iteration_offset': run.effective_iteration_offset,
+                'timelow': run.timelow,
+                'timehigh': run.timehigh,
+                'games_per_iteration': run.games_per_iteration,
+                'max_iterations': run.max_iterations,
+                'a': run.spsa_a,
+                'c': run.spsa_c,
+                'A': run.spsa_big_a,
+                'alpha': run.spsa_alpha,
+                'gamma': run.spsa_gamma,
+                'max_elo_diff': run.max_elo_diff,
+                'max_gradient_factor': run.max_gradient_factor,
+                'ref_enabled': run.ref_enabled,
+                'ref_ratio': run.ref_ratio,
+            }
+
+    return with_db_retry(_get)
+
+
 def run_master():
     """Main SPSA master loop with two-phase iteration."""
     print(f"\n{'='*60}")
@@ -862,36 +987,39 @@ def run_master():
     run_id, run_name = select_run()
     print(f"Active run: {run_name} (id={run_id})")
 
-    # Load configuration
+    # Load per-run settings from database
+    run_settings = get_run_settings(run_id)
+    effective_iteration_offset = run_settings['effective_iteration_offset']
+    timelow = run_settings['timelow']
+    timehigh = run_settings['timehigh']
+    games_per_iteration = run_settings['games_per_iteration']
+    max_iterations = run_settings['max_iterations']
+    a = run_settings['a']
+    c = run_settings['c']
+    A = run_settings['A']
+    alpha = run_settings['alpha']
+    gamma = run_settings['gamma']
+    max_elo_diff = run_settings['max_elo_diff']
+    max_gradient_factor = run_settings['max_gradient_factor']
+    ref_enabled = run_settings['ref_enabled']
+    ref_ratio = run_settings['ref_ratio']
+
+    # Load configuration (infrastructure settings only)
     config = load_config()
     params = load_params(run_id)
-
-    print(f"Parameters: {len(params)}")
-    print(f"SPSA games per iteration: {config['games']['games_per_iteration']}")
-    print(f"Time control: {config['time_control']['timelow']}-{config['time_control']['timehigh']}s/move")
-    print(f"Max iterations: {config['spsa']['max_iterations']}")
-
-    # SPSA hyperparameters
-    a = config['spsa']['a']
-    c = config['spsa']['c']
-    A = config['spsa']['A']
-    alpha = config['spsa']['alpha']
-    gamma = config['spsa']['gamma']
-    max_iterations = config['spsa']['max_iterations']
-    effective_iteration_offset = config['spsa'].get('effective_iteration_offset', 0)
-    max_elo_diff = config['spsa'].get('max_elo_diff', 800.0)
-    max_gradient_factor = config['spsa'].get('max_gradient_factor', 0.0)
     poll_interval = config['database']['poll_interval_seconds']
 
-    # Reference engine settings
-    ref_enabled = config.get('reference', {}).get('enabled', False)
+    print(f"Parameters: {len(params)}")
+    print(f"SPSA games per iteration: {games_per_iteration}")
+    print(f"Time control: {timelow}-{timehigh}s/move")
+    print(f"Max iterations: {max_iterations}")
+
+    # Reference engine settings (path/elo from config, enabled/ratio from run)
     ref_elo = config.get('reference', {}).get('engine_elo', 2600)
-    ref_ratio = config.get('reference', {}).get('ratio', 0.25)
     ref_path_config = config.get('reference', {}).get('engine_path')
 
     # Calculate ref_target_games based on ratio
-    spsa_games = config['games']['games_per_iteration']
-    ref_target_games = int(spsa_games * ref_ratio) if ref_enabled else 0
+    ref_target_games = int(games_per_iteration * ref_ratio) if ref_enabled else 0
 
     # Resolve reference engine path
     ref_path = None
@@ -1010,7 +1138,8 @@ def run_master():
             print("\nCreating iteration record...")
             iteration_id = create_iteration(
                 run_id, k, effective_k, ref_path, ref_target_games,
-                config, params, plus_params, minus_params, signs
+                timelow, timehigh, games_per_iteration,
+                params, plus_params, minus_params, signs
             )
             print(f"  Iteration ID: {iteration_id}")
             status = 'pending'
