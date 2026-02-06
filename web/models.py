@@ -315,6 +315,30 @@ class SpsaIteration(db.Model):
         return f'<SpsaIteration {self.iteration_number}: {self.status} ({self.games_played}/{self.target_games})>'
 
 
+class SpsaParam(db.Model):
+    """A tunable parameter for an SPSA run, storing value and bounds."""
+    __tablename__ = 'spsa_params'
+
+    id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.Integer, db.ForeignKey('spsa_runs.id'), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    value = db.Column(db.Float, nullable=False)
+    min_value = db.Column(db.Float, nullable=False)
+    max_value = db.Column(db.Float, nullable=False)
+    step = db.Column(db.Float, nullable=False)
+    active_from_iteration = db.Column(db.Integer, nullable=False, default=1)
+
+    # Relationships
+    run = db.relationship('SpsaRun', backref='params')
+
+    __table_args__ = (
+        db.UniqueConstraint('run_id', 'name', name='uq_spsa_param_run_name'),
+    )
+
+    def __repr__(self):
+        return f'<SpsaParam {self.name}={self.value} (run={self.run_id})>'
+
+
 class SpsaWorker(db.Model):
     """Summary of an SPSA worker's current state and lifetime stats."""
     __tablename__ = 'spsa_workers'

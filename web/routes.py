@@ -11,7 +11,7 @@ from web.queries import (
 from datetime import datetime, timedelta
 from web.models import (
     Cup, CupRound, CupMatch, Engine, Game, EpdTestRun, EpdTestResult,
-    SpsaIteration, SpsaRun, SpsaWorker, SpsaWorkerHeartbeat
+    SpsaIteration, SpsaParam, SpsaRun, SpsaWorker, SpsaWorkerHeartbeat
 )
 from web.database import db
 from sqlalchemy import func, case, and_, or_
@@ -614,17 +614,11 @@ def register_routes(app):
         if latest_with_eff and latest_with_eff.effective_iteration:
             effective_iteration_offset = latest_with_eff.iteration_number - latest_with_eff.effective_iteration
 
-        # Load parameter bounds from params.toml
-        params_path = Path(__file__).parent.parent / 'compete' / 'spsa' / 'params.toml'
+        # Load parameter bounds from database for the selected run
         param_bounds = {}  # {param_name: {'min': X, 'max': Y}}
-        try:
-            with open(params_path, 'rb') as f:
-                params_config = tomllib.load(f)
-                for name, config in params_config.items():
-                    if isinstance(config, dict) and 'min' in config and 'max' in config:
-                        param_bounds[name] = {'min': config['min'], 'max': config['max']}
-        except Exception:
-            pass  # Use empty bounds if config not found
+        spsa_params = SpsaParam.query.filter_by(run_id=selected_run.id).all()
+        for p in spsa_params:
+            param_bounds[p.name] = {'min': p.min_value, 'max': p.max_value}
 
         # Get all completed iterations for selected run, ordered by iteration number
         iterations = SpsaIteration.query.filter(

@@ -4,12 +4,12 @@ SPSA Master Controller
 Orchestrates the SPSA parameter tuning process with two-phase iteration:
 
 Phase 1 (SPSA Games):
-1. Reads current parameters from params.toml
+1. Loads current parameters from the database (spsa_params table, keyed by run_id)
 2. Generates perturbed parameter sets (plus/minus)
 3. Creates iteration record in database (workers build plus/minus engines)
 4. Waits for workers to complete SPSA games (plus vs minus)
 5. Calculates gradient and updates parameters
-6. Saves updated params to params.toml
+6. Saves updated params to the database
 
 Phase 2 (Reference Games):
 7. Builds NEW base engine with updated parameters
@@ -22,7 +22,8 @@ of the parameter update, not the pre-update baseline.
 
 Usage:
     cd chess-compete
-    python -m compete.spsa.master
+    python -m compete.spsa.master              # interactive run selection
+    python -m compete.spsa.master --run "Run 3" # activate or create "Run 3"
 """
 
 import math
@@ -39,12 +40,6 @@ from dotenv import load_dotenv
 SPSA_DIR = Path(__file__).parent
 CHESS_COMPETE_DIR = SPSA_DIR.parent.parent
 load_dotenv(CHESS_COMPETE_DIR / '.env')
-
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib
-
 
 def with_db_retry(func, max_retries=5, retry_delay=10):
     """Execute a database operation with retry logic."""
@@ -63,64 +58,75 @@ def with_db_retry(func, max_retries=5, retry_delay=10):
     raise RuntimeError(f"Database operation failed after {max_retries} attempts: {last_error}")
 
 
-def get_active_run() -> tuple[int, str]:
-    """
-    Get the active SPSA run from the database.
+def _activate_run(db, SpsaRun, run):
+    """Deactivate all runs and activate the given one."""
+    SpsaRun.query.update({SpsaRun.is_active: False})
+    run.is_active = True
+    db.session.commit()
 
-    Returns (run_id, run_name). Raises RuntimeError if no active run exists.
+
+def load_params(run_id: int) -> dict:
+    """
+    Load parameters from the database for a given run.
+    Returns dict of {param_name: {'value': X, 'min': Y, 'max': Z, 'step': S, 'active_from_iteration': N}}
     """
     from web.app import create_app
-    from web.models import SpsaRun
+    from web.models import SpsaParam
 
-    def _get():
+    def _load():
         app = create_app()
         with app.app_context():
-            run = SpsaRun.query.filter_by(is_active=True).first()
-            if not run:
+            rows = SpsaParam.query.filter_by(run_id=run_id).all()
+            if not rows:
                 raise RuntimeError(
-                    "No active SPSA run found. Create one in the database first:\n"
-                    "  INSERT INTO spsa_runs (name, description, is_active) "
-                    "VALUES ('Run N', 'Description', TRUE);"
+                    f"No parameters found for run {run_id}. "
+                    "Run migration or use --run to create a new run with params."
                 )
-            return run.id, run.name
+            params = {}
+            for row in rows:
+                params[row.name] = {
+                    'value': row.value,
+                    'min': row.min_value,
+                    'max': row.max_value,
+                    'step': row.step,
+                    'active_from_iteration': row.active_from_iteration,
+                }
+            return params
 
-    return with_db_retry(_get)
+    return with_db_retry(_load)
 
 
-def load_params() -> dict:
+def save_params(run_id: int, params: dict):
     """
-    Load parameters from params.toml.
-    Returns dict of {param_name: {'value': X, 'min': Y, 'max': Z, 'step': S}}
+    Save parameter values to the database for a given run.
+    Only updates the 'value' column for existing rows.
     """
-    params_file = SPSA_DIR / 'params.toml'
-    with open(params_file, 'rb') as f:
-        return tomllib.load(f)
+    from web.app import create_app
+    from web.database import db
+    from web.models import SpsaParam
 
+    def _save():
+        app = create_app()
+        with app.app_context():
+            for name, cfg in params.items():
+                db.session.execute(
+                    db.text(
+                        "UPDATE spsa_params SET value = :value "
+                        "WHERE run_id = :run_id AND name = :name"
+                    ),
+                    {'value': cfg['value'], 'run_id': run_id, 'name': name}
+                )
+            db.session.commit()
 
-def save_params(params: dict):
-    """
-    Save parameters to params.toml.
-    Preserves comments by reading original and only updating values.
-    """
-    params_file = SPSA_DIR / 'params.toml'
-
-    # Read original file
-    content = params_file.read_text()
-
-    # Update each parameter's value
-    import re
-    for name, cfg in params.items():
-        # Find and replace the value line for this parameter
-        # Pattern: value = <number>
-        pattern = rf'(\[{re.escape(name)}\][^\[]*value\s*=\s*)-?[\d.]+'
-        replacement = rf'\g<1>{cfg["value"]}'
-        content = re.sub(pattern, replacement, content, flags=re.DOTALL)
-
-    params_file.write_text(content)
+    with_db_retry(_save)
 
 
 def load_config() -> dict:
     """Load configuration from config.toml."""
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
     config_file = SPSA_DIR / 'config.toml'
     with open(config_file, 'rb') as f:
         return tomllib.load(f)
@@ -551,7 +557,7 @@ def mark_iteration_complete(iteration_id: int, gradient: dict, elo_diff: float, 
 
 
 def migrate_database():
-    """Ensure database schema is up to date with new columns."""
+    """Ensure database schema is up to date with new columns/tables."""
     from web.app import create_app
     from web.database import db
 
@@ -562,15 +568,36 @@ def migrate_database():
             db.session.execute(db.text("SELECT ref_target_games FROM spsa_iterations LIMIT 1"))
             db.session.commit()
         except Exception:
-            # Rollback the failed query before trying ALTER
             db.session.rollback()
-            # Column doesn't exist, add it
             print("  Adding ref_target_games column...")
             db.session.execute(db.text(
                 "ALTER TABLE spsa_iterations ADD COLUMN ref_target_games INTEGER NOT NULL DEFAULT 100"
             ))
             db.session.commit()
             print("  Migration complete.")
+
+        # Create spsa_params table if it doesn't exist
+        try:
+            db.session.execute(db.text("SELECT 1 FROM spsa_params LIMIT 1"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            print("  Creating spsa_params table...")
+            db.session.execute(db.text("""
+                CREATE TABLE spsa_params (
+                    id SERIAL PRIMARY KEY,
+                    run_id INTEGER NOT NULL REFERENCES spsa_runs(id),
+                    name VARCHAR(100) NOT NULL,
+                    value DOUBLE PRECISION NOT NULL,
+                    min_value DOUBLE PRECISION NOT NULL,
+                    max_value DOUBLE PRECISION NOT NULL,
+                    step DOUBLE PRECISION NOT NULL,
+                    active_from_iteration INTEGER NOT NULL DEFAULT 1,
+                    CONSTRAINT uq_spsa_param_run_name UNIQUE (run_id, name)
+                )
+            """))
+            db.session.commit()
+            print("  spsa_params table created.")
 
 
 def get_last_complete_iteration_number(run_id: int) -> int:
@@ -654,6 +681,171 @@ def get_iteration_results(iteration_id: int) -> dict:
     return with_db_retry(_get)
 
 
+def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
+    """Interactively create a new run, seeding params from defaults or an existing run."""
+    run_name = input("\nEnter name for new run: ").strip()
+    if not run_name:
+        raise RuntimeError("Run name cannot be empty.")
+
+    # Get existing runs with params for "copy" option
+    all_runs = SpsaRun.query.order_by(SpsaRun.id).all()
+    runs_with_params = []
+    for r in all_runs:
+        count = SpsaParam.query.filter_by(run_id=r.id).count()
+        if count > 0:
+            runs_with_params.append(r)
+
+    if not runs_with_params:
+        raise RuntimeError(
+            "Cannot create a new run: no existing runs with parameters to copy bounds from."
+        )
+
+    print("\nHow should parameters be initialized?")
+    print("  1. defaults — use midpoint of min/max bounds")
+    for r in runs_with_params:
+        print(f"  2. copy from run {r.id} ({r.name})")
+    print()
+
+    while True:
+        choice = input("Enter choice (1 for defaults, or '2 <run_id>' to copy): ").strip()
+        if choice == '1':
+            seed_mode = 'defaults'
+            source_run_id = None
+            break
+        elif choice.startswith('2') and runs_with_params:
+            parts = choice.split()
+            if len(parts) == 2:
+                try:
+                    source_run_id = int(parts[1])
+                    if any(r.id == source_run_id for r in runs_with_params):
+                        seed_mode = 'copy'
+                        break
+                except ValueError:
+                    pass
+            print("Invalid. Enter '2 <run_id>' where run_id is one of the listed runs.")
+        else:
+            print("Invalid choice. Enter 1 or '2 <run_id>'.")
+
+    # Deactivate all runs, create the new one
+    SpsaRun.query.update({SpsaRun.is_active: False})
+    new_run = SpsaRun(name=run_name, is_active=True)
+    db.session.add(new_run)
+    db.session.flush()  # get ID
+
+    if seed_mode == 'defaults':
+        source_params = SpsaParam.query.filter_by(run_id=runs_with_params[-1].id).all()
+        print(f"  Seeding with midpoint defaults (bounds from run {runs_with_params[-1].id})...")
+        for p in source_params:
+            midpoint = (p.min_value + p.max_value) / 2.0
+            db.session.add(SpsaParam(
+                run_id=new_run.id, name=p.name,
+                value=midpoint, min_value=p.min_value,
+                max_value=p.max_value, step=p.step,
+                active_from_iteration=p.active_from_iteration,
+            ))
+    elif seed_mode == 'copy':
+        print(f"  Copying params from run {source_run_id}...")
+        source_params = SpsaParam.query.filter_by(run_id=source_run_id).all()
+        for p in source_params:
+            db.session.add(SpsaParam(
+                run_id=new_run.id, name=p.name,
+                value=p.value, min_value=p.min_value,
+                max_value=p.max_value, step=p.step,
+                active_from_iteration=p.active_from_iteration,
+            ))
+
+    db.session.commit()
+    param_count = SpsaParam.query.filter_by(run_id=new_run.id).count()
+    print(f"  Created run '{run_name}' (id={new_run.id}) with {param_count} params")
+    return new_run.id, new_run.name
+
+
+def select_run() -> tuple[int, str]:
+    """
+    Select which SPSA run to use.
+
+    If --run <name> is provided, activates that run (or creates it interactively).
+    Otherwise, lists all runs and prompts the user to select one or create a new one.
+
+    Returns (run_id, run_name).
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description='SPSA Master Controller')
+    parser.add_argument('--run', type=str, help='Run name to use or create')
+    args = parser.parse_args()
+
+    from web.app import create_app
+    from web.database import db
+    from web.models import SpsaRun, SpsaParam
+
+    app = create_app()
+    with app.app_context():
+        # If --run provided, find or create that specific run
+        if args.run is not None:
+            existing = SpsaRun.query.filter_by(name=args.run).first()
+            if existing:
+                _activate_run(db, SpsaRun, existing)
+                print(f"Activated run: {existing.name} (id={existing.id})")
+                return existing.id, existing.name
+            else:
+                print(f"Run '{args.run}' does not exist.")
+                return _create_new_run(db, SpsaRun, SpsaParam)
+
+        # No --run argument: show interactive menu
+        all_runs = SpsaRun.query.order_by(SpsaRun.id).all()
+
+        if not all_runs:
+            raise RuntimeError(
+                "No SPSA runs exist. Create one first:\n"
+                "  INSERT INTO spsa_runs (name, description, is_active) "
+                "VALUES ('Run 1', 'Description', TRUE);"
+            )
+
+        active_run = SpsaRun.query.filter_by(is_active=True).first()
+
+        print("\nAvailable runs:")
+        for r in all_runs:
+            # Get iteration count and param count
+            from web.models import SpsaIteration
+            iter_count = SpsaIteration.query.filter_by(
+                run_id=r.id, status='complete'
+            ).count()
+            param_count = SpsaParam.query.filter_by(run_id=r.id).count()
+            active_marker = " *" if r.is_active else ""
+            print(f"  {r.id}. {r.name} ({iter_count} iterations, {param_count} params){active_marker}")
+
+        print(f"  N. Create new run")
+        if active_run:
+            print(f"\n  * = currently active")
+            default_hint = f" [default: {active_run.id}]"
+        else:
+            default_hint = ""
+
+        while True:
+            choice = input(f"\nSelect run{default_hint}: ").strip()
+
+            # Default to active run if user just presses Enter
+            if not choice and active_run:
+                _activate_run(db, SpsaRun, active_run)
+                return active_run.id, active_run.name
+
+            if choice.upper() == 'N':
+                return _create_new_run(db, SpsaRun, SpsaParam)
+
+            try:
+                run_id = int(choice)
+                selected = SpsaRun.query.get(run_id)
+                if selected:
+                    _activate_run(db, SpsaRun, selected)
+                    print(f"Activated run: {selected.name} (id={selected.id})")
+                    return selected.id, selected.name
+            except ValueError:
+                pass
+
+            print("Invalid choice. Enter a run number or 'N' for new.")
+
+
 def run_master():
     """Main SPSA master loop with two-phase iteration."""
     print(f"\n{'='*60}")
@@ -663,13 +855,13 @@ def run_master():
     # Run any pending migrations
     migrate_database()
 
-    # Get the active run
-    run_id, run_name = get_active_run()
+    # Select or create a run (interactive or via --run flag)
+    run_id, run_name = select_run()
     print(f"Active run: {run_name} (id={run_id})")
 
     # Load configuration
     config = load_config()
-    params = load_params()
+    params = load_params(run_id)
 
     print(f"Parameters: {len(params)}")
     print(f"SPSA games per iteration: {config['games']['games_per_iteration']}")
@@ -747,8 +939,8 @@ def run_master():
         print(f"ITERATION {k}/{max_iterations}")
         print(f"{'='*60}")
 
-        # Reload params each iteration to pick up any bound changes
-        params = load_params()
+        # Reload params from DB each iteration
+        params = load_params(run_id)
 
         # Calculate effective iteration (for learning rate) and SPSA coefficients
         effective_k = max(1, k - effective_iteration_offset)
@@ -863,9 +1055,9 @@ def run_master():
                 delta = new - old
                 print(f"  {name}: {old:.2f} -> {new:.2f} ({delta:+.4f})")
 
-            # Save updated parameters
-            save_params(params)
-            print("\nSaved updated parameters to params.toml")
+            # Save updated parameters to DB
+            save_params(run_id, params)
+            print("\nSaved updated parameters to database")
 
             # ===== Transition to ref phase (workers will build base engine) =====
             if ref_enabled:
