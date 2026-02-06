@@ -58,6 +58,21 @@
             color: #aaa;
             font-style: italic;
         }
+        .run-settings {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px 16px;
+            padding: 8px 15px;
+            margin-bottom: 20px;
+            background: #16213e;
+            border: 1px solid #0f3460;
+            border-radius: 6px;
+            font-size: 12px;
+            color: #aaa;
+        }
+        .run-settings span {
+            white-space: nowrap;
+        }
         .summary-cards {
             display: flex;
             gap: 20px;
@@ -309,6 +324,22 @@
                 window.location.href = '/spsa' + (params.toString() ? '?' + params.toString() : '');
             }
         </script>
+
+        {% if selected_run %}
+        <div class="run-settings">
+            <span>{{ selected_run.timelow }}-{{ selected_run.timehigh }}s/move</span>
+            <span>{{ selected_run.games_per_iteration }} games/iter</span>
+            <span>max {{ selected_run.max_iterations }} iters</span>
+            <span>a={{ selected_run.spsa_a }} c={{ selected_run.spsa_c }} A={{ selected_run.spsa_big_a|int }}</span>
+            <span>&alpha;={{ selected_run.spsa_alpha }} &gamma;={{ selected_run.spsa_gamma }}</span>
+            <span>elo cap={{ selected_run.max_elo_diff|int }} grad cap={{ selected_run.max_gradient_factor }}</span>
+            <span>ref: {{ "on (%.0f%%)" | format(selected_run.ref_ratio * 100) if selected_run.ref_enabled else "off" }}</span>
+            {% if selected_run.effective_iteration_offset > 0 %}
+            <span>offset={{ selected_run.effective_iteration_offset }}</span>
+            {% endif %}
+        </div>
+        {% endif %}
+
         {% endif %}
 
         {% if iterations %}
