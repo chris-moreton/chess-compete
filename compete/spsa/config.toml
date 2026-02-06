@@ -10,8 +10,8 @@
 # Consistent naming with chess-compete CLI (--timelow, --timehigh)
 
 [time_control]
-timelow = 0.25       # Minimum seconds per move
-timehigh = 0.5       # Maximum seconds per move (random within range)
+timelow = 0.1       # Minimum seconds per move
+timehigh = 0.2       # Maximum seconds per move (random within range)
 
 # =============================================================================
 # GAMES PER ITERATION
