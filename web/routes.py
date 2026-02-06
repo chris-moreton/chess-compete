@@ -910,8 +910,14 @@ def register_routes(app):
         # Get worker hostname for logging
         worker_host = request.headers.get('X-Worker-Host', 'unknown')
 
+        # Only serve work from the active run
+        active_run = SpsaRun.query.filter_by(is_active=True).first()
+        if not active_run:
+            return jsonify({})  # No active run
+
         # First check for ref_pending iterations (Phase 2 takes priority)
         iteration = SpsaIteration.query.filter(
+            SpsaIteration.run_id == active_run.id,
             SpsaIteration.status == 'ref_pending',
             SpsaIteration.ref_games_played < SpsaIteration.ref_target_games
         ).order_by(SpsaIteration.iteration_number.desc()).first()
@@ -930,6 +936,7 @@ def register_routes(app):
 
         # Check for SPSA phase iterations (pending or in_progress)
         iteration = SpsaIteration.query.filter(
+            SpsaIteration.run_id == active_run.id,
             SpsaIteration.status.in_(['pending', 'in_progress']),
             SpsaIteration.games_played < SpsaIteration.target_games
         ).order_by(SpsaIteration.iteration_number.desc()).first()
