@@ -176,7 +176,33 @@ def generate_perturbations(params: dict, c_k: float, iteration: int) -> tuple[di
         plus_params[name] = plus_val
         minus_params[name] = minus_val
 
+    # Enforce inter-parameter constraints (#5)
+    # Some parameter pairs have logical relationships that must hold for
+    # the engine to function correctly (e.g., depth_reduction < min_depth)
+    _enforce_parameter_constraints(plus_params)
+    _enforce_parameter_constraints(minus_params)
+
     return plus_params, minus_params, signs
+
+
+# Parameter pairs where the first must be less than the second.
+# Violating these can produce negative search depths, breaking the engine.
+PARAMETER_CONSTRAINTS = [
+    ('multicut_depth_reduction', 'multicut_min_depth'),
+    ('singular_extension_depth_reduction', 'singular_extension_min_depth'),
+]
+
+
+def _enforce_parameter_constraints(params: dict) -> None:
+    """Clamp dependent parameters so logical constraints hold."""
+    for less_param, greater_param in PARAMETER_CONSTRAINTS:
+        if less_param in params and greater_param in params:
+            if params[less_param] >= params[greater_param]:
+                clamped = params[greater_param] - 1
+                print(f"  Constraint: {less_param} ({params[less_param]:.2f}) "
+                      f">= {greater_param} ({params[greater_param]:.2f}), "
+                      f"clamping to {clamped:.2f}")
+                params[less_param] = clamped
 
 
 def create_iteration(run_id: int, iteration_number: int, effective_iteration: int, plus_path: str, minus_path: str,
@@ -379,7 +405,9 @@ def wait_for_ref_completion(iteration_id: int, poll_interval: int = 30) -> dict:
         time.sleep(poll_interval)
 
 
-def calculate_gradient(results: dict, params: dict, c_k: float) -> tuple[dict, float]:
+def calculate_gradient(results: dict, params: dict, c_k: float,
+                       max_elo_diff: float = 800.0,
+                       max_gradient_factor: float = 0.0) -> tuple[dict, float]:
     """
     Calculate gradient estimate from game results.
 
@@ -394,6 +422,13 @@ def calculate_gradient(results: dict, params: dict, c_k: float) -> tuple[dict, f
     The standard SPSA formula (dividing by step) causes:
     - Small step → huge updates (parameters with small ranges go wild)
     - Large step → tiny updates (parameters with large ranges never move)
+
+    Args:
+        max_elo_diff: Cap on |elo_diff| used for gradient calculation.
+            Outlier SPSA results (e.g., 427-80) often indicate a broken engine
+            rather than meaningful parameter signal. Default 800 (no practical cap).
+        max_gradient_factor: If > 0, clip each gradient to ±(factor * step).
+            Prevents a single iteration from pushing parameters to bounds.
 
     Returns:
         (gradient, elo_diff)
@@ -412,6 +447,12 @@ def calculate_gradient(results: dict, params: dict, c_k: float) -> tuple[dict, f
     else:
         elo_diff = -400 * math.log10(1 / score - 1)
 
+    # Cap ELO diff to limit influence of outlier results (#6)
+    raw_elo_diff = elo_diff
+    elo_diff = max(-max_elo_diff, min(max_elo_diff, elo_diff))
+    if raw_elo_diff != elo_diff:
+        print(f"  ELO diff capped: {raw_elo_diff:.1f} -> {elo_diff:.1f}")
+
     # Calculate gradient for each parameter
     signs = results['perturbation_signs']
     gradient = {}
@@ -422,7 +463,14 @@ def calculate_gradient(results: dict, params: dict, c_k: float) -> tuple[dict, f
             step = params[name]['step']
             # Gradient proportional to step (not inversely proportional)
             # This makes updates ~proportional to step/range for all parameters
-            gradient[name] = elo_diff * sign * step / (2 * c_k)
+            grad = elo_diff * sign * step / (2 * c_k)
+
+            # Clip gradient to prevent single-iteration blowout (#4)
+            if max_gradient_factor > 0:
+                max_grad = max_gradient_factor * step
+                grad = max(-max_grad, min(max_grad, grad))
+
+            gradient[name] = grad
 
     return gradient, elo_diff
 
@@ -636,6 +684,8 @@ def run_master():
     gamma = config['spsa']['gamma']
     max_iterations = config['spsa']['max_iterations']
     effective_iteration_offset = config['spsa'].get('effective_iteration_offset', 0)
+    max_elo_diff = config['spsa'].get('max_elo_diff', 800.0)
+    max_gradient_factor = config['spsa'].get('max_gradient_factor', 0.0)
     poll_interval = config['database']['poll_interval_seconds']
 
     # Reference engine settings
@@ -737,7 +787,9 @@ def run_master():
                         'draws': resume_info['draws'],
                         'perturbation_signs': resume_info['perturbation_signs'],
                     }
-                    gradient, elo_diff = calculate_gradient(results, params, c_k)
+                    gradient, elo_diff = calculate_gradient(results, params, c_k,
+                                                           max_elo_diff=max_elo_diff,
+                                                           max_gradient_factor=max_gradient_factor)
                     status = 'spsa_complete'  # Internal marker to continue to ref phase
                 else:
                     print(f"\nResuming SPSA phase: {resume_info['games_played']}/{resume_info['target_games']} games")
@@ -787,7 +839,9 @@ def run_master():
             results = wait_for_spsa_completion(iteration_id, poll_interval)
 
             # Calculate gradient
-            gradient, elo_diff = calculate_gradient(results, params, c_k)
+            gradient, elo_diff = calculate_gradient(results, params, c_k,
+                                                    max_elo_diff=max_elo_diff,
+                                                    max_gradient_factor=max_gradient_factor)
             status = 'spsa_complete'
 
         # ===== Process SPSA Results =====

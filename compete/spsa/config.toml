@@ -48,6 +48,13 @@ gamma = 0.101            # Perturbation decay exponent
 # Example: if at iteration 400 and you want effective_k=50, set offset=350
 effective_iteration_offset = 118
 
+# Gradient safety: prevent single-iteration parameter blowout
+# Max ELO diff used in gradient calculation (caps outlier SPSA results)
+max_elo_diff = 100
+# Max gradient magnitude per parameter, as a multiple of step size
+# e.g., 3.0 means gradient is clipped to ±(3 * step)
+max_gradient_factor = 3.0
+
 # =============================================================================
 # BUILD CONFIGURATION
 # =============================================================================
