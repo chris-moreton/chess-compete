@@ -211,16 +211,15 @@ def _enforce_parameter_constraints(params: dict) -> None:
                 params[less_param] = clamped
 
 
-def create_iteration(run_id: int, iteration_number: int, effective_iteration: int, plus_path: str, minus_path: str,
+def create_iteration(run_id: int, iteration_number: int, effective_iteration: int,
                      ref_path: str | None, ref_target_games: int,
                      config: dict, base_params: dict, plus_params: dict,
                      minus_params: dict, signs: dict) -> int:
     """
     Create a new SPSA iteration record in the database.
 
-    The base_engine_path is NOT set initially - it will be set after
-    SPSA games complete and the gradient is calculated. This ensures
-    reference games measure the actual updated parameters.
+    Workers build engines locally from the parameter JSON stored in the
+    iteration record — no engine paths are needed.
 
     Returns the iteration ID.
     """
@@ -246,9 +245,6 @@ def create_iteration(run_id: int, iteration_number: int, effective_iteration: in
                 run_id=run_id,
                 iteration_number=iteration_number,
                 effective_iteration=effective_iteration,
-                plus_engine_path=plus_path,
-                minus_engine_path=minus_path,
-                base_engine_path=None,  # Set after SPSA phase
                 ref_engine_path=ref_path,
                 timelow_ms=int(config['time_control']['timelow'] * 1000),
                 timehigh_ms=int(config['time_control']['timehigh'] * 1000),
@@ -324,16 +320,15 @@ def wait_for_spsa_completion(iteration_id: int, poll_interval: int = 30) -> dict
         time.sleep(poll_interval)
 
 
-def set_ref_phase(iteration_id: int, base_engine_path: str, updated_params: dict):
+def set_ref_phase(iteration_id: int, updated_params: dict):
     """
     Transition iteration to reference game phase.
 
-    Sets the base_engine_path (newly built with updated params) and
-    changes status to 'ref_pending' so workers start playing ref games.
+    Changes status to 'ref_pending' so workers start playing ref games.
+    Workers build the base engine locally from the updated parameters.
 
     Args:
         iteration_id: The iteration to update
-        base_engine_path: Path to the newly built base engine
         updated_params: The updated parameter values (for record keeping)
     """
     from web.app import create_app
@@ -346,7 +341,6 @@ def set_ref_phase(iteration_id: int, base_engine_path: str, updated_params: dict
             iteration = db.session.get(SpsaIteration, iteration_id)
             if not iteration:
                 raise RuntimeError(f"Iteration {iteration_id} not found!")
-            iteration.base_engine_path = base_engine_path
             iteration.status = 'ref_pending'
             # Store the updated params (these are the params used for base engine)
             iteration.base_parameters = updated_params
@@ -576,6 +570,16 @@ def migrate_database():
             db.session.commit()
             print("  Migration complete.")
 
+        # Drop unused engine path columns (idempotent)
+        for col in ('plus_engine_path', 'minus_engine_path', 'base_engine_path'):
+            try:
+                db.session.execute(db.text(
+                    f"ALTER TABLE spsa_iterations DROP COLUMN IF EXISTS {col}"
+                ))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+
         # Create spsa_params table if it doesn't exist
         try:
             db.session.execute(db.text("SELECT 1 FROM spsa_params LIMIT 1"))
@@ -655,7 +659,6 @@ def get_incomplete_iteration(run_id: int) -> dict | None:
                 'plus_parameters': iteration.plus_parameters,
                 'minus_parameters': iteration.minus_parameters,
                 'perturbation_signs': iteration.perturbation_signs,
-                'base_engine_path': iteration.base_engine_path,
             }
 
     return with_db_retry(_get)
@@ -912,11 +915,6 @@ def run_master():
 
     print(f"{'='*60}")
 
-    # Paths
-    output_base = Path(config['build']['engines_output_path'])
-    if not output_base.is_absolute():
-        output_base = CHESS_COMPETE_DIR / output_base
-
     print("\nCurrent parameter values:")
     for name, cfg in params.items():
         print(f"  {name}: {cfg['value']} (range: {cfg['min']}-{cfg['max']}, step: {cfg['step']})")
@@ -1008,17 +1006,10 @@ def run_master():
                 sign = '+' if signs[name] > 0 else '-'
                 print(f"  {name}: {base:.2f} -> {sign} [{minus:.2f}, {plus:.2f}]")
 
-            # Compute expected engine paths (workers will build from params)
-            binary_name = 'rusty-rival.exe' if os.name == 'nt' else 'rusty-rival'
-            plus_dir = output_base / config['build']['plus_engine_name']
-            minus_dir = output_base / config['build']['minus_engine_name']
-            plus_path = plus_dir / binary_name
-            minus_path = minus_dir / binary_name
-
-            # Create iteration record (no base_engine_path yet)
+            # Create iteration record (workers build engines locally from params)
             print("\nCreating iteration record...")
             iteration_id = create_iteration(
-                run_id, k, effective_k, str(plus_path), str(minus_path), ref_path, ref_target_games,
+                run_id, k, effective_k, ref_path, ref_target_games,
                 config, params, plus_params, minus_params, signs
             )
             print(f"  Iteration ID: {iteration_id}")
@@ -1061,13 +1052,9 @@ def run_master():
 
             # ===== Transition to ref phase (workers will build base engine) =====
             if ref_enabled:
-                # Compute expected base engine path (workers build it locally)
-                binary_name = 'rusty-rival.exe' if os.name == 'nt' else 'rusty-rival'
-                base_engine_path = str(output_base / config['build']['base_engine_name'] / binary_name)
-
                 # Transition to ref phase
                 updated_param_values = {name: cfg['value'] for name, cfg in params.items()}
-                set_ref_phase(iteration_id, base_engine_path, updated_param_values)
+                set_ref_phase(iteration_id, updated_param_values)
                 print(f"\nTransitioned to ref phase (status='ref_pending')")
                 print("  Workers will build base engine with updated parameters")
                 status = 'ref_pending'

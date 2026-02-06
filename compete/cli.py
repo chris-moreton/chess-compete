@@ -105,8 +105,6 @@ def main():
                         help="Filter engines by type (rusty or stockfish)")
     parser.add_argument("--includeinactive", action="store_true",
                         help="Include inactive engines in cup competition")
-    parser.add_argument("--spsa", action="store_true",
-                        help="SPSA worker mode: poll for iterations and run games (direct DB)")
     parser.add_argument("--spsa-http", action="store_true",
                         help="SPSA HTTP worker mode: poll API for iterations (for remote workers)")
     parser.add_argument("--spsa-batch", type=int, default=10, metavar="N",
@@ -266,14 +264,6 @@ def main():
         run_http_worker(
             api_url=api_url,
             api_key=api_key,
-            concurrency=args.concurrency,
-            batch_size=args.spsa_batch,
-            poll_interval=10
-        )
-    elif args.spsa:
-        # SPSA worker mode: poll for iterations and run games (direct DB access)
-        from compete.spsa import run_spsa_worker
-        run_spsa_worker(
             concurrency=args.concurrency,
             batch_size=args.spsa_batch,
             poll_interval=10

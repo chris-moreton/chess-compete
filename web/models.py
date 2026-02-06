@@ -261,11 +261,8 @@ class SpsaIteration(db.Model):
     iteration_number = db.Column(db.Integer, nullable=False)
     effective_iteration = db.Column(db.Integer)  # Used for learning rate calculation (can be reset)
 
-    # Engine binaries (paths to shared location, not registered engines)
-    plus_engine_path = db.Column(db.String(500), nullable=False)
-    minus_engine_path = db.Column(db.String(500), nullable=False)
-    base_engine_path = db.Column(db.String(500))  # Unperturbed base params engine
-    ref_engine_path = db.Column(db.String(500))   # Reference engine (e.g., Stockfish)
+    # Reference engine path (e.g., Stockfish) — stored by master for auditing
+    ref_engine_path = db.Column(db.String(500))
 
     # Time control (consistent with other compete modes: timelow/timehigh)
     timelow_ms = db.Column(db.Integer, nullable=False)   # e.g., 250 (0.25s)
