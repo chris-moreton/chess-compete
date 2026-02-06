@@ -278,7 +278,8 @@ def run_spsa_games(
     plus_path: str, minus_path: str,
     timelow_ms: int, timehigh_ms: int,
     concurrency: int, batch_size: int,
-    on_batch_complete: callable
+    on_batch_complete: callable,
+    max_games: int = 0
 ) -> tuple[dict, float, float]:
     """
     Run SPSA games (plus vs minus), calling on_batch_complete every batch_size completions.
@@ -414,8 +415,9 @@ def run_spsa_games(
             next_game_index = 0
             batch_completed = 0
 
-            # Submit initial games up to concurrency limit
-            while next_game_index < concurrency:
+            # Submit initial games up to concurrency limit (capped by max_games)
+            initial_limit = concurrency if max_games <= 0 else min(concurrency, max_games)
+            while next_game_index < initial_limit:
                 config = make_config(next_game_index, next_game_index)
                 callback = make_move_callback(next_game_index)
                 future = executor.submit(play_game_from_config, config, callback)
@@ -471,7 +473,8 @@ def run_spsa_games(
                         batch_completed = 0
 
                     # Submit a new game if we should keep adding
-                    if keep_adding:
+                    # and haven't exceeded max_games limit
+                    if keep_adding and (max_games <= 0 or next_game_index < max_games):
                         new_config = make_config(next_game_index, next_game_index)
                         callback = make_move_callback(next_game_index)
                         new_future = executor.submit(play_game_from_config, new_config, callback)
@@ -549,7 +552,8 @@ def run_ref_games(
     base_path: str, ref_path: str, ref_elo: int,
     timelow_ms: int, timehigh_ms: int,
     concurrency: int, batch_size: int,
-    on_batch_complete: callable
+    on_batch_complete: callable,
+    max_games: int = 0
 ) -> dict:
     """
     Run reference games (base vs Stockfish), calling on_batch_complete every batch_size completions.
@@ -671,8 +675,9 @@ def run_ref_games(
             next_game_index = 0
             batch_completed = 0
 
-            # Submit initial games up to concurrency limit
-            while next_game_index < concurrency:
+            # Submit initial games up to concurrency limit (capped by max_games)
+            initial_limit = concurrency if max_games <= 0 else min(concurrency, max_games)
+            while next_game_index < initial_limit:
                 config = make_config(next_game_index, next_game_index)
                 callback = make_move_callback(next_game_index)
                 future = executor.submit(play_game_from_config, config, callback)
@@ -727,7 +732,8 @@ def run_ref_games(
                         batch_completed = 0
 
                     # Submit a new game if we should keep adding
-                    if keep_adding:
+                    # and haven't exceeded max_games limit
+                    if keep_adding and (max_games <= 0 or next_game_index < max_games):
                         new_config = make_config(next_game_index, next_game_index)
                         callback = make_move_callback(next_game_index)
                         new_future = executor.submit(play_game_from_config, new_config, callback)
@@ -962,7 +968,8 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                 total, plus_nps, minus_nps = run_spsa_games(
                     plus_path, minus_path,
                     iteration['timelow_ms'], iteration['timehigh_ms'],
-                    concurrency, batch_size, on_spsa_batch
+                    concurrency, batch_size, on_spsa_batch,
+                    max_games=remaining
                 )
                 elapsed = time.time() - start_time
 
@@ -1028,7 +1035,8 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                 total = run_ref_games(
                     base_path, ref_engine_path, ref_elo,
                     iteration['timelow_ms'], iteration['timehigh_ms'],
-                    concurrency, batch_size, on_ref_batch
+                    concurrency, batch_size, on_ref_batch,
+                    max_games=remaining
                 )
                 elapsed = time.time() - start_time
 

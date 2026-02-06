@@ -297,7 +297,8 @@ def run_spsa_games(
     plus_path: str, minus_path: str,
     timelow_ms: int, timehigh_ms: int,
     concurrency: int, batch_size: int,
-    on_batch_complete: callable
+    on_batch_complete: callable,
+    max_games: int = 0
 ) -> tuple[dict, float, float]:
     """
     Run SPSA games (plus vs minus), updating database every batch_size completions.
@@ -312,6 +313,8 @@ def run_spsa_games(
         on_batch_complete: Callback(results) -> bool
             Called every batch_size games. Returns True to continue, False to stop.
             results = {'plus_wins': N, 'minus_wins': N, 'draws': N}
+        max_games: If > 0, stop submitting new games after this many.
+            Prevents overshoot when multiple workers contribute concurrently.
 
     Returns:
         (totals, plus_avg_nps, minus_avg_nps)
@@ -420,8 +423,9 @@ def run_spsa_games(
             next_game_index = 0
             batch_completed = 0
 
-            # Submit initial games up to concurrency limit
-            while next_game_index < concurrency:
+            # Submit initial games up to concurrency limit (capped by max_games)
+            initial_limit = concurrency if max_games <= 0 else min(concurrency, max_games)
+            while next_game_index < initial_limit:
                 config = make_config(next_game_index, next_game_index)
                 callback = make_move_callback(next_game_index)
                 future = executor.submit(play_game_from_config, config, callback)
@@ -471,7 +475,8 @@ def run_spsa_games(
                         batch_completed = 0
 
                     # Submit a new game if we should keep adding
-                    if keep_adding:
+                    # and haven't exceeded max_games limit
+                    if keep_adding and (max_games <= 0 or next_game_index < max_games):
                         new_config = make_config(next_game_index, next_game_index)
                         callback = make_move_callback(next_game_index)
                         new_future = executor.submit(play_game_from_config, new_config, callback)
@@ -538,7 +543,8 @@ def run_ref_games(
     base_path: str, ref_path: str, ref_elo: int,
     timelow_ms: int, timehigh_ms: int,
     concurrency: int, batch_size: int,
-    on_batch_complete: callable
+    on_batch_complete: callable,
+    max_games: int = 0
 ) -> dict:
     """
     Run reference games (base vs Stockfish), updating database every batch_size completions.
@@ -554,6 +560,8 @@ def run_ref_games(
         on_batch_complete: Callback(results) -> bool
             Called every batch_size games. Returns True to continue, False to stop.
             results = {'wins': N, 'losses': N, 'draws': N}
+        max_games: If > 0, stop submitting new games after this many.
+            Prevents overshoot when multiple workers contribute concurrently.
 
     Returns:
         totals dict with win/loss/draw counts
@@ -646,8 +654,9 @@ def run_ref_games(
             next_game_index = 0
             batch_completed = 0
 
-            # Submit initial games up to concurrency limit
-            while next_game_index < concurrency:
+            # Submit initial games up to concurrency limit (capped by max_games)
+            initial_limit = concurrency if max_games <= 0 else min(concurrency, max_games)
+            while next_game_index < initial_limit:
                 config = make_config(next_game_index, next_game_index)
                 callback = make_move_callback(next_game_index)
                 future = executor.submit(play_game_from_config, config, callback)
@@ -697,7 +706,8 @@ def run_ref_games(
                         batch_completed = 0
 
                     # Submit a new game if we should keep adding
-                    if keep_adding:
+                    # and haven't exceeded max_games limit
+                    if keep_adding and (max_games <= 0 or next_game_index < max_games):
                         new_config = make_config(next_game_index, next_game_index)
                         callback = make_move_callback(next_game_index)
                         new_future = executor.submit(play_game_from_config, new_config, callback)
@@ -912,7 +922,8 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                 total, plus_nps, minus_nps = run_spsa_games(
                     plus_path, minus_path,
                     iteration['timelow_ms'], iteration['timehigh_ms'],
-                    concurrency, batch_size, on_spsa_batch
+                    concurrency, batch_size, on_spsa_batch,
+                    max_games=remaining
                 )
                 elapsed = time.time() - start_time
 
@@ -973,7 +984,8 @@ def run_spsa_worker(concurrency: int = 1, batch_size: int = 10, poll_interval: i
                 total = run_ref_games(
                     base_path, ref_engine_path, ref_elo,
                     iteration['timelow_ms'], iteration['timehigh_ms'],
-                    concurrency, batch_size, on_ref_batch
+                    concurrency, batch_size, on_ref_batch,
+                    max_games=remaining
                 )
                 elapsed = time.time() - start_time
 
