@@ -23,7 +23,7 @@
 # Reverse futility pruning (beta pruning)
 # If static eval - margin * depth > beta, prune
 [beta_prune_margin_per_depth]
-value = 400
+value = 328.2918319743142
 min = 50
 max = 400
 step = 20
@@ -32,7 +32,7 @@ active_from_iteration = 1
 # FREEZE CANDIDATE: only 6 discrete values [6-12], may not converge well
 # Consider freezing if it oscillates without settling
 [beta_prune_max_depth]
-value = 6.4051533195570185
+value = 7.986490049623115
 min = 6
 max = 12
 step = 0.2
@@ -42,7 +42,7 @@ active_from_iteration = 1
 # Reduction = base + depth/6 (approximately)
 # FREEZE CANDIDATE: only 4 discrete values [2-6], previously converged to lower bound
 [null_move_reduce_depth_base]
-value = 2
+value = 2.473426643242701
 min = 2
 max = 6
 step = 0.15
@@ -50,7 +50,7 @@ active_from_iteration = 1
 
 # FREEZE CANDIDATE: previously stuck at min bound, discrete depth value
 [null_move_min_depth]
-value = 12.622772512389355
+value = 13.438279932659142
 min = 1
 max = 14
 step = 0.4
@@ -59,7 +59,7 @@ active_from_iteration = 1
 # SEE (Static Exchange Evaluation) pruning
 # At depth N, prune captures with SEE < -margin * N^2
 [see_prune_margin]
-value = 60.73576294017963
+value = 16.92225523119521
 min = 5
 max = 70
 step = 5
@@ -67,7 +67,7 @@ active_from_iteration = 1
 
 # FREEZE CANDIDATE: previously stuck at max bound, discrete depth value
 [see_prune_max_depth]
-value = 12.645917681056515
+value = 13.795570216095769
 min = 3
 max = 14
 step = 0.4
@@ -76,14 +76,14 @@ active_from_iteration = 1
 # Alpha (futility) pruning margins
 # If static eval + margin[depth] < alpha, prune
 [alpha_prune_margin_base]
-value = 223.7478987061665
+value = 56.9147647686537
 min = 50
 max = 300
 step = 8
 active_from_iteration = 1
 
 [alpha_prune_margin_per_depth]
-value = 47.708960897257285
+value = 65.6570447746436
 min = 16
 max = 160
 step = 4
@@ -92,21 +92,21 @@ active_from_iteration = 1
 # Late Move Pruning (LMP) thresholds
 # After N moves at depth D, skip remaining quiet moves
 [lmp_threshold_depth1]
-value = 6.770545676254934
+value = 14.412190247945873
 min = 2
 max = 16
 step = 2
 active_from_iteration = 1
 
 [lmp_threshold_depth2]
-value = 13.059606616607898
+value = 27.130302964853513
 min = 1
 max = 32
 step = 2
 active_from_iteration = 1
 
 [lmp_threshold_depth3]
-value = 11.18737068923733
+value = 17.438207069057626
 min = 2
 max = 48
 step = 2
@@ -115,14 +115,14 @@ active_from_iteration = 1
 # LMR History parameters (core to search efficiency)
 # History-based LMR: adjust reduction based on move's historical performance
 [lmr_history_good_divisor]
-value = 3.639062352032005
+value = 31.779985482765717
 min = 2
 max = 40
 step = 1
 active_from_iteration = 1
 
 [lmr_history_bad_divisor]
-value = 27.349134990274248
+value = 29.736294520143588
 min = 1
 max = 64
 step = 1
@@ -131,7 +131,7 @@ active_from_iteration = 1
 # Continuation history thresholds (countermove_history + followup_history combined)
 # UNFROZEN: was stuck due to formula bug (step in denominator), now fixed
 [lmr_continuation_good_threshold]
-value = 7799.2087827037885
+value = 9400.467574914504
 min = 0
 max = 16000
 step = 250
@@ -139,7 +139,7 @@ active_from_iteration = 1
 
 # UNFROZEN: was stuck due to formula bug, now fixed
 [lmr_continuation_bad_threshold]
-value = -2192.6364190637337
+value = -1437.4541942552219
 min = -16000
 max = -1000
 step = 500
@@ -154,14 +154,14 @@ active_from_iteration = 1
 # If a capture fails high, the position is probably winning and can be cut
 # FREEZE CANDIDATE: previously stuck at max bound (20), discrete depth value
 [probcut_min_depth]
-value = 11.988915310622847
+value = 13.861930966228499
 min = 2
 max = 20
 step = 0.5
 active_from_iteration = 75
 
 [probcut_margin]
-value = 142.08598455347789
+value = 57.126120059194776
 min = 50
 max = 300
 step = 25
@@ -169,7 +169,7 @@ active_from_iteration = 75
 
 # FREEZE CANDIDATE: only 4 discrete values [2-6], very small range
 [probcut_depth_reduction]
-value = 5.592185898441845
+value = 5.738355119186638
 min = 2
 max = 6
 step = 0.15
@@ -179,21 +179,21 @@ active_from_iteration = 75
 # At high depth, if multiple moves fail high at shallow depth,
 # assume the position is good and return a beta cutoff
 [multicut_min_depth]
-value = 8.275313503904396
+value = 30.6181427266799
 min = 6
 max = 40
 step = 1
 active_from_iteration = 75
 
 [multicut_depth_reduction]
-value = 4.7187606770543695
+value = 3.7860270756430143
 min = 2
 max = 10
 step = 1
 active_from_iteration = 75
 
 [multicut_moves_to_try]
-value = 3.5291700585776877
+value = 15.655113240173659
 min = 3
 max = 16
 step = 1
@@ -201,7 +201,7 @@ active_from_iteration = 75
 
 # FREEZE CANDIDATE: only 7 discrete values [3-10], small range
 [multicut_required_cutoffs]
-value = 4.760923388539734
+value = 9.915087262579796
 min = 3
 max = 10
 step = 0.25
@@ -210,7 +210,7 @@ active_from_iteration = 75
 # SINGULAR EXTENSION PARAMETERS
 # If the hash move is significantly better than all alternatives, extend its search.
 [singular_extension_min_depth]
-value = 16.720048571104417
+value = 18.81808975393688
 min = 4
 max = 20
 step = 1
@@ -218,14 +218,14 @@ active_from_iteration = 75
 
 # FREEZE CANDIDATE: discrete depth value, small range
 [singular_extension_depth_margin]
-value = 8.962299241966262
+value = 11.534001425398426
 min = 1
 max = 12
 step = 0.25
 active_from_iteration = 75
 
 [singular_extension_depth_reduction]
-value = 5.811455619877355
+value = 3.918574508207186
 min = 2
 max = 14
 step = 1
@@ -233,7 +233,7 @@ active_from_iteration = 75
 
 # FREEZE CANDIDATE: small range
 [singular_extension_margin_multiplier]
-value = 4.799637755429322
+value = 5.661627918666241
 min = 1
 max = 10
 step = 0.2
@@ -244,21 +244,21 @@ active_from_iteration = 75
 
 # Killer move bonuses
 [move_score_mate_killer]
-value = 2270.125736342125
+value = 2205.227126047309
 min = 500
 max = 3000
 step = 100
 active_from_iteration = 75
 
 [move_score_killer_1]
-value = 1794.5430168235744
+value = 2474.7279366798466
 min = 200
 max = 2500
 step = 75
 active_from_iteration = 75
 
 [move_score_killer_2]
-value = 719.5565808199973
+value = 599.036843754422
 min = 150
 max = 800
 step = 50
@@ -266,7 +266,7 @@ active_from_iteration = 75
 
 # History score maximum
 [move_score_history_max]
-value = 281.95311760160024
+value = 882.8312947972455
 min = 200
 max = 1000
 step = 50
@@ -274,14 +274,14 @@ active_from_iteration = 75
 
 # Distant killer bonuses (from 2 plies ago)
 [move_score_distant_killer_1]
-value = 50
+value = 591.5759788932821
 min = 50
 max = 600
 step = 25
 active_from_iteration = 75
 
 [move_score_distant_killer_2]
-value = 79.66005729149329
+value = 155.50590966819183
 min = 50
 max = 400
 step = 25
@@ -289,7 +289,7 @@ active_from_iteration = 75
 
 # Countermove bonus
 [move_score_countermove]
-value = 25
+value = 156.64153186565025
 min = 25
 max = 400
 step = 25
@@ -297,14 +297,14 @@ active_from_iteration = 75
 
 # Pawn push bonuses
 [move_score_pawn_push_7th]
-value = 468.0211531631055
+value = 430.1353055296651
 min = 50
 max = 750
 step = 15
 active_from_iteration = 75
 
 [move_score_pawn_push_6th]
-value = 24.13302575400081
+value = 171.35931330530053
 min = 0
 max = 200
 step = 15
@@ -312,21 +312,21 @@ active_from_iteration = 75
 
 # History table divisors (scale i16 history to score range)
 [countermove_history_divisor]
-value = 15.38996716151317
+value = 477.96711571448765
 min = 8
 max = 512
 step = 32
 active_from_iteration = 75
 
 [followup_history_divisor]
-value = 126.26421100762502
+value = 117.07931189982679
 min = 8
 max = 1024
 step = 16
 active_from_iteration = 75
 
 [capture_history_divisor]
-value = 1095.650572078964
+value = 1901.2623864271336
 min = 16
 max = 2048
 step = 32
@@ -339,14 +339,14 @@ active_from_iteration = 75
 
 # Rook file bonuses (relates to STS "Open Files and Diagonals" category)
 [rook_open_file_bonus]
-value = 17.797503204005974
+value = 37.44540637531875
 min = 5
 max = 50
 step = 3
 active_from_iteration = 150
 
 [rook_semi_open_file_bonus]
-value = 20.82498674907698
+value = 22.8683941428463
 min = 5
 max = 30
 step = 3
@@ -354,7 +354,7 @@ active_from_iteration = 150
 
 # Knight outposts (relates to STS "Knight Outposts" category)
 [value_knight_outpost]
-value = 9.913842225607794
+value = 1.7534191686030747
 min = 0
 max = 30
 step = 2
@@ -362,14 +362,14 @@ active_from_iteration = 150
 
 # Passed pawn bonuses (relates to STS "7th Rank" and pawn advancement)
 [value_rook_behind_passed_pawn]
-value = 45.74282150153337
+value = 6.684804221343578
 min = 5
 max = 70
 step = 5
 active_from_iteration = 150
 
 [value_guarded_passed_pawn]
-value = 42.151550603189676
+value = 56.842798316000824
 min = 10
 max = 60
 step = 5
@@ -377,21 +377,21 @@ active_from_iteration = 150
 
 # Pawn structure penalties
 [doubled_pawn_penalty]
-value = 28.324468284025006
+value = 5.506748901563768
 min = 5
 max = 40
 step = 3
 active_from_iteration = 150
 
 [isolated_pawn_penalty]
-value = 12.533866962337866
+value = 24.293540864130616
 min = 0
 max = 25
 step = 2
 active_from_iteration = 150
 
 [value_backward_pawn_penalty]
-value = 22.987261965447907
+value = 33.82038361074125
 min = 5
 max = 40
 step = 3
@@ -399,7 +399,7 @@ active_from_iteration = 150
 
 # Bishop pair bonus
 [value_bishop_pair]
-value = 16.370228060484102
+value = 30
 min = 0
 max = 30
 step = 3
@@ -407,7 +407,7 @@ active_from_iteration = 150
 
 # Space evaluation (relates to STS "Center Control" category)
 [space_bonus_per_square]
-value = 19.441489428008335
+value = 17.866177099467706
 min = 0
 max = 30
 step = 1
