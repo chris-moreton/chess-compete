@@ -987,43 +987,15 @@ def run_master():
     run_id, run_name = select_run()
     print(f"Active run: {run_name} (id={run_id})")
 
-    # Load per-run settings from database
-    run_settings = get_run_settings(run_id)
-    effective_iteration_offset = run_settings['effective_iteration_offset']
-    timelow = run_settings['timelow']
-    timehigh = run_settings['timehigh']
-    games_per_iteration = run_settings['games_per_iteration']
-    max_iterations = run_settings['max_iterations']
-    a = run_settings['a']
-    c = run_settings['c']
-    A = run_settings['A']
-    alpha = run_settings['alpha']
-    gamma = run_settings['gamma']
-    max_elo_diff = run_settings['max_elo_diff']
-    max_gradient_factor = run_settings['max_gradient_factor']
-    ref_enabled = run_settings['ref_enabled']
-    ref_ratio = run_settings['ref_ratio']
-
     # Load configuration (infrastructure settings only)
     config = load_config()
-    params = load_params(run_id)
     poll_interval = config['database']['poll_interval_seconds']
-
-    print(f"Parameters: {len(params)}")
-    print(f"SPSA games per iteration: {games_per_iteration}")
-    print(f"Time control: {timelow}-{timehigh}s/move")
-    print(f"Max iterations: {max_iterations}")
-
-    # Reference engine settings (path/elo from config, enabled/ratio from run)
     ref_elo = config.get('reference', {}).get('engine_elo', 2600)
     ref_path_config = config.get('reference', {}).get('engine_path')
 
-    # Calculate ref_target_games based on ratio
-    ref_target_games = int(games_per_iteration * ref_ratio) if ref_enabled else 0
-
-    # Resolve reference engine path
+    # Resolve reference engine path (infrastructure, doesn't change per-run)
     ref_path = None
-    if ref_enabled and ref_path_config:
+    if ref_path_config:
         ref_path = Path(ref_path_config)
         if not ref_path.is_absolute():
             ref_path = CHESS_COMPETE_DIR / ref_path
@@ -1034,12 +1006,20 @@ def run_master():
                 ref_path = ref_path_exe
         ref_path = str(ref_path) if ref_path.exists() else None
 
-    if ref_enabled and ref_path:
-        print(f"Reference games: {ref_target_games} per iteration (ratio: {ref_ratio})")
+    # Print initial settings
+    run_settings = get_run_settings(run_id)
+    params = load_params(run_id)
+    print(f"Parameters: {len(params)}")
+    print(f"SPSA games per iteration: {run_settings['games_per_iteration']}")
+    print(f"Time control: {run_settings['timelow']}-{run_settings['timehigh']}s/move")
+    print(f"Max iterations: {run_settings['max_iterations']}")
+
+    if run_settings['ref_enabled'] and ref_path:
+        ref_target = int(run_settings['games_per_iteration'] * run_settings['ref_ratio'])
+        print(f"Reference games: {ref_target} per iteration (ratio: {run_settings['ref_ratio']})")
         print(f"Reference engine: {ref_path} (Elo: {ref_elo})")
     else:
         print("Reference games: DISABLED")
-        ref_enabled = False
 
     print(f"{'='*60}")
 
@@ -1060,12 +1040,34 @@ def run_master():
         print(f"\nStarting from iteration {start_iteration}")
 
     # Main loop
-    for k in range(start_iteration, max_iterations + 1):
+    k = start_iteration
+    while True:
+        # Reload run settings and params from DB each iteration
+        run_settings = get_run_settings(run_id)
+        max_iterations = run_settings['max_iterations']
+
+        if k > max_iterations:
+            break
+
+        effective_iteration_offset = run_settings['effective_iteration_offset']
+        timelow = run_settings['timelow']
+        timehigh = run_settings['timehigh']
+        games_per_iteration = run_settings['games_per_iteration']
+        a = run_settings['a']
+        c = run_settings['c']
+        A = run_settings['A']
+        alpha = run_settings['alpha']
+        gamma = run_settings['gamma']
+        max_elo_diff = run_settings['max_elo_diff']
+        max_gradient_factor = run_settings['max_gradient_factor']
+        ref_enabled = run_settings['ref_enabled'] and ref_path is not None
+        ref_ratio = run_settings['ref_ratio']
+        ref_target_games = int(games_per_iteration * ref_ratio) if ref_enabled else 0
+
         print(f"\n{'='*60}")
         print(f"ITERATION {k}/{max_iterations}")
         print(f"{'='*60}")
 
-        # Reload params from DB each iteration
         params = load_params(run_id)
 
         # Calculate effective iteration (for learning rate) and SPSA coefficients
@@ -1206,6 +1208,7 @@ def run_master():
         # ===== Mark iteration complete =====
         mark_iteration_complete(iteration_id, gradient or {}, elo_diff or 0.0, ref_elo_estimate)
         print(f"\nIteration {k} complete!")
+        k += 1
 
     print(f"\n{'='*60}")
     print("SPSA TUNING COMPLETE")
