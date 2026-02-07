@@ -653,6 +653,32 @@
                     const maWindow = rollingEloN > 0 ? rollingEloN : 10;
                     const movingAvgData = movingAverage(refEloData, maWindow);
 
+                    const eloBandPlugin = {
+                        id: 'eloBands',
+                        beforeDraw(chart) {
+                            const { ctx, chartArea: { left, right, top, bottom }, scales: { y } } = chart;
+                            const bandSize = 25;
+                            const yMin = Math.floor(y.min / bandSize) * bandSize;
+                            const yMax = Math.ceil(y.max / bandSize) * bandSize;
+                            ctx.save();
+                            let bandIndex = 0;
+                            for (let elo = yMin; elo < yMax; elo += bandSize) {
+                                if (bandIndex % 2 === 0) {
+                                    const yTop = y.getPixelForValue(elo + bandSize);
+                                    const yBottom = y.getPixelForValue(elo);
+                                    const clampedTop = Math.max(yTop, top);
+                                    const clampedBottom = Math.min(yBottom, bottom);
+                                    if (clampedTop < clampedBottom) {
+                                        ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+                                        ctx.fillRect(left, clampedTop, right - left, clampedBottom - clampedTop);
+                                    }
+                                }
+                                bandIndex++;
+                            }
+                            ctx.restore();
+                        }
+                    };
+
                     refEloChart = new Chart(refEloCtx, {
                         type: 'line',
                         data: {
@@ -724,11 +750,15 @@
                                         text: 'Estimated Elo Rating',
                                         color: '#aaa'
                                     },
-                                    ticks: { color: '#aaa' },
+                                    ticks: {
+                                        color: '#aaa',
+                                        stepSize: 25
+                                    },
                                     grid: { color: '#333' }
                                 }
                             }
-                        }
+                        },
+                        plugins: [eloBandPlugin]
                     });
                 }
 
