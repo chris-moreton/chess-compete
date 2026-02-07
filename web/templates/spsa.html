@@ -361,6 +361,10 @@
                 <h3>Parameters</h3>
                 <div class="value">{{ param_names|length }}</div>
             </div>
+        </div>
+
+        <!-- Elo Cards -->
+        <div class="summary-cards">
             <div class="summary-card">
                 <h3>Est. Elo vs SF</h3>
                 <div class="value">{{ "%.0f"|format(latest_ref_elo) if latest_ref_elo else '-' }}</div>
@@ -656,11 +660,11 @@
                             datasets: [{
                                 label: 'Estimated Elo',
                                 data: refEloData,
-                                borderColor: '#69f0ae',
-                                borderWidth: 1.5,
+                                borderColor: 'rgba(105, 240, 174, 0.4)',
+                                backgroundColor: 'rgba(105, 240, 174, 0.4)',
+                                showLine: false,
                                 fill: false,
-                                tension: 0.3,
-                                pointRadius: 0,
+                                pointRadius: 2.5,
                                 pointHoverRadius: 6
                             }, {
                                 label: `${maWindow}-iter Moving Avg`,
