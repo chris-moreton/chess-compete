@@ -759,6 +759,17 @@ def register_routes(app):
                     rolling_elo_avg = sum(elo for _, elo in last_n) / len(last_n)
                     rolling_elo_n = len(last_n)  # Actual number used
 
+        # Compute rolling avg changes from different lookback periods
+        rolling_elo_changes = {}
+        if rolling_elo_avg is not None and valid_ref_elos:
+            for lookback in [1, 10, 50]:
+                if len(valid_ref_elos) >= rolling_elo_n + lookback:
+                    past_elos = valid_ref_elos[-(rolling_elo_n + lookback):-lookback]
+                    past_avg = sum(elo for _, elo in past_elos) / len(past_elos)
+                    rolling_elo_changes[lookback] = rolling_elo_avg - past_avg
+                else:
+                    rolling_elo_changes[lookback] = None
+
         # Build filtered data for ref_elo chart (only iterations with reference data)
         # Uses ref_min_iteration to exclude buggy early data (run 1 only)
         ref_iteration_numbers = []
@@ -799,6 +810,7 @@ def register_routes(app):
             effective_iteration_offset=effective_iteration_offset,
             latest_effective_iteration=latest_effective_iteration,
             param_bounds=param_bounds,
+            rolling_elo_changes=rolling_elo_changes,
             all_runs=all_runs,
             selected_run=selected_run
         )

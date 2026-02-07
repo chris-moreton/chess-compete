@@ -372,6 +372,22 @@
                 <div style="font-size: 11px; color: #666;">avg of {{ rolling_elo_n }} iterations</div>
                 {% endif %}
             </div>
+            {% if rolling_elo_changes %}
+            {% for lookback, label in [(1, 'Last iter'), (10, 'Last 10 iters'), (50, 'Last 50 iters')] %}
+            <div class="summary-card">
+                <h3>Elo &Delta; {{ label }}</h3>
+                {% if rolling_elo_changes[lookback] is not none %}
+                <div class="value" style="color: {{ '#4caf50' if rolling_elo_changes[lookback] >= 0 else '#f44336' }};">
+                    {{ "%+.1f"|format(rolling_elo_changes[lookback]) }}
+                </div>
+                <div style="font-size: 11px; color: #666;">rolling avg change</div>
+                {% else %}
+                <div class="value">-</div>
+                <div style="font-size: 11px; color: #666;">not enough data</div>
+                {% endif %}
+            </div>
+            {% endfor %}
+            {% endif %}
         </div>
 
         {% if in_progress %}
@@ -538,6 +554,7 @@
             const allStabilityIterations = {{ stability_iterations|tojson }};
             const paramBounds = {{ param_bounds|tojson }};
             const effectiveIterationOffset = {{ effective_iteration_offset|tojson }};
+            const rollingEloN = {{ rolling_elo_n|tojson }};
 
             // Current filter setting - default to 'offset' if offset exists, otherwise 'all'
             let currentFilter = effectiveIterationOffset > 0 ? 'offset' : 'all';
@@ -629,7 +646,7 @@
                 // Build Elo vs Stockfish Chart
                 const refEloCtx = document.getElementById('refEloChart').getContext('2d');
                 if (refEloData.length > 0) {
-                    const maWindow = 10;
+                    const maWindow = rollingEloN > 0 ? rollingEloN : 10;
                     const movingAvgData = movingAverage(refEloData, maWindow);
 
                     refEloChart = new Chart(refEloCtx, {
@@ -640,7 +657,7 @@
                                 label: 'Estimated Elo',
                                 data: refEloData,
                                 borderColor: '#69f0ae',
-                                borderWidth: 3,
+                                borderWidth: 1.5,
                                 fill: false,
                                 tension: 0.3,
                                 pointRadius: 0,
