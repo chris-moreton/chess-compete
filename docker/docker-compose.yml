@@ -15,7 +15,7 @@ services:
       - SPSA_API_URL=${SPSA_API_URL:-https://chess-compete-production.up.railway.app}
       - SPSA_API_KEY=${SPSA_API_KEY:?SPSA_API_KEY is required}
       - COMPUTER_NAME=${COMPUTER_NAME:-docker-worker}
-    command: ["--concurrency", "${CONCURRENCY:-4}", "--spsa-batch", "10"]
+    command: ["--concurrency", "${CONCURRENCY:-4}"]
     restart: unless-stopped
     # Limit resources per worker (adjust based on your hardware)
     deploy:

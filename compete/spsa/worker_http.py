@@ -79,11 +79,11 @@ class APIClient:
 
     def report_spsa_results(self, iteration_id: int, games: int,
                            plus_wins: int, minus_wins: int, draws: int,
-                           worker_name: str = None, avg_nps: int = None) -> bool:
+                           worker_name: str = None, avg_nps: int = None) -> int | None:
         """
         Report SPSA game results.
 
-        Returns True on success.
+        Returns remaining game count from server, or None on error.
         """
         try:
             payload = {
@@ -103,18 +103,19 @@ class APIClient:
                 timeout=30
             )
             resp.raise_for_status()
-            return True
+            data = resp.json()
+            return data.get('remaining')
         except requests.RequestException as e:
             print(f"\n  API error (report_spsa_results): {e}")
-            return False
+            return None
 
     def report_ref_results(self, iteration_id: int, games: int,
                           wins: int, losses: int, draws: int,
-                          worker_name: str = None, avg_nps: int = None) -> bool:
+                          worker_name: str = None, avg_nps: int = None) -> int | None:
         """
         Report reference game results.
 
-        Returns True on success.
+        Returns remaining game count from server, or None on error.
         """
         try:
             payload = {
@@ -134,10 +135,11 @@ class APIClient:
                 timeout=30
             )
             resp.raise_for_status()
-            return True
+            data = resp.json()
+            return data.get('remaining')
         except requests.RequestException as e:
             print(f"\n  API error (report_ref_results): {e}")
-            return False
+            return None
 
 
 def load_config() -> dict:
@@ -277,12 +279,12 @@ def ensure_base_engine_ready(iteration: dict, config: dict) -> str:
 def run_spsa_games(
     plus_path: str, minus_path: str,
     timelow_ms: int, timehigh_ms: int,
-    concurrency: int, batch_size: int,
-    on_batch_complete: callable,
+    concurrency: int,
+    on_game_complete: callable,
     max_games: int = 0
 ) -> tuple[dict, float, float]:
     """
-    Run SPSA games (plus vs minus), calling on_batch_complete every batch_size completions.
+    Run SPSA games (plus vs minus), calling on_game_complete after every game.
 
     Args:
         plus_path: Path to the plus-perturbed engine binary
@@ -290,9 +292,9 @@ def run_spsa_games(
         timelow_ms: Minimum time per move in milliseconds
         timehigh_ms: Maximum time per move in milliseconds
         concurrency: Number of parallel games to keep running
-        batch_size: How often to report (every N completed games)
-        on_batch_complete: Callback(results) -> bool
-            Called every batch_size games. Returns True to continue, False to stop.
+        on_game_complete: Callback(results) -> int
+            Called after each game. Returns remaining games from server (int),
+            or negative value to signal stop.
             results = {'plus_wins': N, 'minus_wins': N, 'draws': N}
 
     Returns:
@@ -300,17 +302,12 @@ def run_spsa_games(
     """
     # Totals
     total = {'plus_wins': 0, 'minus_wins': 0, 'draws': 0, 'errors': 0}
-    batch = {'plus_wins': 0, 'minus_wins': 0, 'draws': 0}
 
     # NPS tracking (overall)
     plus_nps_total = 0
     minus_nps_total = 0
     plus_nps_count = 0
     minus_nps_count = 0
-
-    # NPS tracking (per batch)
-    batch_nps_total = 0
-    batch_nps_count = 0
 
     def make_config(game_index: int, game_num: int) -> GameConfig:
         """Create a SPSA game config (plus vs minus)."""
@@ -348,56 +345,53 @@ def run_spsa_games(
                 is_engine1_white=False  # plus is black
             )
 
-    def process_result(config: GameConfig, result):
-        """Process a completed SPSA game result."""
+    def process_result(config: GameConfig, result) -> dict:
+        """Process a completed SPSA game result. Returns single-game result dict."""
         nonlocal plus_nps_total, minus_nps_total, plus_nps_count, minus_nps_count
-        nonlocal batch_nps_total, batch_nps_count
+
+        game_result = {'plus_wins': 0, 'minus_wins': 0, 'draws': 0}
 
         # Determine winner from plus engine's perspective
         if config.is_engine1_white:
             # Plus was white
             if result.result == "1-0":
-                batch['plus_wins'] += 1
+                game_result['plus_wins'] = 1
                 total['plus_wins'] += 1
             elif result.result == "0-1":
-                batch['minus_wins'] += 1
+                game_result['minus_wins'] = 1
                 total['minus_wins'] += 1
             else:
-                batch['draws'] += 1
+                game_result['draws'] = 1
                 total['draws'] += 1
             # Collect NPS
             if result.white_nps:
                 plus_nps_total += result.white_nps
                 plus_nps_count += 1
-                batch_nps_total += result.white_nps
-                batch_nps_count += 1
+                game_result['avg_nps'] = result.white_nps
             if result.black_nps:
                 minus_nps_total += result.black_nps
                 minus_nps_count += 1
-                batch_nps_total += result.black_nps
-                batch_nps_count += 1
         else:
             # Plus was black
             if result.result == "0-1":
-                batch['plus_wins'] += 1
+                game_result['plus_wins'] = 1
                 total['plus_wins'] += 1
             elif result.result == "1-0":
-                batch['minus_wins'] += 1
+                game_result['minus_wins'] = 1
                 total['minus_wins'] += 1
             else:
-                batch['draws'] += 1
+                game_result['draws'] = 1
                 total['draws'] += 1
             # Collect NPS
             if result.white_nps:
                 minus_nps_total += result.white_nps
                 minus_nps_count += 1
-                batch_nps_total += result.white_nps
-                batch_nps_count += 1
             if result.black_nps:
                 plus_nps_total += result.black_nps
                 plus_nps_count += 1
-                batch_nps_total += result.black_nps
-                batch_nps_count += 1
+                game_result['avg_nps'] = result.black_nps
+
+        return game_result
 
     if concurrency > 1:
         # Continuous pipeline: always keep concurrency games running
@@ -413,7 +407,6 @@ def run_spsa_games(
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             pending_futures = {}  # future -> config
             next_game_index = 0
-            batch_completed = 0
 
             # Submit initial games up to concurrency limit (capped by max_games)
             initial_limit = concurrency if max_games <= 0 else min(concurrency, max_games)
@@ -449,52 +442,34 @@ def run_spsa_games(
                             outcome = "plus_win" if result.result == "0-1" else "minus_win" if result.result == "1-0" else "draw"
 
                         progress.finish_game(config.game_index, result.result, nps, outcome)
-                        process_result(config, result)
-                        batch_completed += 1
+                        game_result = process_result(config, result)
+
+                        # Report this single game to server, get remaining count
+                        remaining = on_game_complete(game_result)
+
+                        # Use remaining to decide whether to submit more games
+                        if remaining is not None and remaining <= 0:
+                            keep_adding = False
+                        elif remaining is not None and remaining <= len(pending_futures):
+                            pass  # Enough in-flight, don't add more
+                        elif keep_adding and (max_games <= 0 or next_game_index < max_games):
+                            new_config = make_config(next_game_index, next_game_index)
+                            callback = make_move_callback(next_game_index)
+                            new_future = executor.submit(play_game_from_config, new_config, callback)
+                            pending_futures[new_future] = new_config
+                            progress.start_game(next_game_index, 'spsa')
+                            next_game_index += 1
 
                     except Exception as e:
                         progress.finish_game(config.game_index, "err", outcome="err")
                         print(f"\n  Error in SPSA game: {e}")
                         total['errors'] += 1
-                        batch_completed += 1
-
-                    # Check if we've completed a batch
-                    if batch_completed >= batch_size:
-                        # Include avg NPS in batch results
-                        batch_result = batch.copy()
-                        if batch_nps_count > 0:
-                            batch_result['avg_nps'] = int(batch_nps_total / batch_nps_count)
-                        keep_adding = on_batch_complete(batch_result)
-                        # Reset batch counters
-                        for k in batch:
-                            batch[k] = 0
-                        batch_nps_total = 0
-                        batch_nps_count = 0
-                        batch_completed = 0
-
-                    # Submit a new game if we should keep adding
-                    # and haven't exceeded max_games limit
-                    if keep_adding and (max_games <= 0 or next_game_index < max_games):
-                        new_config = make_config(next_game_index, next_game_index)
-                        callback = make_move_callback(next_game_index)
-                        new_future = executor.submit(play_game_from_config, new_config, callback)
-                        pending_futures[new_future] = new_config
-                        progress.start_game(next_game_index, 'spsa')
-                        next_game_index += 1
-
-            # Final batch update
-            if sum(batch.values()) > 0:
-                batch_result = batch.copy()
-                if batch_nps_count > 0:
-                    batch_result['avg_nps'] = int(batch_nps_total / batch_nps_count)
-                on_batch_complete(batch_result)
 
         progress.stop()
 
     else:
         # Sequential execution
         game_index = 0
-        batch_completed = 0
         keep_going = True
 
         while keep_going:
@@ -512,34 +487,18 @@ def run_spsa_games(
                 min_result.result = result
                 min_result.white_nps = None
                 min_result.black_nps = None
-                process_result(config, min_result)
-                batch_completed += 1
+                game_result = process_result(config, min_result)
+
+                # Report this single game to server
+                remaining = on_game_complete(game_result)
+                if remaining is not None and remaining <= 0:
+                    keep_going = False
 
             except Exception as e:
                 print(f"  Error in SPSA game: {e}")
                 total['errors'] += 1
-                batch_completed += 1
 
             game_index += 1
-
-            # Check if we've completed a batch
-            if batch_completed >= batch_size:
-                batch_result = batch.copy()
-                if batch_nps_count > 0:
-                    batch_result['avg_nps'] = int(batch_nps_total / batch_nps_count)
-                keep_going = on_batch_complete(batch_result)
-                for k in batch:
-                    batch[k] = 0
-                batch_nps_total = 0
-                batch_nps_count = 0
-                batch_completed = 0
-
-        # Final batch update
-        if sum(batch.values()) > 0:
-            batch_result = batch.copy()
-            if batch_nps_count > 0:
-                batch_result['avg_nps'] = int(batch_nps_total / batch_nps_count)
-            on_batch_complete(batch_result)
 
     # Calculate average NPS
     plus_avg_nps = plus_nps_total / plus_nps_count if plus_nps_count > 0 else 0
@@ -551,12 +510,12 @@ def run_spsa_games(
 def run_ref_games(
     base_path: str, ref_path: str, ref_elo: int,
     timelow_ms: int, timehigh_ms: int,
-    concurrency: int, batch_size: int,
-    on_batch_complete: callable,
+    concurrency: int,
+    on_game_complete: callable,
     max_games: int = 0
 ) -> dict:
     """
-    Run reference games (base vs Stockfish), calling on_batch_complete every batch_size completions.
+    Run reference games (base vs Stockfish), calling on_game_complete after every game.
 
     Args:
         base_path: Path to the base engine binary (with updated parameters)
@@ -565,9 +524,9 @@ def run_ref_games(
         timelow_ms: Minimum time per move in milliseconds
         timehigh_ms: Maximum time per move in milliseconds
         concurrency: Number of parallel games to keep running
-        batch_size: How often to report (every N completed games)
-        on_batch_complete: Callback(results) -> bool
-            Called every batch_size games. Returns True to continue, False to stop.
+        on_game_complete: Callback(results) -> int
+            Called after each game. Returns remaining games from server (int),
+            or negative value to signal stop.
             results = {'wins': N, 'losses': N, 'draws': N}
 
     Returns:
@@ -581,11 +540,6 @@ def run_ref_games(
 
     # Totals
     total = {'wins': 0, 'losses': 0, 'draws': 0, 'errors': 0}
-    batch = {'wins': 0, 'losses': 0, 'draws': 0}
-
-    # NPS tracking (per batch) - only track base engine NPS
-    batch_nps_total = 0
-    batch_nps_count = 0
 
     def make_config(game_index: int, game_num: int) -> GameConfig:
         """Create a reference game config (base vs stockfish)."""
@@ -623,41 +577,41 @@ def run_ref_games(
                 is_engine1_white=False  # base is black
             )
 
-    def process_result(config: GameConfig, result):
-        """Process a completed reference game result."""
-        nonlocal batch_nps_total, batch_nps_count
+    def process_result(config: GameConfig, result) -> dict:
+        """Process a completed reference game result. Returns single-game result dict."""
+        game_result = {'wins': 0, 'losses': 0, 'draws': 0}
 
         # Determine result from base engine's perspective
         if config.is_engine1_white:
             # Base was white
             if result.result == "1-0":
-                batch['wins'] += 1
+                game_result['wins'] = 1
                 total['wins'] += 1
             elif result.result == "0-1":
-                batch['losses'] += 1
+                game_result['losses'] = 1
                 total['losses'] += 1
             else:
-                batch['draws'] += 1
+                game_result['draws'] = 1
                 total['draws'] += 1
             # Track base engine NPS (white)
             if result.white_nps:
-                batch_nps_total += result.white_nps
-                batch_nps_count += 1
+                game_result['avg_nps'] = result.white_nps
         else:
             # Base was black
             if result.result == "0-1":
-                batch['wins'] += 1
+                game_result['wins'] = 1
                 total['wins'] += 1
             elif result.result == "1-0":
-                batch['losses'] += 1
+                game_result['losses'] = 1
                 total['losses'] += 1
             else:
-                batch['draws'] += 1
+                game_result['draws'] = 1
                 total['draws'] += 1
             # Track base engine NPS (black)
             if result.black_nps:
-                batch_nps_total += result.black_nps
-                batch_nps_count += 1
+                game_result['avg_nps'] = result.black_nps
+
+        return game_result
 
     if concurrency > 1:
         # Continuous pipeline: always keep concurrency games running
@@ -673,7 +627,6 @@ def run_ref_games(
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             pending_futures = {}  # future -> config
             next_game_index = 0
-            batch_completed = 0
 
             # Submit initial games up to concurrency limit (capped by max_games)
             initial_limit = concurrency if max_games <= 0 else min(concurrency, max_games)
@@ -709,51 +662,34 @@ def run_ref_games(
                             outcome = "win" if result.result == "0-1" else "loss" if result.result == "1-0" else "draw"
 
                         progress.finish_game(config.game_index, result.result, nps, outcome)
-                        process_result(config, result)
-                        batch_completed += 1
+                        game_result = process_result(config, result)
+
+                        # Report this single game to server, get remaining count
+                        remaining = on_game_complete(game_result)
+
+                        # Use remaining to decide whether to submit more games
+                        if remaining is not None and remaining <= 0:
+                            keep_adding = False
+                        elif remaining is not None and remaining <= len(pending_futures):
+                            pass  # Enough in-flight, don't add more
+                        elif keep_adding and (max_games <= 0 or next_game_index < max_games):
+                            new_config = make_config(next_game_index, next_game_index)
+                            callback = make_move_callback(next_game_index)
+                            new_future = executor.submit(play_game_from_config, new_config, callback)
+                            pending_futures[new_future] = new_config
+                            progress.start_game(next_game_index, 'ref')
+                            next_game_index += 1
 
                     except Exception as e:
                         progress.finish_game(config.game_index, "err", outcome="err")
                         print(f"\n  Error in ref game: {e}")
                         total['errors'] += 1
-                        batch_completed += 1
-
-                    # Check if we've completed a batch
-                    if batch_completed >= batch_size:
-                        batch_result = batch.copy()
-                        if batch_nps_count > 0:
-                            batch_result['avg_nps'] = int(batch_nps_total / batch_nps_count)
-                        keep_adding = on_batch_complete(batch_result)
-                        # Reset batch counters
-                        for k in batch:
-                            batch[k] = 0
-                        batch_nps_total = 0
-                        batch_nps_count = 0
-                        batch_completed = 0
-
-                    # Submit a new game if we should keep adding
-                    # and haven't exceeded max_games limit
-                    if keep_adding and (max_games <= 0 or next_game_index < max_games):
-                        new_config = make_config(next_game_index, next_game_index)
-                        callback = make_move_callback(next_game_index)
-                        new_future = executor.submit(play_game_from_config, new_config, callback)
-                        pending_futures[new_future] = new_config
-                        progress.start_game(next_game_index, 'ref')
-                        next_game_index += 1
-
-            # Final batch update
-            if sum(batch.values()) > 0:
-                batch_result = batch.copy()
-                if batch_nps_count > 0:
-                    batch_result['avg_nps'] = int(batch_nps_total / batch_nps_count)
-                on_batch_complete(batch_result)
 
         progress.stop()
 
     else:
         # Sequential execution
         game_index = 0
-        batch_completed = 0
         keep_going = True
 
         while keep_going:
@@ -771,34 +707,18 @@ def run_ref_games(
                 min_result.result = result
                 min_result.white_nps = None
                 min_result.black_nps = None
-                process_result(config, min_result)
-                batch_completed += 1
+                game_result = process_result(config, min_result)
+
+                # Report this single game to server
+                remaining = on_game_complete(game_result)
+                if remaining is not None and remaining <= 0:
+                    keep_going = False
 
             except Exception as e:
                 print(f"  Error in ref game: {e}")
                 total['errors'] += 1
-                batch_completed += 1
 
             game_index += 1
-
-            # Check if we've completed a batch
-            if batch_completed >= batch_size:
-                batch_result = batch.copy()
-                if batch_nps_count > 0:
-                    batch_result['avg_nps'] = int(batch_nps_total / batch_nps_count)
-                keep_going = on_batch_complete(batch_result)
-                for k in batch:
-                    batch[k] = 0
-                batch_nps_total = 0
-                batch_nps_count = 0
-                batch_completed = 0
-
-        # Final batch update
-        if sum(batch.values()) > 0:
-            batch_result = batch.copy()
-            if batch_nps_count > 0:
-                batch_result['avg_nps'] = int(batch_nps_total / batch_nps_count)
-            on_batch_complete(batch_result)
 
     return total
 
@@ -838,7 +758,7 @@ def get_reference_engine_path(config: dict) -> str | None:
 
 
 def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
-                    batch_size: int = 10, poll_interval: int = 10):
+                    poll_interval: int = 10):
     """
     Run the SPSA HTTP worker loop.
 
@@ -846,7 +766,6 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
         api_url: Base URL of the chess-compete web API
         api_key: API key for authentication
         concurrency: Number of games to run in parallel
-        batch_size: Number of games per batch before reporting to API
         poll_interval: Seconds to wait when no work is available
     """
     hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
@@ -868,7 +787,6 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
     print(f"Host: {hostname}")
     print(f"API URL: {api_url}")
     print(f"Concurrency: {concurrency} games in parallel")
-    print(f"Batch size: {batch_size} games per update")
     print(f"Poll interval: {poll_interval}s when idle")
     print(f"Opening book: {len(OPENING_BOOK)} positions")
     print(f"Rusty-rival source: {get_rusty_rival_path(config)}")
@@ -930,34 +848,20 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                 print(f"  Plus:  {plus_path}")
                 print(f"  Minus: {minus_path}")
 
-                # Callback for SPSA batch updates
-                def on_spsa_batch(results: dict) -> bool:
+                # Callback for per-game SPSA updates
+                def on_spsa_game(results: dict) -> int:
                     nonlocal games_total
-                    completed = results['plus_wins'] + results['minus_wins'] + results['draws']
-                    if completed > 0:
-                        # Get NPS from results if available
-                        batch_nps = results.get('avg_nps')
-                        success = api.report_spsa_results(
-                            iteration_id, completed,
-                            results['plus_wins'], results['minus_wins'], results['draws'],
-                            worker_name=hostname, avg_nps=batch_nps
-                        )
-                        if not success:
-                            print("  Warning: Failed to report results to API")
-                        games_total += completed
-
-                    # Check if iteration phase is complete
-                    updated = api.get_work(hostname)
-                    if not updated or updated.get('iteration_number') != current_iteration:
-                        return False
-                    if updated.get('phase') != 'spsa':
-                        return False  # Phase changed
-                    remaining = updated['target_games'] - updated['games_played']
-                    if remaining <= 0:
-                        return False
-
-                    print(f"  Batch: +{results['plus_wins']}W-{results['minus_wins']}L-{results['draws']}D | Progress: {updated['games_played']}/{updated['target_games']}")
-                    return True
+                    game_nps = results.get('avg_nps')
+                    remaining = api.report_spsa_results(
+                        iteration_id, 1,
+                        results['plus_wins'], results['minus_wins'], results['draws'],
+                        worker_name=hostname, avg_nps=game_nps
+                    )
+                    if remaining is None:
+                        print("  Warning: Failed to report results to API")
+                        return -1  # Signal stop on error
+                    games_total += 1
+                    return remaining
 
                 # Run SPSA games
                 print(f"\n  Running SPSA games (concurrency={concurrency}):")
@@ -965,7 +869,7 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                 total, plus_nps, minus_nps = run_spsa_games(
                     plus_path, minus_path,
                     iteration['timelow_ms'], iteration['timehigh_ms'],
-                    concurrency, batch_size, on_spsa_batch,
+                    concurrency, on_spsa_game,
                     max_games=remaining
                 )
                 elapsed = time.time() - start_time
@@ -997,34 +901,20 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                 print(f"  Base: {base_path}")
                 print(f"  Ref:  {ref_engine_path}")
 
-                # Callback for ref batch updates
-                def on_ref_batch(results: dict) -> bool:
+                # Callback for per-game ref updates
+                def on_ref_game(results: dict) -> int:
                     nonlocal ref_games_total
-                    completed = results['wins'] + results['losses'] + results['draws']
-                    if completed > 0:
-                        # Get NPS from results if available
-                        batch_nps = results.get('avg_nps')
-                        success = api.report_ref_results(
-                            iteration_id, completed,
-                            results['wins'], results['losses'], results['draws'],
-                            worker_name=hostname, avg_nps=batch_nps
-                        )
-                        if not success:
-                            print("  Warning: Failed to report results to API")
-                        ref_games_total += completed
-
-                    # Check if iteration phase is complete
-                    updated = api.get_work(hostname)
-                    if not updated or updated.get('iteration_number') != current_iteration:
-                        return False
-                    if updated.get('phase') != 'ref':
-                        return False  # Phase changed
-                    remaining = updated['target_games'] - updated['games_played']
-                    if remaining <= 0:
-                        return False
-
-                    print(f"  Batch: {results['wins']}W-{results['losses']}L-{results['draws']}D | Progress: {updated['games_played']}/{updated['target_games']}")
-                    return True
+                    game_nps = results.get('avg_nps')
+                    remaining = api.report_ref_results(
+                        iteration_id, 1,
+                        results['wins'], results['losses'], results['draws'],
+                        worker_name=hostname, avg_nps=game_nps
+                    )
+                    if remaining is None:
+                        print("  Warning: Failed to report results to API")
+                        return -1  # Signal stop on error
+                    ref_games_total += 1
+                    return remaining
 
                 # Run reference games
                 print(f"\n  Running reference games vs sf-{ref_elo} (concurrency={concurrency}):")
@@ -1032,7 +922,7 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                 total = run_ref_games(
                     base_path, ref_engine_path, ref_elo,
                     iteration['timelow_ms'], iteration['timehigh_ms'],
-                    concurrency, batch_size, on_ref_batch,
+                    concurrency, on_ref_game,
                     max_games=remaining
                 )
                 elapsed = time.time() - start_time
@@ -1062,8 +952,6 @@ def main():
                         help='API key for authentication (or set SPSA_API_KEY env var)')
     parser.add_argument('--concurrency', '-c', type=int, default=1,
                         help='Number of games to run in parallel (default: 1)')
-    parser.add_argument('--batch-size', '-b', type=int, default=10,
-                        help='Games per batch before reporting (default: 10)')
     parser.add_argument('--poll-interval', '-p', type=int, default=10,
                         help='Seconds to wait when no work available (default: 10)')
 
@@ -1081,7 +969,6 @@ def main():
         api_url=args.api_url,
         api_key=args.api_key,
         concurrency=args.concurrency,
-        batch_size=args.batch_size,
         poll_interval=args.poll_interval
     )
 

@@ -107,8 +107,6 @@ def main():
                         help="Include inactive engines in cup competition")
     parser.add_argument("--spsa-http", action="store_true",
                         help="SPSA HTTP worker mode: poll API for iterations (for remote workers)")
-    parser.add_argument("--spsa-batch", type=int, default=10, metavar="N",
-                        help="SPSA: games per batch before reporting (default: 10)")
     parser.add_argument("--api-url", type=str, default=None,
                         help="SPSA HTTP: API base URL (or set SPSA_API_URL env var)")
     parser.add_argument("--api-key", type=str, default=None,
@@ -265,7 +263,6 @@ def main():
             api_url=api_url,
             api_key=api_key,
             concurrency=args.concurrency,
-            batch_size=args.spsa_batch,
             poll_interval=10
         )
     elif args.cup:

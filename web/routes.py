@@ -1064,12 +1064,18 @@ def register_routes(app):
             db.session.rollback()
             return jsonify({'error': str(e)}), 500
 
+        # Read back current state to return remaining count
+        row = db.session.execute(db.text(
+            "SELECT games_played, target_games FROM spsa_iterations WHERE id = :id"
+        ), {'id': iteration_id}).fetchone()
+        remaining = max(0, row.target_games - row.games_played) if row else 0
+
         # Record worker activity (optional, won't fail the request)
         worker_name = data.get('worker_name') or request.headers.get('X-Worker-Host')
         avg_nps = data.get('avg_nps')
         record_worker_activity(worker_name, iteration_id, 'spsa', data['games'], avg_nps)
 
-        return jsonify({'status': 'ok'})
+        return jsonify({'status': 'ok', 'remaining': remaining})
 
     @app.route('/api/spsa/iterations/<int:iteration_id>/ref-results', methods=['POST'])
     def spsa_report_ref_results(iteration_id):
@@ -1128,12 +1134,18 @@ def register_routes(app):
             db.session.rollback()
             return jsonify({'error': str(e)}), 500
 
+        # Read back current state to return remaining count
+        row = db.session.execute(db.text(
+            "SELECT ref_games_played, ref_target_games FROM spsa_iterations WHERE id = :id"
+        ), {'id': iteration_id}).fetchone()
+        remaining = max(0, row.ref_target_games - row.ref_games_played) if row else 0
+
         # Record worker activity (optional, won't fail the request)
         worker_name = data.get('worker_name') or request.headers.get('X-Worker-Host')
         avg_nps = data.get('avg_nps')
         record_worker_activity(worker_name, iteration_id, 'ref', data['games'], avg_nps)
 
-        return jsonify({'status': 'ok'})
+        return jsonify({'status': 'ok', 'remaining': remaining})
 
     # =========================================================================
     # SPSA Workers Dashboard

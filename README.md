@@ -670,9 +670,6 @@ Workers can run on multiple machines (including the master machine):
 ```bash
 # Start SPSA worker with 8 parallel games
 python -m compete --spsa -c 8
-
-# With custom batch size (games per database update)
-python -m compete --spsa -c 8 --spsa-batch 20
 ```
 
 Workers will:
@@ -850,7 +847,6 @@ When using `--timelow` and `--timehigh`, a random time is selected for each matc
 |--------|-------------|
 | `--spsa` | SPSA worker mode with direct database access |
 | `--spsa-http` | SPSA worker mode via HTTP API (for remote/Docker workers) |
-| `--spsa-batch N` | Games per batch before reporting (default: 10) |
 | `--api-url URL` | API base URL for HTTP worker (or set `SPSA_API_URL`) |
 | `--api-key KEY` | API key for HTTP worker (or set `SPSA_API_KEY`) |
 

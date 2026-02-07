@@ -61,12 +61,11 @@ docker stop spsa-worker-1
 The container runs `python -m compete --spsa-http` with these options:
 
 - `--concurrency N` / `-c N`: Number of parallel games (default: 1)
-- `--spsa-batch N` / `-b N`: Games per batch before reporting (default: 10)
 - `--poll-interval N` / `-p N`: Seconds between API polls when idle (default: 10)
 
 Example:
 ```bash
-docker run spsa-worker --concurrency 8 --spsa-batch 20
+docker run spsa-worker --concurrency 8
 ```
 
 ## Resource Requirements

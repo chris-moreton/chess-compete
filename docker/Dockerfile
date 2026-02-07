@@ -75,4 +75,4 @@ ENV PYTHONUNBUFFERED=1
 
 # Entry point
 ENTRYPOINT ["python", "-m", "compete", "--spsa-http"]
-CMD ["--concurrency", "1", "--spsa-batch", "10"]
+CMD ["--concurrency", "1"]
