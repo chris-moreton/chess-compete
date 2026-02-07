@@ -860,20 +860,46 @@ def select_run() -> tuple[int, str]:
     """
     Select which SPSA run to use.
 
-    If --run <name> is provided, activates that run (or creates it interactively).
-    Otherwise, lists all runs and prompts the user to select one or create a new one.
+    Non-interactive mode (INTERACTIVE_MODE_DISABLED=true):
+        Uses RUN_ID env var to select run by ID. Raises error if not set or not found.
+
+    Interactive mode:
+        If --run <name> is provided, activates that run (or creates it interactively).
+        Otherwise, lists all runs and prompts the user to select one or create a new one.
 
     Returns (run_id, run_name).
     """
+    from web.app import create_app
+    from web.database import db
+    from web.models import SpsaRun, SpsaParam
+
+    # Non-interactive mode: use RUN_ID env var
+    if os.environ.get('INTERACTIVE_MODE_DISABLED', '').lower() == 'true':
+        run_id_str = os.environ.get('RUN_ID')
+        if not run_id_str:
+            raise RuntimeError(
+                "INTERACTIVE_MODE_DISABLED=true but RUN_ID env var is not set. "
+                "Set RUN_ID to the numeric ID of the run to use."
+            )
+        try:
+            run_id = int(run_id_str)
+        except ValueError:
+            raise RuntimeError(f"RUN_ID must be a numeric ID, got: '{run_id_str}'")
+
+        app = create_app()
+        with app.app_context():
+            selected = db.session.get(SpsaRun, run_id)
+            if not selected:
+                raise RuntimeError(f"Run with ID {run_id} not found in database.")
+            _activate_run(db, SpsaRun, selected)
+            print(f"Non-interactive mode: activated run '{selected.name}' (id={selected.id})")
+            return selected.id, selected.name
+
     import argparse
 
     parser = argparse.ArgumentParser(description='SPSA Master Controller')
     parser.add_argument('--run', type=str, help='Run name to use or create')
     args = parser.parse_args()
-
-    from web.app import create_app
-    from web.database import db
-    from web.models import SpsaRun, SpsaParam
 
     app = create_app()
     with app.app_context():

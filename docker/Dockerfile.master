@@ -1,0 +1,43 @@
+# SPSA Master Controller Docker Image
+#
+# Orchestrates SPSA tuning iterations. Needs Python + DB access + Stockfish
+# binary (for ref game path check). Does NOT need Rust (workers build engines).
+#
+# Build:
+#   docker build -f docker/Dockerfile.master -t spsa-master docker/
+#
+# Run:
+#   docker run -e DATABASE_URL=postgres://... \
+#              -e INTERACTIVE_MODE_DISABLED=true \
+#              -e RUN_ID=3 \
+#              spsa-master
+
+FROM python:3.12-slim-bookworm
+
+# Install Stockfish (master checks ref path exists on disk)
+RUN apt-get update && apt-get install -y --no-install-recommends curl git ca-certificates && \
+    curl -L https://github.com/official-stockfish/Stockfish/releases/download/sf_17.1/stockfish-ubuntu-x86-64-sse41-popcnt.tar -o stockfish.tar && \
+    tar -xf stockfish.tar && \
+    mv stockfish/stockfish-ubuntu-x86-64-sse41-popcnt /usr/local/bin/stockfish && \
+    chmod +x /usr/local/bin/stockfish && \
+    rm -rf stockfish.tar stockfish && \
+    apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Clone chess-compete
+RUN git clone --depth 1 https://github.com/chris-moreton/chess-compete.git
+
+WORKDIR /app/chess-compete
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Update config.toml for Docker paths
+RUN sed -i 's|engine_path = .*|engine_path = "/usr/local/bin/stockfish"|' compete/spsa/config.toml
+
+# Non-interactive mode by default
+ENV INTERACTIVE_MODE_DISABLED=true
+ENV PYTHONUNBUFFERED=1
+
+ENTRYPOINT ["python", "-m", "compete.spsa.master"]
