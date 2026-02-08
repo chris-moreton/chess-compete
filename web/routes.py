@@ -743,7 +743,7 @@ def register_routes(app):
         # Calculate rolling average Elo over last ~X reference games
         # n = ceil(target_games / ref_games_per_iteration)
         import math
-        rolling_elo_target_games = 1000  # Default: average over last ~1000 ref games
+        rolling_elo_target_games = 5000  # Default: average over last ~5000 ref games
         rolling_elo_avg = None
         rolling_elo_n = 0
         ref_games_per_iter = latest.ref_target_games if latest and latest.ref_target_games else 75
