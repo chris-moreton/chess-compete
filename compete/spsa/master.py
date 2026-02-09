@@ -781,43 +781,73 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
         )
 
     print("\nHow should parameters be initialized?")
-    print("  1. defaults — use midpoint of min/max bounds")
+    print("  0. defaults — use midpoint of min/max bounds")
     for r in runs_with_params:
-        print(f"  2. copy from run {r.id} ({r.name})")
+        print(f"  {r.id}. copy from {r.name}")
     print()
 
+    valid_ids = {r.id for r in runs_with_params}
     while True:
-        choice = input("Enter choice (1 for defaults, or '2 <run_id>' to copy): ").strip()
-        if choice == '1':
+        choice = input("Enter choice (0 for defaults, or run ID to copy): ").strip()
+        if choice == '0':
             seed_mode = 'defaults'
             source_run_id = None
             break
-        elif choice.startswith('2') and runs_with_params:
-            parts = choice.split()
-            if len(parts) == 2:
-                try:
-                    source_run_id = int(parts[1])
-                    if any(r.id == source_run_id for r in runs_with_params):
-                        seed_mode = 'copy'
-                        break
-                except ValueError:
-                    pass
-            print("Invalid. Enter '2 <run_id>' where run_id is one of the listed runs.")
-        else:
-            print("Invalid choice. Enter 1 or '2 <run_id>'.")
+        try:
+            source_run_id = int(choice)
+            if source_run_id in valid_ids:
+                seed_mode = 'copy'
+                break
+        except ValueError:
+            pass
+        print(f"Invalid choice. Enter 0 or a run ID ({', '.join(str(i) for i in sorted(valid_ids))}).")
 
     # Copy run-level settings from the Default template run
     default_run = SpsaRun.query.filter_by(name='Default').first()
     if not default_run:
         raise RuntimeError("No 'Default' template run found. Run migration first.")
 
-    # Deactivate all runs, create the new one with Default's settings
+    # If copying from an existing run, use its settings as defaults for prompts
+    settings_source = default_run
+    if seed_mode == 'copy':
+        source_run = db.session.get(SpsaRun, source_run_id)
+        if source_run:
+            settings_source = source_run
+
+    # Ask about key run settings (press Enter to accept defaults)
+    def _prompt_float(label: str, default: float) -> float:
+        val = input(f"  {label} [{default}]: ").strip()
+        if not val:
+            return default
+        try:
+            return float(val)
+        except ValueError:
+            print(f"    Invalid, using default: {default}")
+            return default
+
+    def _prompt_int(label: str, default: int) -> int:
+        val = input(f"  {label} [{default}]: ").strip()
+        if not val:
+            return default
+        try:
+            return int(val)
+        except ValueError:
+            print(f"    Invalid, using default: {default}")
+            return default
+
+    print(f"\nRun settings (press Enter for defaults from '{settings_source.name}'):")
+    timelow = _prompt_float("Time low (s/move)", settings_source.timelow)
+    timehigh = _prompt_float("Time high (s/move)", settings_source.timehigh)
+    games_per_iteration = _prompt_int("Games per iteration", settings_source.games_per_iteration)
+    max_iterations = _prompt_int("Max iterations", settings_source.max_iterations)
+
+    # Deactivate all runs, create the new one
     SpsaRun.query.update({SpsaRun.is_active: False})
     new_run = SpsaRun(
         name=run_name, is_active=True,
-        timelow=default_run.timelow, timehigh=default_run.timehigh,
-        games_per_iteration=default_run.games_per_iteration,
-        max_iterations=default_run.max_iterations,
+        timelow=timelow, timehigh=timehigh,
+        games_per_iteration=games_per_iteration,
+        max_iterations=max_iterations,
         spsa_a=default_run.spsa_a, spsa_c=default_run.spsa_c,
         spsa_big_a=default_run.spsa_big_a,
         spsa_alpha=default_run.spsa_alpha, spsa_gamma=default_run.spsa_gamma,
