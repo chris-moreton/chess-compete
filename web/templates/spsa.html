@@ -620,12 +620,12 @@
             // Calculate 10-iteration moving average
             function movingAverage(data, window) {
                 return data.map((_, i) => {
-                    if (i < window - 1) return null;
+                    const count = Math.min(i + 1, window);
                     let sum = 0;
-                    for (let j = 0; j < window; j++) {
+                    for (let j = 0; j < count; j++) {
                         sum += data[i - j];
                     }
-                    return sum / window;
+                    return sum / count;
                 });
             }
 
