@@ -450,6 +450,14 @@ def run_spsa_games(
                         # Use remaining to decide whether to submit more games
                         if remaining is not None and remaining <= 0:
                             keep_adding = False
+                            # Cancel pending futures that haven't started yet
+                            cancelled = 0
+                            for f in list(pending_futures.keys()):
+                                if f.cancel():
+                                    pending_futures.pop(f)
+                                    cancelled += 1
+                            if cancelled:
+                                print(f"  Phase complete — cancelled {cancelled} queued game(s), waiting for {len(pending_futures)} in-flight")
                         elif remaining is not None and remaining <= len(pending_futures):
                             pass  # Enough in-flight, don't add more
                         elif keep_adding and (max_games <= 0 or next_game_index < max_games):
@@ -670,6 +678,14 @@ def run_ref_games(
                         # Use remaining to decide whether to submit more games
                         if remaining is not None and remaining <= 0:
                             keep_adding = False
+                            # Cancel pending futures that haven't started yet
+                            cancelled = 0
+                            for f in list(pending_futures.keys()):
+                                if f.cancel():
+                                    pending_futures.pop(f)
+                                    cancelled += 1
+                            if cancelled:
+                                print(f"  Phase complete — cancelled {cancelled} queued game(s), waiting for {len(pending_futures)} in-flight")
                         elif remaining is not None and remaining <= len(pending_futures):
                             pass  # Enough in-flight, don't add more
                         elif keep_adding and (max_games <= 0 or next_game_index < max_games):
