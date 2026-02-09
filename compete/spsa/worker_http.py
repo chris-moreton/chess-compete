@@ -403,8 +403,10 @@ def run_spsa_games(
             return lambda move_count: progress.update_moves(game_idx, move_count)
 
         keep_adding = True
+        phase_complete = False
 
-        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        executor = ThreadPoolExecutor(max_workers=concurrency)
+        try:
             pending_futures = {}  # future -> config
             next_game_index = 0
 
@@ -456,8 +458,12 @@ def run_spsa_games(
                                 if f.cancel():
                                     pending_futures.pop(f)
                                     cancelled += 1
-                            if cancelled:
-                                print(f"  Phase complete — cancelled {cancelled} queued game(s), waiting for {len(pending_futures)} in-flight")
+                            in_flight = len(pending_futures)
+                            if cancelled or in_flight:
+                                print(f"  Phase complete — cancelled {cancelled} queued game(s), abandoning {in_flight} in-flight")
+                            pending_futures.clear()
+                            phase_complete = True
+                            break
                         elif remaining is not None and remaining <= len(pending_futures):
                             pass  # Enough in-flight, don't add more
                         elif keep_adding and (max_games <= 0 or next_game_index < max_games):
@@ -472,6 +478,9 @@ def run_spsa_games(
                         progress.finish_game(config.game_index, "err", outcome="err")
                         print(f"\n  Error in SPSA game: {e}")
                         total['errors'] += 1
+
+        finally:
+            executor.shutdown(wait=not phase_complete)
 
         progress.stop()
 
@@ -631,8 +640,10 @@ def run_ref_games(
             return lambda move_count: progress.update_moves(game_idx, move_count)
 
         keep_adding = True
+        phase_complete = False
 
-        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        executor = ThreadPoolExecutor(max_workers=concurrency)
+        try:
             pending_futures = {}  # future -> config
             next_game_index = 0
 
@@ -684,8 +695,12 @@ def run_ref_games(
                                 if f.cancel():
                                     pending_futures.pop(f)
                                     cancelled += 1
-                            if cancelled:
-                                print(f"  Phase complete — cancelled {cancelled} queued game(s), waiting for {len(pending_futures)} in-flight")
+                            in_flight = len(pending_futures)
+                            if cancelled or in_flight:
+                                print(f"  Phase complete — cancelled {cancelled} queued game(s), abandoning {in_flight} in-flight")
+                            pending_futures.clear()
+                            phase_complete = True
+                            break
                         elif remaining is not None and remaining <= len(pending_futures):
                             pass  # Enough in-flight, don't add more
                         elif keep_adding and (max_games <= 0 or next_game_index < max_games):
@@ -700,6 +715,9 @@ def run_ref_games(
                         progress.finish_game(config.game_index, "err", outcome="err")
                         print(f"\n  Error in ref game: {e}")
                         total['errors'] += 1
+
+        finally:
+            executor.shutdown(wait=not phase_complete)
 
         progress.stop()
 
