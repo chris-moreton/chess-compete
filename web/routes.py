@@ -1013,6 +1013,13 @@ def register_routes(app):
                 avg_nps=avg_nps
             )
             db.session.add(heartbeat)
+
+            # Prune heartbeats older than 7 days
+            cutoff_time = datetime.utcnow() - timedelta(days=7)
+            SpsaWorkerHeartbeat.query.filter(
+                SpsaWorkerHeartbeat.created_at < cutoff_time
+            ).delete(synchronize_session=False)
+
             db.session.commit()
         except Exception as e:
             # Don't fail the main request if tracking fails
