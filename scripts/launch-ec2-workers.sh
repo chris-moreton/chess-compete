@@ -60,7 +60,7 @@ done
 
 # ---------- Validate ----------
 if ! command -v aws &> /dev/null; then
-    echo "Error: AWS CLI not found. Install it from https://awscli.amazonaws.com/AWSCLIV2.msi"
+    echo "Error: AWS CLI not found"
     exit 1
 fi
 if [ -z "$SPSA_API_URL" ]; then
