@@ -1270,10 +1270,14 @@ def register_routes(app):
                 if count > 0:
                     heatmap_data.append({'x': hour, 'y': day, 'v': count})
 
-        # --- Chart 4: Contribution pie chart ---
+        # --- Chart 4: Contribution pie chart (last 24h from heartbeats) ---
+        contribution_counts = defaultdict(int)
+        for h in all_heartbeats:
+            worker_name = worker_names.get(h.worker_id, 'unknown')
+            contribution_counts[worker_name] += h.games_reported
         contribution_data = [
-            {'name': w['name'], 'games': w['total_games']}
-            for w in workers_data if w['total_games'] > 0
+            {'name': name, 'games': games}
+            for name, games in contribution_counts.items() if games > 0
         ]
         # Sort by games descending
         contribution_data.sort(key=lambda x: -x['games'])
