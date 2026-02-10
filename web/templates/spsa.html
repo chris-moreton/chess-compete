@@ -487,11 +487,25 @@
             </div>
         </div>
 
+        <!-- Group Filter -->
+        {% set groups = param_group_map.values()|unique|sort|list if param_group_map else [] %}
+        {% if groups|length > 1 %}
+        <div style="margin-bottom: 20px; display: flex; align-items: center; gap: 12px;">
+            <label for="group-filter" style="color: #aaa; font-size: 14px;">Group:</label>
+            <select id="group-filter" style="background: #16213e; color: #fff; border: 1px solid #0f3460; border-radius: 6px; padding: 6px 12px; font-size: 14px;">
+                <option value="all">All groups</option>
+                {% for group in groups %}
+                <option value="{{ group }}">{{ group }}{% if selected_run.active_groups is not none and group not in selected_run.active_groups %} (inactive){% endif %}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+
         <!-- Parameter Mini Charts -->
         <h2 class="section-title">Parameter Progression</h2>
         <div class="params-grid">
             {% for name in param_names %}
-            <div class="param-card{% if name not in active_param_names %} inactive{% endif %}">
+            <div class="param-card{% if name not in active_param_names %} inactive{% endif %}" data-group="{{ param_group_map.get(name, 'ungrouped') }}">
                 <h3>{{ name }}</h3>
                 <div class="param-mini-chart">
                     <canvas id="param-{{ loop.index }}"></canvas>
@@ -517,6 +531,7 @@
             <thead>
                 <tr>
                     <th>Parameter</th>
+                    <th>Group</th>
                     <th>Initial Value</th>
                     <th>Current Value</th>
                     <th>Absolute Change</th>
@@ -525,8 +540,9 @@
             </thead>
             <tbody>
                 {% for name in param_names %}
-                <tr{% if name not in active_param_names %} class="inactive"{% endif %}>
+                <tr{% if name not in active_param_names %} class="inactive"{% endif %} data-group="{{ param_group_map.get(name, 'ungrouped') }}">
                     <td class="param-name">{{ name }}</td>
+                    <td style="color: #888;">{{ param_group_map.get(name, 'ungrouped') }}</td>
                     <td>{{ "%.4f"|format(param_changes[name].first) if name in param_changes else '-' }}</td>
                     <td>{{ "%.4f"|format(param_changes[name].last) if name in param_changes else '-' }}</td>
                     <td class="{% if name in param_changes %}{% if param_changes[name].change > 0 %}change-positive{% elif param_changes[name].change < 0 %}change-negative{% endif %}{% endif %}">
@@ -912,6 +928,22 @@
 
             // Initial chart build
             buildAllCharts();
+
+            // Group filter
+            const groupFilter = document.getElementById('group-filter');
+            if (groupFilter) {
+                groupFilter.addEventListener('change', function() {
+                    const selected = this.value;
+                    // Filter param cards
+                    document.querySelectorAll('.param-card[data-group]').forEach(card => {
+                        card.style.display = (selected === 'all' || card.dataset.group === selected) ? '' : 'none';
+                    });
+                    // Filter table rows
+                    document.querySelectorAll('.params-table tbody tr[data-group]').forEach(row => {
+                        row.style.display = (selected === 'all' || row.dataset.group === selected) ? '' : 'none';
+                    });
+                });
+            }
 
             // Track current iteration for detecting new iterations
             let lastKnownIteration = {{ in_progress.iteration_number if in_progress else 'null' }};

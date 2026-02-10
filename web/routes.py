@@ -609,8 +609,10 @@ def register_routes(app):
         param_bounds = {}  # {param_name: {'min': X, 'max': Y}}
         spsa_params = SpsaParam.query.filter_by(run_id=selected_run.id).all()
         active_param_names = set()
+        param_group_map = {}  # {param_name: group_name}
         for p in spsa_params:
             param_bounds[p.name] = {'min': p.min_value, 'max': p.max_value}
+            param_group_map[p.name] = p.group or 'ungrouped'
             if selected_run.active_groups is None or p.group in selected_run.active_groups:
                 active_param_names.add(p.name)
 
@@ -628,7 +630,8 @@ def register_routes(app):
             ).order_by(SpsaIteration.iteration_number.desc()).first()
             return render_template('spsa.html', iterations=[], params_data={}, elo_data=[],
                                    ref_ratio=ref_ratio, all_runs=all_runs, selected_run=selected_run,
-                                   in_progress=in_progress, active_param_names=active_param_names)
+                                   in_progress=in_progress, active_param_names=active_param_names,
+                                   param_group_map=param_group_map)
 
         # Get parameter names from ALL iterations (union of all params seen)
         # This handles cases where new params are added mid-tuning
@@ -816,7 +819,8 @@ def register_routes(app):
             rolling_elo_changes=rolling_elo_changes,
             all_runs=all_runs,
             selected_run=selected_run,
-            active_param_names=active_param_names
+            active_param_names=active_param_names,
+            param_group_map=param_group_map
         )
 
     @app.route('/elo-stats')
