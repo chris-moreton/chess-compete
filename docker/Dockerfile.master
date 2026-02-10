@@ -25,7 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl git ca-cer
 
 WORKDIR /app
 
-# Clone chess-compete
+# Clone chess-compete (CACHEBUST forces fresh clone on each deploy)
+ARG CACHEBUST=1
 RUN git clone --depth 1 https://github.com/chris-moreton/chess-compete.git
 
 WORKDIR /app/chess-compete
