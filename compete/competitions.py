@@ -187,7 +187,7 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
         )
 
     # Run games with continuous pipeline (parallel or sequential)
-    run_games_parallel(game_configs, concurrency, on_game_complete, label="Game")
+    run_games_parallel(game_configs, concurrency, on_game_complete, label="Game", engine1_name=engine1_name)
 
     # Calculate Elo difference for this match
     # From engine1's perspective: wins are when engine1 won
@@ -904,7 +904,7 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
                 results_per_opponent[opponent]["draws"] += 1
 
     # Run all games with continuous pipeline
-    run_games_parallel(game_configs, concurrency, on_game_complete, label="Game")
+    run_games_parallel(game_configs, concurrency, on_game_complete, label="Game", engine1_name=challenger_name)
 
     # Print final summary
     print(f"\n{'='*70}")

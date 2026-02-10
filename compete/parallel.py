@@ -57,7 +57,7 @@ class ProgressDisplay:
     FILLED_CHAR = "●"
     EMPTY_CHAR = "○"
 
-    def __init__(self, label: str = "Game", concurrency: int = 4):
+    def __init__(self, label: str = "Game", concurrency: int = 4, engine1_name: str = None):
         self.label = label
         self.concurrency = concurrency
         self.max_slots = concurrency * 2  # Fixed display height
@@ -69,6 +69,10 @@ class ProgressDisplay:
         self.lines_printed = 0
         self.completed_count = 0
         self.results = {"1-0": 0, "0-1": 0, "1/2-1/2": 0, "err": 0}
+        self.engine1_name = engine1_name
+        self.engine1_wins = 0
+        self.engine1_losses = 0
+        self.engine1_draws = 0
         self.ansi_supported = self._check_ansi_support()
 
     def _check_ansi_support(self) -> bool:
@@ -100,7 +104,7 @@ class ProgressDisplay:
             if game_index in self.games:
                 self.games[game_index].move_count = move_count
 
-    def finish_game(self, game_index: int, result: str, nps: Optional[int] = None):
+    def finish_game(self, game_index: int, result: str, nps: Optional[int] = None, is_engine1_white: Optional[bool] = None):
         """Record that a game has finished."""
         with self.lock:
             if game_index in self.games:
@@ -112,6 +116,21 @@ class ProgressDisplay:
                 self.completed_count += 1
                 if result in self.results:
                     self.results[result] += 1
+
+                # Track engine1 results if available
+                if is_engine1_white is not None:
+                    if result == "1-0":
+                        if is_engine1_white:
+                            self.engine1_wins += 1
+                        else:
+                            self.engine1_losses += 1
+                    elif result == "0-1":
+                        if is_engine1_white:
+                            self.engine1_losses += 1
+                        else:
+                            self.engine1_wins += 1
+                    elif result == "1/2-1/2":
+                        self.engine1_draws += 1
 
                 # Move to recently completed list (keep most recent)
                 self.recently_completed.insert(0, game)
@@ -185,10 +204,17 @@ class ProgressDisplay:
 
             # Summary line
             active_count = len(self.games)
-            w = self.results["1-0"]
-            l = self.results["0-1"]
+            ww = self.results["1-0"]
+            bw = self.results["0-1"]
             d = self.results["1/2-1/2"]
-            lines.append(f"  [{self.completed_count} done: {w}W-{l}L-{d}D | {active_count} active]")
+
+            if self.engine1_name:
+                e1w = self.engine1_wins
+                e1l = self.engine1_losses
+                e1d = self.engine1_draws
+                lines.append(f"  [{self.completed_count} done: {self.engine1_name} {e1w}W-{e1l}L-{e1d}D | White {ww}W-{bw}L-{d}D | {active_count} active]")
+            else:
+                lines.append(f"  [{self.completed_count} done: White {ww}W-{bw}L-{d}D | {active_count} active]")
 
         return lines
 
@@ -249,7 +275,8 @@ def run_games_parallel(
     game_configs: list[GameConfig],
     concurrency: int,
     on_game_complete: Callable[[GameConfig, GameResult], None],
-    label: str = "Game"
+    label: str = "Game",
+    engine1_name: str = None
 ) -> dict:
     """
     Run games in parallel with continuous pipeline.
@@ -289,7 +316,7 @@ def run_games_parallel(
         return {'completed': completed, 'errors': errors, 'results': results}
 
     # Parallel execution with continuous pipeline
-    progress = ProgressDisplay(label=label, concurrency=concurrency)
+    progress = ProgressDisplay(label=label, concurrency=concurrency, engine1_name=engine1_name)
     progress.start()
 
     def make_move_callback(game_idx: int):
@@ -330,7 +357,7 @@ def run_games_parallel(
                     elif result.black_nps:
                         nps = result.black_nps
 
-                    progress.finish_game(game_idx, result.result, nps)
+                    progress.finish_game(game_idx, result.result, nps, result.is_engine1_white)
                     on_game_complete(config, result)
                     completed += 1
                     if result.result in results:
