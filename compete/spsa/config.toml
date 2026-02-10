@@ -21,6 +21,9 @@ plus_engine_name = "spsa-plus"
 minus_engine_name = "spsa-minus"
 base_engine_name = "spsa-base"
 
+# S3 bucket for sharing built binaries between workers (empty = disabled)
+s3_build_cache = "chess-compete-builds"
+
 # =============================================================================
 # REFERENCE ENGINE (infrastructure — path and assumed Elo)
 # =============================================================================

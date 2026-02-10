@@ -39,6 +39,7 @@ from compete.game import play_game, GameConfig, play_game_from_config
 from compete.openings import OPENING_BOOK
 from compete.spsa.build import build_spsa_engines, build_engine, get_rusty_rival_path
 from compete.spsa.progress import ProgressDisplay
+from compete.spsa.s3_cache import s3_download, s3_upload
 
 
 class APIClient:
@@ -205,6 +206,24 @@ def ensure_spsa_engines_built(iteration: dict, config: dict, force_rebuild: bool
             print(f"  Using cached plus/minus engines for iteration {iteration_number}")
             return str(plus_path), str(minus_path)
 
+    # Check S3 build cache
+    s3_bucket = config.get('build', {}).get('s3_build_cache', '')
+    run_id = iteration.get('run_id', 0)
+    s3_prefix = f"spsa/{run_id}/{iteration_number}" if s3_bucket else ''
+
+    if s3_bucket:
+        plus_dir.mkdir(parents=True, exist_ok=True)
+        minus_dir.mkdir(parents=True, exist_ok=True)
+        plus_downloaded = s3_download(s3_bucket, f"{s3_prefix}/plus", str(plus_path))
+        minus_downloaded = s3_download(s3_bucket, f"{s3_prefix}/minus", str(minus_path))
+        if plus_downloaded and minus_downloaded:
+            write_cached_iteration(plus_dir, iteration_number)
+            write_cached_iteration(minus_dir, iteration_number)
+            os.chmod(str(plus_path), 0o755)
+            os.chmod(str(minus_path), 0o755)
+            print(f"  Downloaded plus/minus engines from S3")
+            return str(plus_path), str(minus_path)
+
     # Need to build engines from parameters
     print(f"\n  Building plus/minus engines for iteration {iteration_number}...")
 
@@ -226,6 +245,11 @@ def ensure_spsa_engines_built(iteration: dict, config: dict, force_rebuild: bool
         # Write cache files
         write_cached_iteration(plus_dir, iteration_number)
         write_cached_iteration(minus_dir, iteration_number)
+
+        # Upload to S3 for other workers
+        if s3_bucket:
+            s3_upload(s3_bucket, f"{s3_prefix}/plus", str(new_plus_path))
+            s3_upload(s3_bucket, f"{s3_prefix}/minus", str(new_minus_path))
 
         return str(new_plus_path), str(new_minus_path)
     except Exception as e:
@@ -261,6 +285,19 @@ def ensure_base_engine_ready(iteration: dict, config: dict) -> str:
         print(f"  Using cached base engine for iteration {iteration_number}")
         return str(base_path)
 
+    # Check S3 build cache
+    s3_bucket = config.get('build', {}).get('s3_build_cache', '')
+    run_id = iteration.get('run_id', 0)
+    s3_key = f"spsa/{run_id}/{iteration_number}/base" if s3_bucket else ''
+
+    if s3_bucket:
+        base_dir.mkdir(parents=True, exist_ok=True)
+        if s3_download(s3_bucket, s3_key, str(base_path)):
+            write_cached_iteration(base_dir, iteration_number)
+            os.chmod(str(base_path), 0o755)
+            print(f"  Downloaded base engine from S3")
+            return str(base_path)
+
     # Need to build base engine with updated parameters
     print(f"\n  Building base engine for iteration {iteration_number}...")
     src_path = get_rusty_rival_path(config)
@@ -272,6 +309,10 @@ def ensure_base_engine_ready(iteration: dict, config: dict) -> str:
     # Write cache file
     write_cached_iteration(base_dir, iteration_number)
     print(f"  Built base engine: {base_path}")
+
+    # Upload to S3 for other workers
+    if s3_bucket:
+        s3_upload(s3_bucket, s3_key, str(base_path))
 
     return str(base_path)
 

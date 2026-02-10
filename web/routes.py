@@ -957,6 +957,7 @@ def register_routes(app):
         if iteration:
             return jsonify({
                 'id': iteration.id,
+                'run_id': iteration.run_id,
                 'iteration_number': iteration.iteration_number,
                 'phase': 'ref',
                 'base_parameters': iteration.base_parameters,
@@ -983,6 +984,7 @@ def register_routes(app):
 
         return jsonify({
             'id': iteration.id,
+            'run_id': iteration.run_id,
             'iteration_number': iteration.iteration_number,
             'phase': 'spsa',
             'plus_parameters': iteration.plus_parameters,

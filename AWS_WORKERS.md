@@ -69,7 +69,46 @@ aws iam create-instance-profile --instance-profile-name SSMInstanceProfile
 aws iam add-role-to-instance-profile --instance-profile-name SSMInstanceProfile --role-name SSMInstanceRole
 ```
 
-### 5. Install SSM Session Manager plugin
+### 5. Create S3 Build Cache Bucket (one-time setup)
+
+This allows workers to share compiled engine binaries instead of each building independently.
+
+```bash
+# Create the bucket (private — workers use IAM for both reads and writes)
+aws s3 mb s3://chess-compete-builds --region eu-west-2
+
+# Add read/write permission to SSMInstanceRole
+aws iam put-role-policy --role-name SSMInstanceRole --policy-name S3BuildCache \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::chess-compete-builds", "arn:aws:s3:::chess-compete-builds/*"]
+    }]
+  }'
+
+# Auto-expire old builds after 7 days
+aws s3api put-bucket-lifecycle-configuration --bucket chess-compete-builds \
+  --lifecycle-configuration '{
+    "Rules": [{
+      "ID": "expire-old-builds",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "spsa/"},
+      "Expiration": {"Days": 7}
+    }]
+  }'
+```
+
+Enable the cache in `compete/spsa/config.toml`:
+```toml
+[build]
+s3_build_cache = "chess-compete-builds"
+```
+
+When enabled, the first worker to build an engine uploads it to S3. Subsequent workers download the binary (~3s) instead of compiling (~30-60s).
+
+### 6. Install SSM Session Manager plugin
 
 This lets you connect to instances to view logs.
 
