@@ -368,6 +368,10 @@
                 <h3>Parameters</h3>
                 <div class="value">{{ param_names|length }}</div>
             </div>
+            <div class="summary-card">
+                <h3>Active Workers</h3>
+                <div class="value" id="active-worker-count">{{ active_worker_count|default(0) }}</div>
+            </div>
         </div>
 
         <!-- Elo Cards -->
@@ -1022,6 +1026,12 @@
                         statusText.innerHTML = `<strong>Phase 2:</strong> Reference Games (base vs Stockfish): <span id="ref-games-count">${data.ref_games_played}/${data.ref_target_games}</span>`;
                     }
                 }
+
+                // Update active worker count
+                if (data.active_workers !== undefined) {
+                    const el = document.getElementById('active-worker-count');
+                    if (el) el.textContent = data.active_workers;
+                }
             }
 
             // Poll every 5 seconds
@@ -1156,6 +1166,12 @@
                     } else if (data.status === 'ref_pending') {
                         statusText.innerHTML = `<strong>Phase 2:</strong> Reference Games (base vs Stockfish): <span id="ref-games-count">${data.ref_games_played}/${data.ref_target_games}</span>`;
                     }
+                }
+
+                // Update active worker count
+                if (data.active_workers !== undefined) {
+                    const el = document.getElementById('active-worker-count');
+                    if (el) el.textContent = data.active_workers;
                 }
             }
 

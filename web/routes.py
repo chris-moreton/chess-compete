@@ -628,10 +628,15 @@ def register_routes(app):
                 SpsaIteration.run_id == selected_run.id,
                 SpsaIteration.status.in_(['pending', 'in_progress', 'building', 'ref_pending'])
             ).order_by(SpsaIteration.iteration_number.desc()).first()
+            active_cutoff = datetime.utcnow() - timedelta(minutes=5)
+            active_worker_count = SpsaWorker.query.filter(
+                SpsaWorker.last_seen_at >= active_cutoff
+            ).count()
             return render_template('spsa.html', iterations=[], params_data={}, elo_data=[],
                                    ref_ratio=ref_ratio, all_runs=all_runs, selected_run=selected_run,
                                    in_progress=in_progress, active_param_names=active_param_names,
-                                   param_group_map=param_group_map)
+                                   param_group_map=param_group_map,
+                                   active_worker_count=active_worker_count)
 
         # Get parameter names from ALL iterations (union of all params seen)
         # This handles cases where new params are added mid-tuning
@@ -792,6 +797,12 @@ def register_routes(app):
         if iterations:
             latest_effective_iteration = iterations[-1].effective_iteration
 
+        # Count active workers (seen in last 5 minutes)
+        active_cutoff = datetime.utcnow() - timedelta(minutes=5)
+        active_worker_count = SpsaWorker.query.filter(
+            SpsaWorker.last_seen_at >= active_cutoff
+        ).count()
+
         return render_template(
             'spsa.html',
             iterations=iterations,
@@ -820,7 +831,8 @@ def register_routes(app):
             all_runs=all_runs,
             selected_run=selected_run,
             active_param_names=active_param_names,
-            param_group_map=param_group_map
+            param_group_map=param_group_map,
+            active_worker_count=active_worker_count
         )
 
     @app.route('/elo-stats')
@@ -836,6 +848,12 @@ def register_routes(app):
         All database access happens server-side - no credentials exposed to frontend.
         Accepts optional 'run' query parameter to filter by run_id.
         """
+        # Active worker count (seen in last 5 minutes)
+        active_cutoff = datetime.utcnow() - timedelta(minutes=5)
+        active_workers = SpsaWorker.query.filter(
+            SpsaWorker.last_seen_at >= active_cutoff
+        ).count()
+
         # Get run_id from query param (optional)
         run_id = request.args.get('run', type=int)
 
@@ -858,7 +876,8 @@ def register_routes(app):
                 'games_played': in_progress.games_played,
                 'target_games': in_progress.target_games,
                 'ref_games_played': in_progress.ref_games_played,
-                'ref_target_games': in_progress.ref_target_games
+                'ref_target_games': in_progress.ref_target_games,
+                'active_workers': active_workers
             })
 
         # No in-progress iteration, return the latest completed one
@@ -875,7 +894,8 @@ def register_routes(app):
                 'games_played': latest.games_played,
                 'target_games': latest.target_games,
                 'ref_games_played': latest.ref_games_played,
-                'ref_target_games': latest.ref_target_games
+                'ref_target_games': latest.ref_target_games,
+                'active_workers': active_workers
             })
 
         # No iterations at all
@@ -885,7 +905,8 @@ def register_routes(app):
             'games_played': 0,
             'target_games': 0,
             'ref_games_played': 0,
-            'ref_target_games': 0
+            'ref_target_games': 0,
+            'active_workers': active_workers
         })
 
     # =========================================================================
