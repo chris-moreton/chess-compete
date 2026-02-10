@@ -248,7 +248,7 @@ if [ "$USE_SPOT" = true ]; then
     INSTANCE_IDS=$(echo "$FLEET_RESULT" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
-ids = [inst['InstanceIds'][0] for inst in data.get('Instances', []) if inst.get('InstanceIds')]
+ids = [iid for inst in data.get('Instances', []) for iid in inst.get('InstanceIds', [])]
 print(' '.join(ids))
 ")
 
