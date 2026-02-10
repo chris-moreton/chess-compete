@@ -10,6 +10,8 @@
 # Spot mode uses a diversified fleet across multiple instance types and AZs
 # to reduce the risk of all workers being terminated at once.
 #
+# Workers self-terminate after 10 minutes of no work (--idle-timeout to change).
+#
 # Prerequisites:
 #   - AWS CLI configured (aws configure)
 #   - .env file with SPSA_API_URL and SPSA_API_KEY
@@ -39,6 +41,7 @@ AMI_ID="${AMI_ID:-}"  # Auto-detected if empty
 KEY_NAME="${KEY_NAME:-}"
 SECURITY_GROUP="${SECURITY_GROUP:-}"
 CONCURRENCY="${CONCURRENCY:-16}"
+IDLE_TIMEOUT=10  # Minutes of no work before self-terminating (0 = disabled)
 COUNT=1
 MAX_HOURS=""
 USE_SPOT=false
@@ -52,6 +55,7 @@ while [[ $# -gt 0 ]]; do
         -n|--count)       COUNT="$2"; shift 2 ;;
         -c|--concurrency) CONCURRENCY="$2"; shift 2 ;;
         -H|--hours)       MAX_HOURS="$2"; shift 2 ;;
+        --idle-timeout)   IDLE_TIMEOUT="$2"; shift 2 ;;
         -t|--type)        INSTANCE_TYPE="$2"; shift 2 ;;
         --ami)            AMI_ID="$2"; shift 2 ;;
         --key)            KEY_NAME="$2"; shift 2 ;;
@@ -138,7 +142,7 @@ su - ec2-user -c '
     export RUSTFLAGS="-C target-cpu=native"
     export RUST_MIN_STACK=4097152
     cd ~/chess-compete
-    python3.11 -m compete --spsa-http -c __CONCURRENCY__
+    python3.11 -m compete --spsa-http -c __CONCURRENCY__ --idle-timeout __IDLE_TIMEOUT__
 '
 USERDATA
 )
@@ -148,6 +152,7 @@ SHUTDOWN_MINUTES=$((MAX_HOURS * 60))
 USER_DATA="${USER_DATA//__SPSA_API_URL__/$SPSA_API_URL}"
 USER_DATA="${USER_DATA//__SPSA_API_KEY__/$SPSA_API_KEY}"
 USER_DATA="${USER_DATA//__CONCURRENCY__/$CONCURRENCY}"
+USER_DATA="${USER_DATA//__IDLE_TIMEOUT__/$IDLE_TIMEOUT}"
 USER_DATA="${USER_DATA//__MAX_HOURS__/$MAX_HOURS}"
 USER_DATA="${USER_DATA//__SHUTDOWN_MINUTES__/$SHUTDOWN_MINUTES}"
 

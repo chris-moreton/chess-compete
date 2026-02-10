@@ -792,7 +792,7 @@ def get_reference_engine_path(config: dict) -> str | None:
 
 
 def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
-                    poll_interval: int = 10):
+                    poll_interval: int = 10, idle_timeout: int = 0):
     """
     Run the SPSA HTTP worker loop.
 
@@ -801,6 +801,7 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
         api_key: API key for authentication
         concurrency: Number of games to run in parallel
         poll_interval: Seconds to wait when no work is available
+        idle_timeout: Shutdown after this many minutes of no work (0 = disabled)
     """
     hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
 
@@ -835,6 +836,7 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
     ref_games_total = 0
     current_iteration = None
     current_phase = None
+    last_work_time = time.time()
 
     while True:
         try:
@@ -842,10 +844,19 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
             iteration = api.get_work(hostname)
 
             if not iteration:
+                # Check idle timeout
+                if idle_timeout > 0:
+                    idle_minutes = (time.time() - last_work_time) / 60
+                    if idle_minutes >= idle_timeout:
+                        print(f"\n\nNo work for {idle_timeout} minutes — shutting down.")
+                        import subprocess
+                        subprocess.run(['sudo', 'shutdown', '-h', 'now'], check=False)
+                        sys.exit(0)
                 print(".", end="", flush=True)
                 time.sleep(poll_interval)
                 continue
 
+            last_work_time = time.time()
             phase = iteration['phase']
             iteration_num = iteration['iteration_number']
             iteration_id = iteration['id']
@@ -988,6 +999,8 @@ def main():
                         help='Number of games to run in parallel (default: 1)')
     parser.add_argument('--poll-interval', '-p', type=int, default=10,
                         help='Seconds to wait when no work available (default: 10)')
+    parser.add_argument('--idle-timeout', type=int, default=0,
+                        help='Shutdown after N minutes of no work (0 = disabled, default: 0)')
 
     args = parser.parse_args()
 
@@ -1003,7 +1016,8 @@ def main():
         api_url=args.api_url,
         api_key=args.api_key,
         concurrency=args.concurrency,
-        poll_interval=args.poll_interval
+        poll_interval=args.poll_interval,
+        idle_timeout=args.idle_timeout
     )
 
 
