@@ -1173,18 +1173,19 @@ def run_master():
     ref_elo = config.get('reference', {}).get('engine_elo', 2600)
     ref_path_config = config.get('reference', {}).get('engine_path')
 
-    # Resolve reference engine path (infrastructure, doesn't change per-run)
+    # Resolve reference engine path (informational only — workers have their own)
     ref_path = None
     if ref_path_config:
         ref_path = Path(ref_path_config)
         if not ref_path.is_absolute():
             ref_path = CHESS_COMPETE_DIR / ref_path
-        # Check for .exe on Windows
         if os.name == 'nt' and not ref_path.suffix:
             ref_path_exe = ref_path.with_suffix('.exe')
             if ref_path_exe.exists():
                 ref_path = ref_path_exe
-        ref_path = str(ref_path) if ref_path.exists() else None
+        if not ref_path.exists():
+            print(f"  Note: reference engine not found locally ({ref_path}), workers will use their own")
+        ref_path = str(ref_path)
 
     # Print initial settings
     run_settings = get_run_settings(run_id)
@@ -1200,10 +1201,11 @@ def run_master():
     print(f"Time control: {run_settings['timelow']}-{run_settings['timehigh']}s/move")
     print(f"Max iterations: {run_settings['max_iterations']}")
 
-    if run_settings['ref_enabled'] and ref_path:
+    if run_settings['ref_enabled']:
         ref_target = int(run_settings['games_per_iteration'] * run_settings['ref_ratio'])
         print(f"Reference games: {ref_target} per iteration (ratio: {run_settings['ref_ratio']})")
-        print(f"Reference engine: {ref_path} (Elo: {ref_elo})")
+        if ref_path:
+            print(f"Reference engine: {ref_path} (Elo: {ref_elo})")
     else:
         print("Reference games: DISABLED")
 
@@ -1246,7 +1248,7 @@ def run_master():
         gamma = run_settings['gamma']
         max_elo_diff = run_settings['max_elo_diff']
         max_gradient_factor = run_settings['max_gradient_factor']
-        ref_enabled = run_settings['ref_enabled'] and ref_path is not None
+        ref_enabled = run_settings['ref_enabled']
         ref_ratio = run_settings['ref_ratio']
         ref_target_games = int(games_per_iteration * ref_ratio) if ref_enabled else 0
 
