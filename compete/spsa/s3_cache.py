@@ -5,6 +5,7 @@ All functions are defensive — S3 failures silently fall through to local build
 Uses the aws CLI via subprocess (available on Amazon Linux 2023 by default).
 """
 
+import os
 import subprocess
 
 
@@ -12,14 +13,24 @@ def s3_download(bucket: str, key: str, local_path: str) -> bool:
     """
     Download a binary from S3.
 
+    Downloads to a temp file then atomically replaces the target to avoid
+    "Text file busy" errors when the old binary is still running.
+
     Returns True if found and downloaded successfully, False on any failure.
     """
     try:
+        tmp_path = local_path + '.s3tmp'
         result = subprocess.run(
-            ['aws', 's3', 'cp', f's3://{bucket}/{key}', local_path, '--quiet'],
+            ['aws', 's3', 'cp', f's3://{bucket}/{key}', tmp_path, '--quiet'],
             capture_output=True, timeout=60
         )
-        return result.returncode == 0
+        if result.returncode == 0:
+            os.replace(tmp_path, local_path)
+            return True
+        # Clean up failed download
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        return False
     except Exception:
         return False
 

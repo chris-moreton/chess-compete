@@ -437,12 +437,15 @@ def _build_in_work_tree(work_path: Path, output_dir: Path, params: dict, label: 
     if result.returncode != 0:
         raise RuntimeError(f"Failed to build {label} engine:\n{result.stderr}")
 
-    # Copy binary to output
+    # Copy binary to output via temp file + atomic rename to avoid
+    # "Text file busy" errors when the old binary is still running
     output_dir.mkdir(parents=True, exist_ok=True)
     binary_name = 'rusty-rival.exe' if os.name == 'nt' else 'rusty-rival'
     src_binary = work_path / 'target' / 'release' / binary_name
     dst_binary = output_dir / binary_name
-    shutil.copy2(src_binary, dst_binary)
+    tmp_binary = output_dir / f'.{binary_name}.tmp'
+    shutil.copy2(src_binary, tmp_binary)
+    os.replace(tmp_binary, dst_binary)
 
     return dst_binary
 
