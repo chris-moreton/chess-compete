@@ -47,7 +47,10 @@ MAX_HOURS=""
 USE_SPOT=false
 
 # Spot fleet: diversified instance types (all 16-vCPU compute-optimized or general-purpose)
-SPOT_INSTANCE_TYPES=("c7a.4xlarge" "c6a.4xlarge" "c7i.4xlarge" "c6i.4xlarge" "m7a.4xlarge" "m6a.4xlarge" "m7i.4xlarge" "m6i.4xlarge" "r7a.4xlarge" "r6a.4xlarge")
+# Spot fleet: prioritized by clock speed (capacity-optimized-prioritized respects order)
+# Preferred: c7a 3.7GHz, c6a 3.6GHz, c6i 3.5GHz, c7i 3.2GHz
+# Fallback:  m7a 3.7GHz, m6a 3.6GHz, m6i 3.5GHz, m7i 3.2GHz (same CPUs, extra RAM we don't need)
+SPOT_INSTANCE_TYPES=("c7a.4xlarge" "c6a.4xlarge" "c6i.4xlarge" "c7i.4xlarge" "m7a.4xlarge" "m6a.4xlarge" "m6i.4xlarge" "m7i.4xlarge")
 
 # ---------- Parse arguments ----------
 while [[ $# -gt 0 ]]; do
