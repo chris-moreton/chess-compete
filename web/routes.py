@@ -608,8 +608,11 @@ def register_routes(app):
         # Load parameter bounds from database for the selected run
         param_bounds = {}  # {param_name: {'min': X, 'max': Y}}
         spsa_params = SpsaParam.query.filter_by(run_id=selected_run.id).all()
+        active_param_names = set()
         for p in spsa_params:
             param_bounds[p.name] = {'min': p.min_value, 'max': p.max_value}
+            if selected_run.active_groups is None or p.group in selected_run.active_groups:
+                active_param_names.add(p.name)
 
         # Get all completed iterations for selected run, ordered by iteration number
         iterations = SpsaIteration.query.filter(
@@ -625,7 +628,7 @@ def register_routes(app):
             ).order_by(SpsaIteration.iteration_number.desc()).first()
             return render_template('spsa.html', iterations=[], params_data={}, elo_data=[],
                                    ref_ratio=ref_ratio, all_runs=all_runs, selected_run=selected_run,
-                                   in_progress=in_progress)
+                                   in_progress=in_progress, active_param_names=active_param_names)
 
         # Get parameter names from ALL iterations (union of all params seen)
         # This handles cases where new params are added mid-tuning
@@ -812,7 +815,8 @@ def register_routes(app):
             param_bounds=param_bounds,
             rolling_elo_changes=rolling_elo_changes,
             all_runs=all_runs,
-            selected_run=selected_run
+            selected_run=selected_run,
+            active_param_names=active_param_names
         )
 
     @app.route('/elo-stats')
@@ -1014,8 +1018,8 @@ def register_routes(app):
             )
             db.session.add(heartbeat)
 
-            # Prune heartbeats older than 7 days
-            cutoff_time = datetime.utcnow() - timedelta(days=7)
+            # Prune heartbeats older than 24 hours
+            cutoff_time = datetime.utcnow() - timedelta(hours=24)
             SpsaWorkerHeartbeat.query.filter(
                 SpsaWorkerHeartbeat.created_at < cutoff_time
             ).delete(synchronize_session=False)
@@ -1211,10 +1215,10 @@ def register_routes(app):
                 'avg_nps': w.avg_nps,
             })
 
-        # Get all heartbeats for charts (last 7 days)
-        seven_days_ago = now - timedelta(days=7)
+        # Get all heartbeats for charts (last 24 hours)
+        twenty_four_hours_ago = now - timedelta(hours=24)
         all_heartbeats = SpsaWorkerHeartbeat.query.filter(
-            SpsaWorkerHeartbeat.created_at >= seven_days_ago
+            SpsaWorkerHeartbeat.created_at >= twenty_four_hours_ago
         ).order_by(SpsaWorkerHeartbeat.created_at.asc()).all()
 
         # Build worker name lookup

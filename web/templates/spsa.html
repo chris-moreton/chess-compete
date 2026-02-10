@@ -142,6 +142,13 @@
             border-radius: 8px;
             padding: 15px;
         }
+        .param-card.inactive {
+            opacity: 0.4;
+            border-color: #1a1a2e;
+        }
+        .params-table tr.inactive td {
+            opacity: 0.4;
+        }
         .param-card h3 {
             margin: 0 0 10px 0;
             font-size: 14px;
@@ -484,7 +491,7 @@
         <h2 class="section-title">Parameter Progression</h2>
         <div class="params-grid">
             {% for name in param_names %}
-            <div class="param-card">
+            <div class="param-card{% if name not in active_param_names %} inactive{% endif %}">
                 <h3>{{ name }}</h3>
                 <div class="param-mini-chart">
                     <canvas id="param-{{ loop.index }}"></canvas>
@@ -518,7 +525,7 @@
             </thead>
             <tbody>
                 {% for name in param_names %}
-                <tr>
+                <tr{% if name not in active_param_names %} class="inactive"{% endif %}>
                     <td class="param-name">{{ name }}</td>
                     <td>{{ "%.4f"|format(param_changes[name].first) if name in param_changes else '-' }}</td>
                     <td>{{ "%.4f"|format(param_changes[name].last) if name in param_changes else '-' }}</td>

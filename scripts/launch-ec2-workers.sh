@@ -4,8 +4,11 @@
 # Usage:
 #   ./scripts/launch-ec2-workers.sh -H 4              # 1 instance, auto-terminate after 4 hours
 #   ./scripts/launch-ec2-workers.sh -n 3 -H 6          # 3 instances, 6 hours
-#   ./scripts/launch-ec2-workers.sh -n 3 -H 4 --spot   # 3 spot instances (cheaper)
+#   ./scripts/launch-ec2-workers.sh -n 3 -H 4 --spot   # 3 spot instances (diversified fleet)
 #   ./scripts/launch-ec2-workers.sh -n 3 -c 8 -H 2     # 3 instances, 8 concurrent games, 2 hours
+#
+# Spot mode uses a diversified fleet across multiple instance types and AZs
+# to reduce the risk of all workers being terminated at once.
 #
 # Prerequisites:
 #   - AWS CLI configured (aws configure)
@@ -39,6 +42,9 @@ CONCURRENCY="${CONCURRENCY:-16}"
 COUNT=1
 MAX_HOURS=""
 USE_SPOT=false
+
+# Spot fleet: diversified instance types (all 16-vCPU compute-optimized or general-purpose)
+SPOT_INSTANCE_TYPES=("c7a.4xlarge" "c6a.4xlarge" "c7i.4xlarge" "c6i.4xlarge" "m7a.4xlarge" "m6a.4xlarge" "m7i.4xlarge" "m6i.4xlarge" "r7a.4xlarge" "r6a.4xlarge")
 
 # ---------- Parse arguments ----------
 while [[ $# -gt 0 ]]; do
@@ -145,46 +151,180 @@ USER_DATA="${USER_DATA//__CONCURRENCY__/$CONCURRENCY}"
 USER_DATA="${USER_DATA//__MAX_HOURS__/$MAX_HOURS}"
 USER_DATA="${USER_DATA//__SHUTDOWN_MINUTES__/$SHUTDOWN_MINUTES}"
 
-# ---------- Build AWS CLI args ----------
-AWS_ARGS=(
-    aws ec2 run-instances
-    --count "$COUNT"
-    --image-id "$AMI_ID"
-    --instance-type "$INSTANCE_TYPE"
-    --user-data "$USER_DATA"
-    --instance-initiated-shutdown-behavior terminate
-    --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=spsa-worker}]"
-    --iam-instance-profile Name=SSMInstanceProfile
-)
-
-if [ -n "$KEY_NAME" ]; then
-    AWS_ARGS+=(--key-name "$KEY_NAME")
-fi
-
-if [ -n "$SECURITY_GROUP" ]; then
-    AWS_ARGS+=(--security-group-ids "$SECURITY_GROUP")
-fi
+# Encode user-data as base64 for fleet API
+USER_DATA_B64=$(echo "$USER_DATA" | base64)
 
 if [ "$USE_SPOT" = true ]; then
-    AWS_ARGS+=(--instance-market-options '{"MarketType":"spot"}')
+    # ---------- Spot Fleet (diversified across instance types and AZs) ----------
+    echo "Checking instance type availability in region..."
+
+    # Query which instance types are actually offered in each AZ
+    AVAILABLE=$(aws ec2 describe-instance-type-offerings \
+        --location-type availability-zone \
+        --filters "Name=instance-type,Values=$(IFS=,; echo "${SPOT_INSTANCE_TYPES[*]}")" \
+        --query 'InstanceTypeOfferings[*].[InstanceType,Location]' \
+        --output text)
+
+    # Get default subnet for each AZ (single API call, stored as "subnet\taz" lines)
+    AZ_SUBNET_MAP=$(aws ec2 describe-subnets \
+        --filters "Name=default-for-az,Values=true" \
+        --query 'Subnets[*].[SubnetId,AvailabilityZone]' \
+        --output text)
+
+    # Build overrides only for valid type/AZ combinations
+    OVERRIDES=""
+    VALID_TYPES=()
+    SKIPPED_TYPES=()
+    while IFS=$'\t' read -r ITYPE AZ; do
+        # Look up subnet for this AZ
+        SUBNET=$(echo "$AZ_SUBNET_MAP" | awk -v az="$AZ" '$2 == az {print $1; exit}')
+        if [ -z "$SUBNET" ]; then
+            continue  # No default subnet in this AZ
+        fi
+        if [ -n "$OVERRIDES" ]; then
+            OVERRIDES="${OVERRIDES},"
+        fi
+        OVERRIDES="${OVERRIDES}{\"InstanceType\":\"${ITYPE}\",\"SubnetId\":\"${SUBNET}\"}"
+        # Track unique valid types
+        if [[ ! " ${VALID_TYPES[*]} " =~ " ${ITYPE} " ]]; then
+            VALID_TYPES+=("$ITYPE")
+        fi
+    done <<< "$AVAILABLE"
+
+    # Report which types were excluded
+    for ITYPE in "${SPOT_INSTANCE_TYPES[@]}"; do
+        if [[ ! " ${VALID_TYPES[*]} " =~ " ${ITYPE} " ]]; then
+            SKIPPED_TYPES+=("$ITYPE")
+        fi
+    done
+
+    if [ ${#SKIPPED_TYPES[@]} -gt 0 ]; then
+        echo "  Excluded (not offered in region): ${SKIPPED_TYPES[*]}"
+    fi
+
+    if [ -z "$OVERRIDES" ]; then
+        echo "Error: None of the configured instance types are available in this region."
+        exit 1
+    fi
+
+    echo "Launching diversified spot fleet: $COUNT instances across ${#VALID_TYPES[@]} types..."
+    echo "  Instance types: ${VALID_TYPES[*]}"
+
+    # Build optional fields for launch template
+    OPTIONAL_LT_FIELDS=""
+    if [ -n "$KEY_NAME" ]; then
+        OPTIONAL_LT_FIELDS="${OPTIONAL_LT_FIELDS},\"KeyName\":\"${KEY_NAME}\""
+    fi
+    if [ -n "$SECURITY_GROUP" ]; then
+        OPTIONAL_LT_FIELDS="${OPTIONAL_LT_FIELDS},\"SecurityGroupIds\":[\"${SECURITY_GROUP}\"]"
+    fi
+
+    # Create a temporary launch template (required for create-fleet)
+    LT_NAME="spsa-worker-$(date +%s)"
+    LT_DATA="{\"ImageId\":\"${AMI_ID}\",\"UserData\":\"${USER_DATA_B64}\",\"IamInstanceProfile\":{\"Name\":\"SSMInstanceProfile\"},\"InstanceInitiatedShutdownBehavior\":\"terminate\"${OPTIONAL_LT_FIELDS}}"
+
+    LT_ID=$(aws ec2 create-launch-template \
+        --launch-template-name "$LT_NAME" \
+        --launch-template-data "$LT_DATA" \
+        --query 'LaunchTemplate.LaunchTemplateId' \
+        --output text)
+    echo "  Created launch template: $LT_ID ($LT_NAME)"
+
+    # Create fleet with capacity-optimized-prioritized allocation
+    FLEET_RESULT=$(aws ec2 create-fleet \
+        --type instant \
+        --target-capacity-specification "TotalTargetCapacity=${COUNT},DefaultTargetCapacityType=spot" \
+        --spot-options "AllocationStrategy=capacity-optimized-prioritized" \
+        --launch-template-configs "[{\"LaunchTemplateSpecification\":{\"LaunchTemplateId\":\"${LT_ID}\",\"Version\":\"\$Latest\"},\"Overrides\":[${OVERRIDES}]}]" \
+        --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=spsa-worker}]" \
+        --output json)
+
+    # Extract instance IDs
+    INSTANCE_IDS=$(echo "$FLEET_RESULT" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+ids = [inst['InstanceIds'][0] for inst in data.get('Instances', []) if inst.get('InstanceIds')]
+print(' '.join(ids))
+")
+
+    # Check for errors
+    ERRORS=$(echo "$FLEET_RESULT" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+errors = data.get('Errors', [])
+if errors:
+    for e in errors:
+        print(f\"  {e.get('ErrorCode', '?')}: {e.get('ErrorMessage', '?')}\")
+" 2>/dev/null || true)
+
+    # Clean up launch template
+    aws ec2 delete-launch-template --launch-template-id "$LT_ID" > /dev/null 2>&1
+
+    LAUNCHED=$(echo "$INSTANCE_IDS" | wc -w | tr -d ' ')
+    echo ""
+    echo "Launched $LAUNCHED/$COUNT spot instances (capacity-optimized across types/AZs):"
+    for ID in $INSTANCE_IDS; do
+        echo "  $ID"
+    done
+
+    if [ -n "$ERRORS" ]; then
+        echo ""
+        echo "Fleet errors (partial capacity):"
+        echo "$ERRORS"
+    fi
+
+    if [ "$LAUNCHED" -eq 0 ]; then
+        echo "Error: No instances launched. Check spot capacity in your region."
+        exit 1
+    fi
+
+    echo ""
+    echo "Watch logs:"
+    for ID in $INSTANCE_IDS; do
+        echo "  aws ssm start-session --target $ID  # then: sudo tail -f /var/log/spsa-worker.log"
+    done
+
+    echo ""
+    echo "Terminate all workers now:"
+    echo "  aws ec2 terminate-instances --instance-ids $INSTANCE_IDS"
+
+else
+    # ---------- On-demand (original approach) ----------
+    AWS_ARGS=(
+        aws ec2 run-instances
+        --count "$COUNT"
+        --image-id "$AMI_ID"
+        --instance-type "$INSTANCE_TYPE"
+        --user-data "$USER_DATA"
+        --instance-initiated-shutdown-behavior terminate
+        --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=spsa-worker}]"
+        --iam-instance-profile Name=SSMInstanceProfile
+    )
+
+    if [ -n "$KEY_NAME" ]; then
+        AWS_ARGS+=(--key-name "$KEY_NAME")
+    fi
+
+    if [ -n "$SECURITY_GROUP" ]; then
+        AWS_ARGS+=(--security-group-ids "$SECURITY_GROUP")
+    fi
+
+    echo "Launching $COUNT x $INSTANCE_TYPE on-demand instances (concurrency=$CONCURRENCY, auto-terminate in ${MAX_HOURS}h)..."
+    RESULT=$("${AWS_ARGS[@]}" --query 'Instances[*].InstanceId' --output text)
+
+    echo ""
+    echo "Launched instances:"
+    for ID in $RESULT; do
+        echo "  $ID"
+    done
+
+    echo ""
+    echo "Watch logs:"
+    for ID in $RESULT; do
+        echo "  aws ssm start-session --target $ID  # then: sudo tail -f /var/log/spsa-worker.log"
+    done
+
+    echo ""
+    echo "Terminate all workers now:"
+    echo "  aws ec2 terminate-instances --instance-ids $RESULT"
 fi
-
-# ---------- Launch ----------
-echo "Launching $COUNT x $INSTANCE_TYPE instances (concurrency=$CONCURRENCY, auto-terminate in ${MAX_HOURS}h)..."
-RESULT=$("${AWS_ARGS[@]}" --query 'Instances[*].InstanceId' --output text)
-
-echo ""
-echo "Launched instances:"
-for ID in $RESULT; do
-    echo "  $ID"
-done
-
-echo ""
-echo "Watch logs:"
-for ID in $RESULT; do
-    echo "  aws ssm start-session --target $ID  # then: sudo tail -f /var/log/spsa-worker.log"
-done
-
-echo ""
-echo "Terminate all workers now:"
-echo "  aws ec2 terminate-instances --instance-ids $RESULT"
