@@ -6,6 +6,7 @@
 #   ./scripts/launch-ec2-workers.sh -n 3 -H 6          # 3 instances, 6 hours
 #   ./scripts/launch-ec2-workers.sh -n 3 -H 4 --spot   # 3 spot instances (diversified fleet)
 #   ./scripts/launch-ec2-workers.sh -n 3 -c 8 -H 2     # 3 instances, 8 concurrent games, 2 hours
+#   ./scripts/launch-ec2-workers.sh -n 4 -H 8 --spot -r us-east-1  # spot in US East
 #
 # Spot mode uses a diversified fleet across multiple instance types and AZs
 # to reduce the risk of all workers being terminated at once.
@@ -40,6 +41,7 @@ INSTANCE_TYPE="${INSTANCE_TYPE:-c7a.4xlarge}"
 AMI_ID="${AMI_ID:-}"  # Auto-detected if empty
 KEY_NAME="${KEY_NAME:-}"
 SECURITY_GROUP="${SECURITY_GROUP:-}"
+REGION=""
 CONCURRENCY="${CONCURRENCY:-16}"
 IDLE_TIMEOUT=10  # Minutes of no work before self-terminating (0 = disabled)
 COUNT=1
@@ -63,6 +65,7 @@ while [[ $# -gt 0 ]]; do
         --ami)            AMI_ID="$2"; shift 2 ;;
         --key)            KEY_NAME="$2"; shift 2 ;;
         --sg)             SECURITY_GROUP="$2"; shift 2 ;;
+        --region|-r)      REGION="$2"; shift 2 ;;
         --spot)           USE_SPOT=true; shift ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
@@ -89,10 +92,17 @@ if [ -z "$MAX_HOURS" ]; then
     exit 1
 fi
 
+# Build region args for all AWS CLI calls
+REGION_ARGS=()
+if [ -n "$REGION" ]; then
+    REGION_ARGS=(--region "$REGION")
+    echo "Using region: $REGION"
+fi
+
 # Auto-detect latest Amazon Linux 2023 AMI if not specified
 if [ -z "$AMI_ID" ]; then
     echo "Auto-detecting latest Amazon Linux 2023 AMI..."
-    AMI_ID=$(aws ec2 describe-images \
+    AMI_ID=$(aws ec2 describe-images "${REGION_ARGS[@]}" \
         --owners amazon \
         --filters "Name=name,Values=al2023-ami-2023*-x86_64" "Name=state,Values=available" \
         --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
@@ -167,14 +177,14 @@ if [ "$USE_SPOT" = true ]; then
     echo "Checking instance type availability in region..."
 
     # Query which instance types are actually offered in each AZ
-    AVAILABLE=$(aws ec2 describe-instance-type-offerings \
+    AVAILABLE=$(aws ec2 describe-instance-type-offerings "${REGION_ARGS[@]}" \
         --location-type availability-zone \
         --filters "Name=instance-type,Values=$(IFS=,; echo "${SPOT_INSTANCE_TYPES[*]}")" \
         --query 'InstanceTypeOfferings[*].[InstanceType,Location]' \
         --output text)
 
     # Get default subnet for each AZ (single API call, stored as "subnet\taz" lines)
-    AZ_SUBNET_MAP=$(aws ec2 describe-subnets \
+    AZ_SUBNET_MAP=$(aws ec2 describe-subnets "${REGION_ARGS[@]}" \
         --filters "Name=default-for-az,Values=true" \
         --query 'Subnets[*].[SubnetId,AvailabilityZone]' \
         --output text)
@@ -231,7 +241,7 @@ if [ "$USE_SPOT" = true ]; then
     LT_NAME="spsa-worker-$(date +%s)"
     LT_DATA="{\"ImageId\":\"${AMI_ID}\",\"UserData\":\"${USER_DATA_B64}\",\"IamInstanceProfile\":{\"Name\":\"SSMInstanceProfile\"},\"InstanceInitiatedShutdownBehavior\":\"terminate\"${OPTIONAL_LT_FIELDS}}"
 
-    LT_ID=$(aws ec2 create-launch-template \
+    LT_ID=$(aws ec2 create-launch-template "${REGION_ARGS[@]}" \
         --launch-template-name "$LT_NAME" \
         --launch-template-data "$LT_DATA" \
         --query 'LaunchTemplate.LaunchTemplateId' \
@@ -239,7 +249,7 @@ if [ "$USE_SPOT" = true ]; then
     echo "  Created launch template: $LT_ID ($LT_NAME)"
 
     # Create fleet with capacity-optimized-prioritized allocation
-    FLEET_RESULT=$(aws ec2 create-fleet \
+    FLEET_RESULT=$(aws ec2 create-fleet "${REGION_ARGS[@]}" \
         --type instant \
         --target-capacity-specification "TotalTargetCapacity=${COUNT},DefaultTargetCapacityType=spot" \
         --spot-options "AllocationStrategy=capacity-optimized-prioritized" \
@@ -266,7 +276,7 @@ if errors:
 " 2>/dev/null || true)
 
     # Clean up launch template
-    aws ec2 delete-launch-template --launch-template-id "$LT_ID" > /dev/null 2>&1
+    aws ec2 delete-launch-template "${REGION_ARGS[@]}" --launch-template-id "$LT_ID" > /dev/null 2>&1
 
     LAUNCHED=$(echo "$INSTANCE_IDS" | wc -w | tr -d ' ')
     echo ""
@@ -286,15 +296,20 @@ if errors:
         exit 1
     fi
 
+    REGION_HINT=""
+    if [ -n "$REGION" ]; then
+        REGION_HINT=" --region $REGION"
+    fi
+
     echo ""
     echo "Watch logs:"
     for ID in $INSTANCE_IDS; do
-        echo "  aws ssm start-session --target $ID  # then: sudo tail -f /var/log/spsa-worker.log"
+        echo "  aws ssm start-session${REGION_HINT} --target $ID  # then: sudo tail -f /var/log/spsa-worker.log"
     done
 
     echo ""
     echo "Terminate all workers now:"
-    echo "  aws ec2 terminate-instances --instance-ids $INSTANCE_IDS"
+    echo "  aws ec2 terminate-instances${REGION_HINT} --instance-ids $INSTANCE_IDS"
 
 else
     # ---------- On-demand (original approach) ----------
@@ -317,8 +332,17 @@ else
         AWS_ARGS+=(--security-group-ids "$SECURITY_GROUP")
     fi
 
+    if [ -n "$REGION" ]; then
+        AWS_ARGS+=(--region "$REGION")
+    fi
+
     echo "Launching $COUNT x $INSTANCE_TYPE on-demand instances (concurrency=$CONCURRENCY, auto-terminate in ${MAX_HOURS}h)..."
     RESULT=$("${AWS_ARGS[@]}" --query 'Instances[*].InstanceId' --output text)
+
+    REGION_HINT=""
+    if [ -n "$REGION" ]; then
+        REGION_HINT=" --region $REGION"
+    fi
 
     echo ""
     echo "Launched instances:"
@@ -329,10 +353,10 @@ else
     echo ""
     echo "Watch logs:"
     for ID in $RESULT; do
-        echo "  aws ssm start-session --target $ID  # then: sudo tail -f /var/log/spsa-worker.log"
+        echo "  aws ssm start-session${REGION_HINT} --target $ID  # then: sudo tail -f /var/log/spsa-worker.log"
     done
 
     echo ""
     echo "Terminate all workers now:"
-    echo "  aws ec2 terminate-instances --instance-ids $RESULT"
+    echo "  aws ec2 terminate-instances${REGION_HINT} --instance-ids $RESULT"
 fi
