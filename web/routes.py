@@ -1183,8 +1183,11 @@ def register_routes(app):
         """Dashboard showing SPSA worker activity and statistics."""
         from collections import defaultdict
 
-        # Get all workers ordered by last seen
-        workers = SpsaWorker.query.order_by(SpsaWorker.last_seen_at.desc()).all()
+        # Get workers seen in the last 24 hours
+        cutoff_24h = datetime.utcnow() - timedelta(hours=24)
+        workers = SpsaWorker.query.filter(
+            SpsaWorker.last_seen_at >= cutoff_24h
+        ).order_by(SpsaWorker.last_seen_at.desc()).all()
 
         # Calculate time since last seen for each worker
         now = datetime.utcnow()
