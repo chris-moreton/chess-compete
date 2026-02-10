@@ -722,21 +722,25 @@
                         id: 'eloBands',
                         beforeDraw(chart) {
                             const { ctx, chartArea: { left, right, top, bottom }, scales: { y } } = chart;
-                            const bandSize = 25;
+                            const bandSize = 10;
+                            const bandColors = [
+                                'rgba(100, 180, 255, 0.06)',
+                                'rgba(255, 180, 100, 0.06)',
+                                'rgba(100, 255, 180, 0.06)',
+                                'rgba(200, 140, 255, 0.06)'
+                            ];
                             const yMin = Math.floor(y.min / bandSize) * bandSize;
                             const yMax = Math.ceil(y.max / bandSize) * bandSize;
                             ctx.save();
                             let bandIndex = 0;
                             for (let elo = yMin; elo < yMax; elo += bandSize) {
-                                if (bandIndex % 2 === 0) {
-                                    const yTop = y.getPixelForValue(elo + bandSize);
-                                    const yBottom = y.getPixelForValue(elo);
-                                    const clampedTop = Math.max(yTop, top);
-                                    const clampedBottom = Math.min(yBottom, bottom);
-                                    if (clampedTop < clampedBottom) {
-                                        ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
-                                        ctx.fillRect(left, clampedTop, right - left, clampedBottom - clampedTop);
-                                    }
+                                const yTop = y.getPixelForValue(elo + bandSize);
+                                const yBottom = y.getPixelForValue(elo);
+                                const clampedTop = Math.max(yTop, top);
+                                const clampedBottom = Math.min(yBottom, bottom);
+                                if (clampedTop < clampedBottom) {
+                                    ctx.fillStyle = bandColors[bandIndex % 4];
+                                    ctx.fillRect(left, clampedTop, right - left, clampedBottom - clampedTop);
                                 }
                                 bandIndex++;
                             }
@@ -817,7 +821,7 @@
                                     },
                                     ticks: {
                                         color: '#aaa',
-                                        stepSize: 25
+                                        stepSize: 10
                                     },
                                     grid: { color: '#333' }
                                 }
