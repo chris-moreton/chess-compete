@@ -636,7 +636,9 @@ def register_routes(app):
                                    ref_ratio=ref_ratio, all_runs=all_runs, selected_run=selected_run,
                                    in_progress=in_progress, active_param_names=active_param_names,
                                    param_group_map=param_group_map,
-                                   active_worker_count=active_worker_count)
+                                   active_worker_count=active_worker_count,
+                                   update_data={}, avg_update_data=[], update_iterations=[],
+                                   convergence_score=0, recent_avg_update=0, last_update={})
 
         # Get parameter names from ALL iterations (union of all params seen)
         # This handles cases where new params are added mid-tuning
@@ -742,6 +744,64 @@ def register_routes(app):
         # Build sampled iteration numbers for stability chart x-axis
         stability_iterations = [iteration_numbers[i] for i in range(0, len(iteration_numbers), sample_rate)]
 
+        # Compute per-iteration parameter update magnitude (% of value)
+        update_data = {name: [] for name in param_names}
+        avg_update_data = []
+        update_iterations = []
+
+        for i in range(0, len(iterations), sample_rate):
+            if i == 0:
+                for name in param_names:
+                    update_data[name].append(0)
+                avg_update_data.append(0)
+                update_iterations.append(iteration_numbers[i])
+                continue
+
+            update_iterations.append(iteration_numbers[i])
+            iter_updates = []
+            for name in param_names:
+                cur = params_data[name][i] if i < len(params_data[name]) else None
+                prev = params_data[name][i - 1] if (i - 1) < len(params_data[name]) else None
+                if cur is not None and prev is not None and prev != 0:
+                    pct = abs(cur - prev) / abs(prev) * 100
+                else:
+                    pct = 0
+                update_data[name].append(pct)
+                if name in active_param_names:
+                    iter_updates.append(pct)
+            avg_update_data.append(sum(iter_updates) / len(iter_updates) if iter_updates else 0)
+
+        # Convergence score: compare recent vs early average update magnitude
+        convergence_score = 0
+        recent_avg_update = 0
+        if len(avg_update_data) >= 2:
+            early_n = min(10, len(avg_update_data) // 2)
+            late_n = min(10, len(avg_update_data) // 2)
+            early_avg = sum(avg_update_data[1:1 + early_n]) / early_n if early_n > 0 else 0
+            recent_vals = avg_update_data[-late_n:]
+            recent_avg = sum(recent_vals) / len(recent_vals) if recent_vals else 0
+            recent_avg_update = recent_avg
+            if early_avg > 0:
+                convergence_score = max(0, min(100, (1 - recent_avg / early_avg) * 100))
+
+        # Last iteration's update for each parameter
+        last_update = {}
+        if len(iterations) >= 2:
+            last_params = iterations[-1].base_parameters or {}
+            prev_params = iterations[-2].base_parameters or {}
+            for name in param_names:
+                cur = last_params.get(name)
+                prev = prev_params.get(name)
+                if cur is not None and prev is not None:
+                    delta = cur - prev
+                    pct = abs(delta) / abs(prev) * 100 if prev != 0 else 0
+                    last_update[name] = {'abs': delta, 'pct': pct}
+                else:
+                    last_update[name] = {'abs': 0, 'pct': 0}
+        else:
+            for name in param_names:
+                last_update[name] = {'abs': 0, 'pct': 0}
+
         # Get the latest ref_elo for display
         # Run 1 had buggy data before iteration 110, so filter those out
         ref_min_iteration = 110 if selected_run.id == 1 else 0
@@ -832,7 +892,13 @@ def register_routes(app):
             selected_run=selected_run,
             active_param_names=active_param_names,
             param_group_map=param_group_map,
-            active_worker_count=active_worker_count
+            active_worker_count=active_worker_count,
+            update_data=update_data,
+            avg_update_data=avg_update_data,
+            update_iterations=update_iterations,
+            convergence_score=convergence_score,
+            recent_avg_update=recent_avg_update,
+            last_update=last_update
         )
 
     @app.route('/elo-stats')

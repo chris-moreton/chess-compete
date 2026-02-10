@@ -13,7 +13,6 @@
             color: #eee;
         }
         .spsa-container {
-            max-width: 1400px;
             margin: 0 auto;
             padding: 20px;
         }
@@ -405,6 +404,17 @@
             {% endif %}
         </div>
 
+        <!-- Convergence Card -->
+        <div class="summary-cards">
+            <div class="summary-card">
+                <h3>Convergence</h3>
+                <div class="value" style="color: {{ '#4caf50' if convergence_score > 80 else '#ffc107' if convergence_score > 40 else '#f44336' }};">
+                    {{ "%.0f"|format(convergence_score) }}%
+                </div>
+                <div style="font-size: 11px; color: #666;">Avg update: {{ "%.2f"|format(recent_avg_update) }}%/iter</div>
+            </div>
+        </div>
+
         {% if in_progress %}
         <div class="in-progress-banner" id="progress-banner">
             <h3>Iteration <span id="current-iteration">{{ in_progress.iteration_number }}</span>{% if in_progress.effective_iteration %} (eff: {{ in_progress.effective_iteration }}){% endif %} In Progress</h3>
@@ -491,6 +501,15 @@
             </div>
         </div>
 
+        <!-- Parameter Update Magnitude Chart -->
+        <div class="chart-container">
+            <h2>Parameter Update Magnitude</h2>
+            <p style="color: #666; font-size: 13px; margin-top: -10px;">How much each parameter moved per iteration (% of value). Shrinking updates = convergence. Bold line is the average across active params.</p>
+            <div class="chart-wrapper">
+                <canvas id="updateChart"></canvas>
+            </div>
+        </div>
+
         <!-- Group Filter -->
         {% set groups = param_group_map.values()|unique|sort|list if param_group_map else [] %}
         {% if groups|length > 1 %}
@@ -540,6 +559,7 @@
                     <th>Current Value</th>
                     <th>Absolute Change</th>
                     <th>% Change</th>
+                    <th>Last Update</th>
                 </tr>
             </thead>
             <tbody>
@@ -554,6 +574,13 @@
                     </td>
                     <td class="{% if name in param_changes %}{% if param_changes[name].pct_change > 0 %}change-positive{% elif param_changes[name].pct_change < 0 %}change-negative{% endif %}{% endif %}">
                         {{ "%.2f"|format(param_changes[name].pct_change) if name in param_changes else '-' }}%
+                    </td>
+                    <td style="{% if name in last_update and last_update[name].pct > 1 %}color: #f44336;{% elif name in last_update and last_update[name].pct > 0.3 %}color: #ffc107;{% else %}color: #4caf50;{% endif %}">
+                        {% if name in last_update %}
+                            {{ "%+.4f"|format(last_update[name].abs) }} ({{ "%.2f"|format(last_update[name].pct) }}%)
+                        {% else %}
+                            -
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
@@ -583,6 +610,9 @@
             const paramNames = {{ param_names|tojson }};
             const allStabilityData = {{ stability_data|tojson }};
             const allStabilityIterations = {{ stability_iterations|tojson }};
+            const allUpdateData = {{ update_data|tojson }};
+            const allAvgUpdateData = {{ avg_update_data|tojson }};
+            const allUpdateIterations = {{ update_iterations|tojson }};
             const paramBounds = {{ param_bounds|tojson }};
             const paramGroupMap = {{ param_group_map|tojson }};
             const effectiveIterationOffset = {{ effective_iteration_offset|tojson }};
@@ -594,6 +624,7 @@
             // Chart instances (for destruction on filter change)
             let refEloChart = null;
             let stabilityChart = null;
+            let updateChart = null;
             let paramCharts = {};
 
             // Color palette for charts (18+ colors for all parameters)
@@ -667,9 +698,15 @@
                 const stabilityIterations = filterData(allStabilityIterations, allStabilityIterations, currentFilter);
                 const stabilityData = filterObjectData(allStabilityData, allStabilityIterations, currentFilter);
 
+                // Filter update data
+                const updateIterations = filterData(allUpdateIterations, allUpdateIterations, currentFilter);
+                const updateData = filterObjectData(allUpdateData, allUpdateIterations, currentFilter);
+                const avgUpdateData = filterData(allAvgUpdateData, allUpdateIterations, currentFilter);
+
                 // Destroy existing charts
                 if (refEloChart) refEloChart.destroy();
                 if (stabilityChart) stabilityChart.destroy();
+                if (updateChart) updateChart.destroy();
                 for (const key in paramCharts) {
                     if (paramCharts[key]) paramCharts[key].destroy();
                 }
@@ -847,6 +884,76 @@
                                 ticks: { color: '#aaa' },
                                 grid: { color: '#333' },
                                 min: 0
+                            }
+                        }
+                    }
+                });
+
+                // Build Update Magnitude Chart (filtered by selected group)
+                const updateCtx = document.getElementById('updateChart').getContext('2d');
+                const updateFilteredNames = filteredParamNames;
+                const updateDatasets = updateFilteredNames.map((name, index) => ({
+                    label: name,
+                    data: updateData[name] || [],
+                    borderColor: colors[index % colors.length],
+                    backgroundColor: 'transparent',
+                    tension: 0.3,
+                    pointRadius: 0,
+                    borderWidth: 1.5,
+                    spanGaps: true
+                }));
+                // Add bold average line
+                updateDatasets.push({
+                    label: 'Average (active)',
+                    data: avgUpdateData,
+                    borderColor: '#fff',
+                    backgroundColor: 'transparent',
+                    tension: 0.3,
+                    pointRadius: 0,
+                    borderWidth: 3,
+                    spanGaps: true
+                });
+
+                updateChart = new Chart(updateCtx, {
+                    type: 'line',
+                    data: {
+                        labels: updateIterations,
+                        datasets: updateDatasets
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'right',
+                                labels: {
+                                    boxWidth: 12,
+                                    font: { size: 10 },
+                                    color: '#aaa'
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: 'Iteration',
+                                    color: '#aaa'
+                                },
+                                ticks: { color: '#aaa' },
+                                grid: { color: '#333' }
+                            },
+                            y: {
+                                type: 'logarithmic',
+                                title: {
+                                    display: true,
+                                    text: 'Update Size (% of value)',
+                                    color: '#aaa'
+                                },
+                                ticks: { color: '#aaa' },
+                                grid: { color: '#333' },
+                                min: 0.001
                             }
                         }
                     }
