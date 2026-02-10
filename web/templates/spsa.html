@@ -725,9 +725,7 @@
                             const bandSize = 10;
                             const bandColors = [
                                 'rgba(100, 180, 255, 0.06)',
-                                'rgba(255, 180, 100, 0.06)',
-                                'rgba(100, 255, 180, 0.06)',
-                                'rgba(200, 140, 255, 0.06)'
+                                'rgba(255, 255, 255, 0.08)'
                             ];
                             const yMin = Math.floor(y.min / bandSize) * bandSize;
                             const yMax = Math.ceil(y.max / bandSize) * bandSize;
@@ -739,7 +737,7 @@
                                 const clampedTop = Math.max(yTop, top);
                                 const clampedBottom = Math.min(yBottom, bottom);
                                 if (clampedTop < clampedBottom) {
-                                    ctx.fillStyle = bandColors[bandIndex % 4];
+                                    ctx.fillStyle = bandColors[bandIndex % 2];
                                     ctx.fillRect(left, clampedTop, right - left, clampedBottom - clampedTop);
                                 }
                                 bandIndex++;
