@@ -584,6 +584,7 @@
             const allStabilityData = {{ stability_data|tojson }};
             const allStabilityIterations = {{ stability_iterations|tojson }};
             const paramBounds = {{ param_bounds|tojson }};
+            const paramGroupMap = {{ param_group_map|tojson }};
             const effectiveIterationOffset = {{ effective_iteration_offset|tojson }};
             const rollingEloN = {{ rolling_elo_n|tojson }};
 
@@ -789,9 +790,14 @@
                     });
                 }
 
-                // Build Stability/Convergence Chart
+                // Build Stability/Convergence Chart (filtered by selected group)
                 const stabilityCtx = document.getElementById('stabilityChart').getContext('2d');
-                const stabilityDatasets = paramNames.map((name, index) => ({
+                const selectedGroup = document.getElementById('group-filter') ? document.getElementById('group-filter').value : 'all';
+                const filteredParamNames = paramNames.filter(name => {
+                    if (selectedGroup === 'all') return true;
+                    return (paramGroupMap[name] || 'ungrouped') === selectedGroup;
+                });
+                const stabilityDatasets = filteredParamNames.map((name, index) => ({
                     label: name,
                     data: stabilityData[name] || [],
                     borderColor: colors[index % colors.length],
@@ -946,6 +952,8 @@
                     document.querySelectorAll('.params-table tbody tr[data-group]').forEach(row => {
                         row.style.display = (selected === 'all' || row.dataset.group === selected) ? '' : 'none';
                     });
+                    // Rebuild stability chart with filtered params
+                    buildAllCharts();
                 });
             }
 
