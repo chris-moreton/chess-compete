@@ -258,6 +258,7 @@ class SpsaRun(db.Model):
     max_gradient_factor = db.Column(db.Float, nullable=False, default=3.0)
     ref_enabled = db.Column(db.Boolean, nullable=False, default=True)
     ref_ratio = db.Column(db.Float, nullable=False, default=0.25)
+    active_groups = db.Column(db.JSON)  # JSON array of group names, null = all groups active
 
     # Relationships
     iterations = db.relationship('SpsaIteration', backref='run', lazy='dynamic')
@@ -337,7 +338,7 @@ class SpsaParam(db.Model):
     min_value = db.Column(db.Float, nullable=False)
     max_value = db.Column(db.Float, nullable=False)
     step = db.Column(db.Float, nullable=False)
-    active_from_iteration = db.Column(db.Integer, nullable=False, default=1)
+    group = db.Column(db.String(50), nullable=False, default='ungrouped')
 
     # Relationships
     run = db.relationship('SpsaRun', backref='params')

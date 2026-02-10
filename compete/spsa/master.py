@@ -68,7 +68,7 @@ def _activate_run(db, SpsaRun, run):
 def load_params(run_id: int) -> dict:
     """
     Load parameters from the database for a given run.
-    Returns dict of {param_name: {'value': X, 'min': Y, 'max': Z, 'step': S, 'active_from_iteration': N}}
+    Returns dict of {param_name: {'value': X, 'min': Y, 'max': Z, 'step': S, 'group': G}}
     """
     from web.app import create_app
     from web.models import SpsaParam
@@ -89,7 +89,7 @@ def load_params(run_id: int) -> dict:
                     'min': row.min_value,
                     'max': row.max_value,
                     'step': row.step,
-                    'active_from_iteration': row.active_from_iteration,
+                    'group': row.group,
                 }
             return params
 
@@ -132,14 +132,14 @@ def load_config() -> dict:
         return tomllib.load(f)
 
 
-def generate_perturbations(params: dict, c_k: float, iteration: int) -> tuple[dict, dict, dict]:
+def generate_perturbations(params: dict, c_k: float, active_groups: set | None) -> tuple[dict, dict, dict]:
     """
     Generate perturbed parameter sets for SPSA.
 
     Args:
-        params: Current parameter values with min/max/step/active_from_iteration
+        params: Current parameter values with min/max/step/group
         c_k: Perturbation coefficient for this iteration
-        iteration: Current iteration number (for phased activation)
+        active_groups: Set of group names to tune, or None for all groups
 
     Returns:
         (plus_params, minus_params, signs)
@@ -156,9 +156,8 @@ def generate_perturbations(params: dict, c_k: float, iteration: int) -> tuple[di
         min_val = cfg['min']
         max_val = cfg['max']
 
-        # Check if this param is active at the current iteration
-        active_from = cfg.get('active_from_iteration', 1)
-        if iteration < active_from:
+        # Check if this param's group is active
+        if active_groups is not None and cfg.get('group') not in active_groups:
             # Inactive param: use current value without perturbation
             plus_params[name] = value
             minus_params[name] = value
@@ -597,7 +596,7 @@ def migrate_database():
                     min_value DOUBLE PRECISION NOT NULL,
                     max_value DOUBLE PRECISION NOT NULL,
                     step DOUBLE PRECISION NOT NULL,
-                    active_from_iteration INTEGER NOT NULL DEFAULT 1,
+                    "group" VARCHAR(50) NOT NULL DEFAULT 'ungrouped',
                     CONSTRAINT uq_spsa_param_run_name UNIQUE (run_id, name)
                 )
             """))
@@ -667,6 +666,94 @@ def migrate_database():
                 ))
             db.session.commit()
             print("  All columns added (defaults match current config values).")
+
+        # Add active_groups column to spsa_runs
+        try:
+            db.session.execute(db.text("SELECT active_groups FROM spsa_runs LIMIT 1"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            print("  Adding active_groups column to spsa_runs...")
+            db.session.execute(db.text(
+                "ALTER TABLE spsa_runs ADD COLUMN active_groups JSON"
+            ))
+            db.session.commit()
+            print("  Migration complete.")
+
+        # Add group column to spsa_params and migrate from active_from_iteration
+        try:
+            db.session.execute(db.text('SELECT "group" FROM spsa_params LIMIT 1'))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            print("  Adding group column to spsa_params...")
+            db.session.execute(db.text(
+                "ALTER TABLE spsa_params ADD COLUMN \"group\" VARCHAR(50) NOT NULL DEFAULT 'ungrouped'"
+            ))
+            db.session.commit()
+
+            # Migrate existing params: map by name prefix to groups
+            print("  Migrating parameters to groups by name prefix...")
+            group_mapping = {
+                # search-pruning
+                'beta_prune_': 'search-pruning',
+                'null_move_': 'search-pruning',
+                'see_prune_': 'search-pruning',
+                'alpha_prune_': 'search-pruning',
+                'lmp_threshold_': 'search-pruning',
+                # reductions-extensions
+                'lmr_history_': 'reductions-extensions',
+                'lmr_continuation_': 'reductions-extensions',
+                'probcut_': 'reductions-extensions',
+                'multicut_': 'reductions-extensions',
+                'singular_extension_': 'reductions-extensions',
+                # move-ordering
+                'move_score_': 'move-ordering',
+                'countermove_history_divisor': 'move-ordering',
+                'followup_history_divisor': 'move-ordering',
+                'capture_history_divisor': 'move-ordering',
+                # evaluation
+                'rook_open_file_bonus': 'evaluation',
+                'rook_semi_open_file_bonus': 'evaluation',
+                'value_knight_outpost': 'evaluation',
+                'value_rook_behind_passed_pawn': 'evaluation',
+                'value_guarded_passed_pawn': 'evaluation',
+                'doubled_pawn_penalty': 'evaluation',
+                'isolated_pawn_penalty': 'evaluation',
+                'value_backward_pawn_penalty': 'evaluation',
+                'value_bishop_pair': 'evaluation',
+                'space_bonus_': 'evaluation',
+                # piece-values
+                'pawn_value_': 'piece-values',
+                'knight_value_': 'piece-values',
+                'bishop_value_': 'piece-values',
+                'rook_value_': 'piece-values',
+                'queen_value_': 'piece-values',
+            }
+
+            rows = db.session.execute(db.text("SELECT id, name FROM spsa_params")).fetchall()
+            for row in rows:
+                param_id, param_name = row[0], row[1]
+                group = 'ungrouped'
+                for prefix, grp in group_mapping.items():
+                    if param_name == prefix or param_name.startswith(prefix):
+                        group = grp
+                        break
+                db.session.execute(db.text(
+                    'UPDATE spsa_params SET "group" = :group WHERE id = :id'
+                ), {'group': group, 'id': param_id})
+            db.session.commit()
+            print("  Group migration complete.")
+
+            # Drop old active_from_iteration column
+            try:
+                db.session.execute(db.text(
+                    "ALTER TABLE spsa_params DROP COLUMN IF EXISTS active_from_iteration"
+                ))
+                db.session.commit()
+                print("  Dropped active_from_iteration column.")
+            except Exception:
+                db.session.rollback()
 
         # Ensure a "Default" template run exists
         default_exists = db.session.execute(
@@ -841,6 +928,43 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
     games_per_iteration = _prompt_int("Games per iteration", settings_source.games_per_iteration)
     max_iterations = _prompt_int("Max iterations", settings_source.max_iterations)
 
+    # Determine available groups from source params
+    if seed_mode == 'copy':
+        source_params = SpsaParam.query.filter_by(run_id=source_run_id).all()
+    else:
+        source_params = SpsaParam.query.filter_by(run_id=runs_with_params[-1].id).all()
+
+    available_groups = {}
+    for p in source_params:
+        grp = p.group or 'ungrouped'
+        available_groups[grp] = available_groups.get(grp, 0) + 1
+
+    print("\nAvailable parameter groups:")
+    sorted_groups = sorted(available_groups.items())
+    for i, (grp, count) in enumerate(sorted_groups, 1):
+        print(f"  {i}. {grp} ({count} params)")
+    print(f"  A. All groups (tune everything)")
+
+    while True:
+        choice = input("\nSelect groups to activate (comma-separated numbers, or A for all): ").strip()
+        if choice.upper() == 'A':
+            selected_groups = None  # None = all groups active
+            break
+        try:
+            indices = [int(x.strip()) for x in choice.split(',')]
+            if all(1 <= i <= len(sorted_groups) for i in indices):
+                selected_groups = [sorted_groups[i - 1][0] for i in indices]
+                break
+        except ValueError:
+            pass
+        print(f"Invalid choice. Enter comma-separated numbers (1-{len(sorted_groups)}) or 'A'.")
+
+    if selected_groups:
+        active_count = sum(available_groups[g] for g in selected_groups)
+        print(f"  Active groups: {', '.join(selected_groups)} ({active_count} params)")
+    else:
+        print(f"  All groups active ({sum(available_groups.values())} params)")
+
     # Deactivate all runs, create the new one
     SpsaRun.query.update({SpsaRun.is_active: False})
     new_run = SpsaRun(
@@ -854,12 +978,12 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
         max_elo_diff=default_run.max_elo_diff,
         max_gradient_factor=default_run.max_gradient_factor,
         ref_enabled=default_run.ref_enabled, ref_ratio=default_run.ref_ratio,
+        active_groups=selected_groups,
     )
     db.session.add(new_run)
     db.session.flush()  # get ID
 
     if seed_mode == 'defaults':
-        source_params = SpsaParam.query.filter_by(run_id=runs_with_params[-1].id).all()
         print(f"  Seeding with midpoint defaults (bounds from run {runs_with_params[-1].id})...")
         for p in source_params:
             midpoint = (p.min_value + p.max_value) / 2.0
@@ -867,17 +991,16 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
                 run_id=new_run.id, name=p.name,
                 value=midpoint, min_value=p.min_value,
                 max_value=p.max_value, step=p.step,
-                active_from_iteration=p.active_from_iteration,
+                group=p.group,
             ))
     elif seed_mode == 'copy':
         print(f"  Copying params from run {source_run_id}...")
-        source_params = SpsaParam.query.filter_by(run_id=source_run_id).all()
         for p in source_params:
             db.session.add(SpsaParam(
                 run_id=new_run.id, name=p.name,
                 value=p.value, min_value=p.min_value,
                 max_value=p.max_value, step=p.step,
-                active_from_iteration=p.active_from_iteration,
+                group=p.group,
             ))
 
     db.session.commit()
@@ -1025,6 +1148,7 @@ def get_run_settings(run_id: int) -> dict:
                 'max_gradient_factor': run.max_gradient_factor,
                 'ref_enabled': run.ref_enabled,
                 'ref_ratio': run.ref_ratio,
+                'active_groups': set(run.active_groups) if run.active_groups else None,
             }
 
     return with_db_retry(_get)
@@ -1066,6 +1190,12 @@ def run_master():
     run_settings = get_run_settings(run_id)
     params = load_params(run_id)
     print(f"Parameters: {len(params)}")
+    active_groups = run_settings['active_groups']
+    if active_groups:
+        active_count = sum(1 for p in params.values() if p.get('group') in active_groups)
+        print(f"Active groups: {', '.join(sorted(active_groups))} ({active_count} params)")
+    else:
+        print(f"Active groups: ALL ({len(params)} params)")
     print(f"SPSA games per iteration: {run_settings['games_per_iteration']}")
     print(f"Time control: {run_settings['timelow']}-{run_settings['timehigh']}s/move")
     print(f"Max iterations: {run_settings['max_iterations']}")
@@ -1175,7 +1305,8 @@ def run_master():
 
         else:
             # New iteration - create it
-            plus_params, minus_params, signs = generate_perturbations(params, c_k, k)
+            active_groups = run_settings['active_groups']
+            plus_params, minus_params, signs = generate_perturbations(params, c_k, active_groups)
 
             # Count active vs inactive params
             active_count = len(signs)
