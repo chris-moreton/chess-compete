@@ -615,6 +615,7 @@
             const allUpdateIterations = {{ update_iterations|tojson }};
             const paramBounds = {{ param_bounds|tojson }};
             const paramGroupMap = {{ param_group_map|tojson }};
+            const activeParamNames = new Set({{ active_param_names|list|tojson }});
             const effectiveIterationOffset = {{ effective_iteration_offset|tojson }};
             const rollingEloN = {{ rolling_elo_n|tojson }};
 
@@ -833,6 +834,7 @@
                 const stabilityCtx = document.getElementById('stabilityChart').getContext('2d');
                 const selectedGroup = document.getElementById('group-filter') ? document.getElementById('group-filter').value : 'all';
                 const filteredParamNames = paramNames.filter(name => {
+                    if (!activeParamNames.has(name)) return false;
                     if (selectedGroup === 'all') return true;
                     return (paramGroupMap[name] || 'ungrouped') === selectedGroup;
                 });
