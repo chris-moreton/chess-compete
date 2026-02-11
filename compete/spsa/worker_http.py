@@ -40,6 +40,12 @@ from compete.openings import OPENING_BOOK
 from compete.spsa.build import build_spsa_engines, build_engine, get_rusty_rival_path
 from compete.spsa.progress import ProgressDisplay
 from compete.spsa.s3_cache import s3_download, s3_upload
+import platform
+
+
+def _s3_platform_prefix() -> str:
+    """Return a platform tag for S3 cache keys (e.g. 'linux-x86_64', 'darwin-arm64')."""
+    return f"{sys.platform}-{platform.machine()}"
 
 
 class APIClient:
@@ -206,10 +212,11 @@ def ensure_spsa_engines_built(iteration: dict, config: dict, force_rebuild: bool
             print(f"  Using cached plus/minus engines for iteration {iteration_number}")
             return str(plus_path), str(minus_path)
 
-    # Check S3 build cache
+    # Check S3 build cache (platform-specific to avoid cross-platform binary issues)
     s3_bucket = config.get('build', {}).get('s3_build_cache', '')
     run_id = iteration.get('run_id', 0)
-    s3_prefix = f"spsa/{run_id}/{iteration_number}" if s3_bucket else ''
+    plat = _s3_platform_prefix()
+    s3_prefix = f"spsa/{run_id}/{iteration_number}/{plat}" if s3_bucket else ''
 
     if s3_bucket:
         plus_dir.mkdir(parents=True, exist_ok=True)
@@ -285,10 +292,11 @@ def ensure_base_engine_ready(iteration: dict, config: dict) -> str:
         print(f"  Using cached base engine for iteration {iteration_number}")
         return str(base_path)
 
-    # Check S3 build cache
+    # Check S3 build cache (platform-specific to avoid cross-platform binary issues)
     s3_bucket = config.get('build', {}).get('s3_build_cache', '')
     run_id = iteration.get('run_id', 0)
-    s3_key = f"spsa/{run_id}/{iteration_number}/base" if s3_bucket else ''
+    plat = _s3_platform_prefix()
+    s3_key = f"spsa/{run_id}/{iteration_number}/{plat}/base" if s3_bucket else ''
 
     if s3_bucket:
         base_dir.mkdir(parents=True, exist_ok=True)
