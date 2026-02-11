@@ -512,13 +512,14 @@
 
         <!-- Group Filter -->
         {% set groups = param_group_map.values()|unique|sort|list if param_group_map else [] %}
+        {% set default_group = selected_run.active_groups[0] if selected_run and selected_run.active_groups is not none and selected_run.active_groups|length == 1 else 'all' %}
         {% if groups|length > 1 %}
         <div style="margin-bottom: 20px; display: flex; align-items: center; gap: 12px;">
             <label for="group-filter" style="color: #aaa; font-size: 14px;">Group:</label>
             <select id="group-filter" style="background: #16213e; color: #fff; border: 1px solid #0f3460; border-radius: 6px; padding: 6px 12px; font-size: 14px;">
-                <option value="all">All groups</option>
+                <option value="all"{% if default_group == 'all' %} selected{% endif %}>All groups</option>
                 {% for group in groups %}
-                <option value="{{ group }}">{{ group }}{% if selected_run.active_groups is not none and group not in selected_run.active_groups %} (inactive){% endif %}</option>
+                <option value="{{ group }}"{% if group == default_group %} selected{% endif %}>{{ group }}{% if selected_run.active_groups is not none and group not in selected_run.active_groups %} (inactive){% endif %}</option>
                 {% endfor %}
             </select>
         </div>
@@ -1053,8 +1054,8 @@
             // Group filter
             const groupFilter = document.getElementById('group-filter');
             if (groupFilter) {
-                groupFilter.addEventListener('change', function() {
-                    const selected = this.value;
+                function applyGroupFilter() {
+                    const selected = groupFilter.value;
                     // Filter param cards
                     document.querySelectorAll('.param-card[data-group]').forEach(card => {
                         card.style.display = (selected === 'all' || card.dataset.group === selected) ? '' : 'none';
@@ -1063,9 +1064,14 @@
                     document.querySelectorAll('.params-table tbody tr[data-group]').forEach(row => {
                         row.style.display = (selected === 'all' || row.dataset.group === selected) ? '' : 'none';
                     });
-                    // Rebuild stability chart with filtered params
+                    // Rebuild charts with filtered params
                     buildAllCharts();
-                });
+                }
+                groupFilter.addEventListener('change', applyGroupFilter);
+                // Apply on page load if a non-default group is selected
+                if (groupFilter.value !== 'all') {
+                    applyGroupFilter();
+                }
             }
 
             // Track current iteration for detecting new iterations
