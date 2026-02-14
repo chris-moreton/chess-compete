@@ -608,8 +608,13 @@ def register_routes(app):
         # Load parameter bounds from database for the selected run
         param_bounds = {}  # {param_name: {'min': X, 'max': Y}}
         spsa_params = SpsaParam.query.filter_by(run_id=selected_run.id).all()
+        active_param_names = set()
+        param_group_map = {}  # {param_name: group_name}
         for p in spsa_params:
             param_bounds[p.name] = {'min': p.min_value, 'max': p.max_value}
+            param_group_map[p.name] = p.group or 'ungrouped'
+            if selected_run.active_groups is None or p.group in selected_run.active_groups:
+                active_param_names.add(p.name)
 
         # Get all completed iterations for selected run, ordered by iteration number
         iterations = SpsaIteration.query.filter(
@@ -623,9 +628,17 @@ def register_routes(app):
                 SpsaIteration.run_id == selected_run.id,
                 SpsaIteration.status.in_(['pending', 'in_progress', 'building', 'ref_pending'])
             ).order_by(SpsaIteration.iteration_number.desc()).first()
+            active_cutoff = datetime.utcnow() - timedelta(minutes=5)
+            active_worker_count = SpsaWorker.query.filter(
+                SpsaWorker.last_seen_at >= active_cutoff
+            ).count()
             return render_template('spsa.html', iterations=[], params_data={}, elo_data=[],
                                    ref_ratio=ref_ratio, all_runs=all_runs, selected_run=selected_run,
-                                   in_progress=in_progress)
+                                   in_progress=in_progress, active_param_names=active_param_names,
+                                   param_group_map=param_group_map,
+                                   active_worker_count=active_worker_count,
+                                   update_data={}, avg_update_data=[], update_iterations=[],
+                                   convergence_score=0, recent_avg_update=0, last_update={})
 
         # Get parameter names from ALL iterations (union of all params seen)
         # This handles cases where new params are added mid-tuning
@@ -731,6 +744,64 @@ def register_routes(app):
         # Build sampled iteration numbers for stability chart x-axis
         stability_iterations = [iteration_numbers[i] for i in range(0, len(iteration_numbers), sample_rate)]
 
+        # Compute per-iteration parameter update magnitude (% of value)
+        update_data = {name: [] for name in param_names}
+        avg_update_data = []
+        update_iterations = []
+
+        for i in range(0, len(iterations), sample_rate):
+            if i == 0:
+                for name in param_names:
+                    update_data[name].append(0)
+                avg_update_data.append(0)
+                update_iterations.append(iteration_numbers[i])
+                continue
+
+            update_iterations.append(iteration_numbers[i])
+            iter_updates = []
+            for name in param_names:
+                cur = params_data[name][i] if i < len(params_data[name]) else None
+                prev = params_data[name][i - 1] if (i - 1) < len(params_data[name]) else None
+                if cur is not None and prev is not None and prev != 0:
+                    pct = abs(cur - prev) / abs(prev) * 100
+                else:
+                    pct = 0
+                update_data[name].append(pct)
+                if name in active_param_names:
+                    iter_updates.append(pct)
+            avg_update_data.append(sum(iter_updates) / len(iter_updates) if iter_updates else 0)
+
+        # Convergence score: compare recent vs early average update magnitude
+        convergence_score = 0
+        recent_avg_update = 0
+        if len(avg_update_data) >= 2:
+            early_n = min(10, len(avg_update_data) // 2)
+            late_n = min(10, len(avg_update_data) // 2)
+            early_avg = sum(avg_update_data[1:1 + early_n]) / early_n if early_n > 0 else 0
+            recent_vals = avg_update_data[-late_n:]
+            recent_avg = sum(recent_vals) / len(recent_vals) if recent_vals else 0
+            recent_avg_update = recent_avg
+            if early_avg > 0:
+                convergence_score = max(0, min(100, (1 - recent_avg / early_avg) * 100))
+
+        # Last iteration's update for each parameter
+        last_update = {}
+        if len(iterations) >= 2:
+            last_params = iterations[-1].base_parameters or {}
+            prev_params = iterations[-2].base_parameters or {}
+            for name in param_names:
+                cur = last_params.get(name)
+                prev = prev_params.get(name)
+                if cur is not None and prev is not None:
+                    delta = cur - prev
+                    pct = abs(delta) / abs(prev) * 100 if prev != 0 else 0
+                    last_update[name] = {'abs': delta, 'pct': pct}
+                else:
+                    last_update[name] = {'abs': 0, 'pct': 0}
+        else:
+            for name in param_names:
+                last_update[name] = {'abs': 0, 'pct': 0}
+
         # Get the latest ref_elo for display
         # Run 1 had buggy data before iteration 110, so filter those out
         ref_min_iteration = 110 if selected_run.id == 1 else 0
@@ -786,6 +857,12 @@ def register_routes(app):
         if iterations:
             latest_effective_iteration = iterations[-1].effective_iteration
 
+        # Count active workers (seen in last 5 minutes)
+        active_cutoff = datetime.utcnow() - timedelta(minutes=5)
+        active_worker_count = SpsaWorker.query.filter(
+            SpsaWorker.last_seen_at >= active_cutoff
+        ).count()
+
         return render_template(
             'spsa.html',
             iterations=iterations,
@@ -812,7 +889,16 @@ def register_routes(app):
             param_bounds=param_bounds,
             rolling_elo_changes=rolling_elo_changes,
             all_runs=all_runs,
-            selected_run=selected_run
+            selected_run=selected_run,
+            active_param_names=active_param_names,
+            param_group_map=param_group_map,
+            active_worker_count=active_worker_count,
+            update_data=update_data,
+            avg_update_data=avg_update_data,
+            update_iterations=update_iterations,
+            convergence_score=convergence_score,
+            recent_avg_update=recent_avg_update,
+            last_update=last_update
         )
 
     @app.route('/elo-stats')
@@ -828,6 +914,12 @@ def register_routes(app):
         All database access happens server-side - no credentials exposed to frontend.
         Accepts optional 'run' query parameter to filter by run_id.
         """
+        # Active worker count (seen in last 5 minutes)
+        active_cutoff = datetime.utcnow() - timedelta(minutes=5)
+        active_workers = SpsaWorker.query.filter(
+            SpsaWorker.last_seen_at >= active_cutoff
+        ).count()
+
         # Get run_id from query param (optional)
         run_id = request.args.get('run', type=int)
 
@@ -850,7 +942,8 @@ def register_routes(app):
                 'games_played': in_progress.games_played,
                 'target_games': in_progress.target_games,
                 'ref_games_played': in_progress.ref_games_played,
-                'ref_target_games': in_progress.ref_target_games
+                'ref_target_games': in_progress.ref_target_games,
+                'active_workers': active_workers
             })
 
         # No in-progress iteration, return the latest completed one
@@ -867,7 +960,8 @@ def register_routes(app):
                 'games_played': latest.games_played,
                 'target_games': latest.target_games,
                 'ref_games_played': latest.ref_games_played,
-                'ref_target_games': latest.ref_target_games
+                'ref_target_games': latest.ref_target_games,
+                'active_workers': active_workers
             })
 
         # No iterations at all
@@ -877,7 +971,8 @@ def register_routes(app):
             'games_played': 0,
             'target_games': 0,
             'ref_games_played': 0,
-            'ref_target_games': 0
+            'ref_target_games': 0,
+            'active_workers': active_workers
         })
 
     # =========================================================================
@@ -928,6 +1023,7 @@ def register_routes(app):
         if iteration:
             return jsonify({
                 'id': iteration.id,
+                'run_id': iteration.run_id,
                 'iteration_number': iteration.iteration_number,
                 'phase': 'ref',
                 'base_parameters': iteration.base_parameters,
@@ -954,6 +1050,7 @@ def register_routes(app):
 
         return jsonify({
             'id': iteration.id,
+            'run_id': iteration.run_id,
             'iteration_number': iteration.iteration_number,
             'phase': 'spsa',
             'plus_parameters': iteration.plus_parameters,
@@ -1014,8 +1111,8 @@ def register_routes(app):
             )
             db.session.add(heartbeat)
 
-            # Prune heartbeats older than 7 days
-            cutoff_time = datetime.utcnow() - timedelta(days=7)
+            # Prune heartbeats older than 24 hours
+            cutoff_time = datetime.utcnow() - timedelta(hours=24)
             SpsaWorkerHeartbeat.query.filter(
                 SpsaWorkerHeartbeat.created_at < cutoff_time
             ).delete(synchronize_session=False)
@@ -1175,8 +1272,11 @@ def register_routes(app):
         """Dashboard showing SPSA worker activity and statistics."""
         from collections import defaultdict
 
-        # Get all workers ordered by last seen
-        workers = SpsaWorker.query.order_by(SpsaWorker.last_seen_at.desc()).all()
+        # Get workers seen in the last 24 hours
+        cutoff_24h = datetime.utcnow() - timedelta(hours=24)
+        workers = SpsaWorker.query.filter(
+            SpsaWorker.last_seen_at >= cutoff_24h
+        ).order_by(SpsaWorker.last_seen_at.desc()).all()
 
         # Calculate time since last seen for each worker
         now = datetime.utcnow()
@@ -1211,10 +1311,10 @@ def register_routes(app):
                 'avg_nps': w.avg_nps,
             })
 
-        # Get all heartbeats for charts (last 7 days)
-        seven_days_ago = now - timedelta(days=7)
+        # Get all heartbeats for charts (last 24 hours)
+        twenty_four_hours_ago = now - timedelta(hours=24)
         all_heartbeats = SpsaWorkerHeartbeat.query.filter(
-            SpsaWorkerHeartbeat.created_at >= seven_days_ago
+            SpsaWorkerHeartbeat.created_at >= twenty_four_hours_ago
         ).order_by(SpsaWorkerHeartbeat.created_at.asc()).all()
 
         # Build worker name lookup
@@ -1259,10 +1359,14 @@ def register_routes(app):
                 if count > 0:
                     heatmap_data.append({'x': hour, 'y': day, 'v': count})
 
-        # --- Chart 4: Contribution pie chart ---
+        # --- Chart 4: Contribution pie chart (last 24h from heartbeats) ---
+        contribution_counts = defaultdict(int)
+        for h in all_heartbeats:
+            worker_name = worker_names.get(h.worker_id, 'unknown')
+            contribution_counts[worker_name] += h.games_reported
         contribution_data = [
-            {'name': w['name'], 'games': w['total_games']}
-            for w in workers_data if w['total_games'] > 0
+            {'name': name, 'games': games}
+            for name, games in contribution_counts.items() if games > 0
         ]
         # Sort by games descending
         contribution_data.sort(key=lambda x: -x['games'])

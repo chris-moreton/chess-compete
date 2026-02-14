@@ -39,6 +39,13 @@ from compete.game import play_game, GameConfig, play_game_from_config
 from compete.openings import OPENING_BOOK
 from compete.spsa.build import build_spsa_engines, build_engine, get_rusty_rival_path
 from compete.spsa.progress import ProgressDisplay
+from compete.spsa.s3_cache import s3_download, s3_upload
+import platform
+
+
+def _s3_platform_prefix() -> str:
+    """Return a platform tag for S3 cache keys (e.g. 'linux-x86_64', 'darwin-arm64')."""
+    return f"{sys.platform}-{platform.machine()}"
 
 
 class APIClient:
@@ -205,6 +212,25 @@ def ensure_spsa_engines_built(iteration: dict, config: dict, force_rebuild: bool
             print(f"  Using cached plus/minus engines for iteration {iteration_number}")
             return str(plus_path), str(minus_path)
 
+    # Check S3 build cache (platform-specific to avoid cross-platform binary issues)
+    s3_bucket = config.get('build', {}).get('s3_build_cache', '')
+    run_id = iteration.get('run_id', 0)
+    plat = _s3_platform_prefix()
+    s3_prefix = f"spsa/{run_id}/{iteration_number}/{plat}" if s3_bucket else ''
+
+    if s3_bucket:
+        plus_dir.mkdir(parents=True, exist_ok=True)
+        minus_dir.mkdir(parents=True, exist_ok=True)
+        plus_downloaded = s3_download(s3_bucket, f"{s3_prefix}/plus", str(plus_path))
+        minus_downloaded = s3_download(s3_bucket, f"{s3_prefix}/minus", str(minus_path))
+        if plus_downloaded and minus_downloaded:
+            write_cached_iteration(plus_dir, iteration_number)
+            write_cached_iteration(minus_dir, iteration_number)
+            os.chmod(str(plus_path), 0o755)
+            os.chmod(str(minus_path), 0o755)
+            print(f"  Downloaded plus/minus engines from S3")
+            return str(plus_path), str(minus_path)
+
     # Need to build engines from parameters
     print(f"\n  Building plus/minus engines for iteration {iteration_number}...")
 
@@ -226,6 +252,11 @@ def ensure_spsa_engines_built(iteration: dict, config: dict, force_rebuild: bool
         # Write cache files
         write_cached_iteration(plus_dir, iteration_number)
         write_cached_iteration(minus_dir, iteration_number)
+
+        # Upload to S3 for other workers
+        if s3_bucket:
+            s3_upload(s3_bucket, f"{s3_prefix}/plus", str(new_plus_path))
+            s3_upload(s3_bucket, f"{s3_prefix}/minus", str(new_minus_path))
 
         return str(new_plus_path), str(new_minus_path)
     except Exception as e:
@@ -261,6 +292,20 @@ def ensure_base_engine_ready(iteration: dict, config: dict) -> str:
         print(f"  Using cached base engine for iteration {iteration_number}")
         return str(base_path)
 
+    # Check S3 build cache (platform-specific to avoid cross-platform binary issues)
+    s3_bucket = config.get('build', {}).get('s3_build_cache', '')
+    run_id = iteration.get('run_id', 0)
+    plat = _s3_platform_prefix()
+    s3_key = f"spsa/{run_id}/{iteration_number}/{plat}/base" if s3_bucket else ''
+
+    if s3_bucket:
+        base_dir.mkdir(parents=True, exist_ok=True)
+        if s3_download(s3_bucket, s3_key, str(base_path)):
+            write_cached_iteration(base_dir, iteration_number)
+            os.chmod(str(base_path), 0o755)
+            print(f"  Downloaded base engine from S3")
+            return str(base_path)
+
     # Need to build base engine with updated parameters
     print(f"\n  Building base engine for iteration {iteration_number}...")
     src_path = get_rusty_rival_path(config)
@@ -272,6 +317,10 @@ def ensure_base_engine_ready(iteration: dict, config: dict) -> str:
     # Write cache file
     write_cached_iteration(base_dir, iteration_number)
     print(f"  Built base engine: {base_path}")
+
+    # Upload to S3 for other workers
+    if s3_bucket:
+        s3_upload(s3_bucket, s3_key, str(base_path))
 
     return str(base_path)
 
@@ -792,7 +841,8 @@ def get_reference_engine_path(config: dict) -> str | None:
 
 
 def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
-                    poll_interval: int = 10, time_mult: float = 1.0):
+                    poll_interval: int = 10, time_mult: float = 1.0,
+                    idle_timeout: int = 0):
     """
     Run the SPSA HTTP worker loop.
 
@@ -802,6 +852,7 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
         concurrency: Number of games to run in parallel
         poll_interval: Seconds to wait when no work is available
         time_mult: Multiplier for timelow/timehigh values from iteration
+        idle_timeout: Shutdown after this many minutes of no work (0 = disabled)
     """
     hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
 
@@ -838,6 +889,7 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
     ref_games_total = 0
     current_iteration = None
     current_phase = None
+    last_work_time = time.time()
 
     while True:
         try:
@@ -845,10 +897,19 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
             iteration = api.get_work(hostname)
 
             if not iteration:
+                # Check idle timeout
+                if idle_timeout > 0:
+                    idle_minutes = (time.time() - last_work_time) / 60
+                    if idle_minutes >= idle_timeout:
+                        print(f"\n\nNo work for {idle_timeout} minutes — shutting down.")
+                        import subprocess
+                        subprocess.run(['sudo', 'shutdown', '-h', 'now'], check=False)
+                        sys.exit(0)
                 print(".", end="", flush=True)
                 time.sleep(poll_interval)
                 continue
 
+            last_work_time = time.time()
             phase = iteration['phase']
             iteration_num = iteration['iteration_number']
             iteration_id = iteration['id']
@@ -998,6 +1059,8 @@ def main():
                         help='Seconds to wait when no work available (default: 10)')
     parser.add_argument('--timemult', type=float, default=1.0,
                         help='Multiplier for timelow/timehigh from iteration (default: 1.0)')
+    parser.add_argument('--idle-timeout', type=int, default=0,
+                        help='Shutdown after N minutes of no work (0 = disabled, default: 0)')
 
     args = parser.parse_args()
 
@@ -1014,7 +1077,8 @@ def main():
         api_key=args.api_key,
         concurrency=args.concurrency,
         poll_interval=args.poll_interval,
-        time_mult=args.timemult
+        time_mult=args.timemult,
+        idle_timeout=args.idle_timeout
     )
 
 

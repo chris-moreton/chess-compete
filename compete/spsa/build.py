@@ -371,6 +371,9 @@ def build_engine(src_path: Path, output_path: Path, params: dict = None) -> bool
     """
     Build the engine with optional parameter modifications.
 
+    Uses a dedicated working copy (rusty-rival-spsa-base) so the original
+    source tree is never modified.
+
     Args:
         src_path: Path to rusty-rival source
         output_path: Path to output the binary (directory)
@@ -379,56 +382,72 @@ def build_engine(src_path: Path, output_path: Path, params: dict = None) -> bool
     Returns:
         True if build succeeded
     """
-    # Backup original constants if we're modifying
-    constants_file = src_path / 'src' / 'engine_constants.rs'
-    original_content = None
+    work_path = src_path.parent / f'{src_path.name}-spsa-base'
+    _sync_source_tree(src_path, work_path)
 
     try:
-        if params:
-            # Read, modify, write
-            original_content = read_engine_constants(src_path)
-            modified_content = apply_parameters(original_content, params)
-            write_engine_constants(src_path, modified_content)
-
-        # Build with native optimizations
-        # Don't set RUSTFLAGS - let .cargo/config.toml handle stack size linker flags
-        # Setting RUSTFLAGS here would override those critical settings
-        env = os.environ.copy()
-        if 'RUSTFLAGS' in env:
-            del env['RUSTFLAGS']  # Ensure we don't override config.toml
-
-        result = subprocess.run(
-            ['cargo', 'build', '--release'],
-            cwd=src_path,
-            env=env,
-            capture_output=True,
-            text=True
-        )
-
-        if result.returncode != 0:
-            print(f"Build failed:\n{result.stderr}")
-            return False
-
-        # Copy binary to output location
-        output_path.mkdir(parents=True, exist_ok=True)
-
-        # Handle Windows vs Unix binary names
-        if os.name == 'nt':
-            binary_name = 'rusty-rival.exe'
-        else:
-            binary_name = 'rusty-rival'
-
-        src_binary = src_path / 'target' / 'release' / binary_name
-        dst_binary = output_path / binary_name
-
-        shutil.copy2(src_binary, dst_binary)
-
+        _build_in_work_tree(work_path, output_path, params, "base")
         return True
+    except RuntimeError as e:
+        print(f"Build failed: {e}")
+        return False
 
-    finally:
-        # Restore original constants
-        if original_content is not None:
-            write_engine_constants(src_path, original_content)
+
+def _sync_source_tree(src_path: Path, work_path: Path):
+    """
+    Sync source files to a working copy, preserving target/ for incremental builds.
+
+    Clears old source files but keeps the target/ directory so cargo can do
+    incremental compilation.
+    """
+    if work_path.exists():
+        for item in work_path.iterdir():
+            if item.name == 'target':
+                continue  # Preserve for incremental builds
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+
+    ignore = shutil.ignore_patterns('target', '.git')
+    shutil.copytree(src_path, work_path, ignore=ignore, dirs_exist_ok=True)
+
+
+def _build_in_work_tree(work_path: Path, output_dir: Path, params: dict, label: str) -> Path:
+    """
+    Apply parameters to a working copy and build.
+
+    Returns the path to the compiled binary.
+    """
+    # Apply parameters if provided
+    if params:
+        content = read_engine_constants(work_path)
+        content = apply_parameters(content, params)
+        write_engine_constants(work_path, content)
+
+    # Build
+    env = os.environ.copy()
+    if 'RUSTFLAGS' in env:
+        del env['RUSTFLAGS']
+
+    result = subprocess.run(
+        ['cargo', 'build', '--release'],
+        cwd=work_path, env=env, capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to build {label} engine:\n{result.stderr}")
+
+    # Copy binary to output via temp file + atomic rename to avoid
+    # "Text file busy" errors when the old binary is still running
+    output_dir.mkdir(parents=True, exist_ok=True)
+    binary_name = 'rusty-rival.exe' if os.name == 'nt' else 'rusty-rival'
+    src_binary = work_path / 'target' / 'release' / binary_name
+    dst_binary = output_dir / binary_name
+    tmp_binary = output_dir / f'.{binary_name}.tmp'
+    shutil.copy2(src_binary, tmp_binary)
+    os.replace(tmp_binary, dst_binary)
+
+    return dst_binary
 
 
 def build_spsa_engines(src_path: Path, output_base: Path,
@@ -436,6 +455,10 @@ def build_spsa_engines(src_path: Path, output_base: Path,
                        plus_name: str = 'spsa-plus', minus_name: str = 'spsa-minus') -> tuple[Path, Path]:
     """
     Build both plus and minus perturbed engines for SPSA iteration.
+
+    Uses two working copies of the source tree so both engines can be built
+    in parallel. Each copy preserves its target/ directory for incremental
+    compilation.
 
     Args:
         src_path: Path to rusty-rival source
@@ -448,20 +471,28 @@ def build_spsa_engines(src_path: Path, output_base: Path,
     Returns:
         (plus_engine_path, minus_engine_path) - full paths to engine binaries
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     plus_dir = output_base / plus_name
     minus_dir = output_base / minus_name
 
-    print(f"Building plus engine ({plus_name})...")
-    if not build_engine(src_path, plus_dir, plus_params):
-        raise RuntimeError("Failed to build plus engine")
+    # Create/sync two working copies of the source tree
+    plus_work = src_path.parent / f'{src_path.name}-spsa-plus'
+    minus_work = src_path.parent / f'{src_path.name}-spsa-minus'
 
-    print(f"Building minus engine ({minus_name})...")
-    if not build_engine(src_path, minus_dir, minus_params):
-        raise RuntimeError("Failed to build minus engine")
+    print(f"  Syncing source trees...")
+    _sync_source_tree(src_path, plus_work)
+    _sync_source_tree(src_path, minus_work)
 
-    # Return paths to binaries
-    binary_name = 'rusty-rival.exe' if os.name == 'nt' else 'rusty-rival'
-    return plus_dir / binary_name, minus_dir / binary_name
+    print(f"  Building plus and minus engines in parallel...")
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        plus_future = executor.submit(_build_in_work_tree, plus_work, plus_dir, plus_params, "plus")
+        minus_future = executor.submit(_build_in_work_tree, minus_work, minus_dir, minus_params, "minus")
+
+        plus_path = plus_future.result()
+        minus_path = minus_future.result()
+
+    return plus_path, minus_path
 
 
 if __name__ == '__main__':
