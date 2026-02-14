@@ -638,7 +638,8 @@ def register_routes(app):
                                    param_group_map=param_group_map,
                                    active_worker_count=active_worker_count,
                                    update_data={}, avg_update_data=[], update_iterations=[],
-                                   convergence_score=0, recent_avg_update=0, last_update={})
+                                   convergence_score=0, recent_avg_update=0, last_update={},
+                                   llm_report=None, llm_report_iteration=None)
 
         # Get parameter names from ALL iterations (union of all params seen)
         # This handles cases where new params are added mid-tuning
@@ -863,6 +864,17 @@ def register_routes(app):
             SpsaWorker.last_seen_at >= active_cutoff
         ).count()
 
+        # Find the most recent LLM report for this run
+        llm_report = None
+        llm_report_iteration = None
+        latest_report_iter = SpsaIteration.query.filter(
+            SpsaIteration.run_id == selected_run.id,
+            SpsaIteration.llm_report.isnot(None)
+        ).order_by(SpsaIteration.iteration_number.desc()).first()
+        if latest_report_iter:
+            llm_report = latest_report_iter.llm_report
+            llm_report_iteration = latest_report_iter.iteration_number
+
         return render_template(
             'spsa.html',
             iterations=iterations,
@@ -898,7 +910,9 @@ def register_routes(app):
             update_iterations=update_iterations,
             convergence_score=convergence_score,
             recent_avg_update=recent_avg_update,
-            last_update=last_update
+            last_update=last_update,
+            llm_report=llm_report,
+            llm_report_iteration=llm_report_iteration
         )
 
     @app.route('/elo-stats')

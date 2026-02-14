@@ -316,6 +316,9 @@ class SpsaIteration(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     completed_at = db.Column(db.DateTime)
 
+    # LLM-generated analysis (every N iterations)
+    llm_report = db.Column(db.Text)
+
     __table_args__ = (
         db.Index('idx_spsa_iteration_number', 'iteration_number'),
         db.Index('idx_spsa_status', 'status'),

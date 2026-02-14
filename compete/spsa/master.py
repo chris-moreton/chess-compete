@@ -550,6 +550,153 @@ def mark_iteration_complete(iteration_id: int, gradient: dict, elo_diff: float, 
     with_db_retry(_mark)
 
 
+def save_llm_report(iteration_id: int, report: str):
+    """Save an LLM-generated report to a completed iteration."""
+    from web.app import create_app
+    from web.database import db
+
+    def _save():
+        app = create_app()
+        with app.app_context():
+            db.session.execute(
+                db.text("UPDATE spsa_iterations SET llm_report = :report WHERE id = :id"),
+                {'report': report, 'id': iteration_id}
+            )
+            db.session.commit()
+
+    with_db_retry(_save)
+
+
+def generate_llm_report(run_id: int, iteration_number: int) -> str | None:
+    """
+    Generate an LLM analysis report for the current state of an SPSA run.
+
+    Queries the last 10 completed iterations, builds a prompt with parameter
+    and Elo data, and calls OpenAI gpt-4o-mini for a concise analysis.
+
+    Returns the report text, or None if generation fails or is unavailable.
+    """
+    import os
+    api_key = os.environ.get('OPENAI_API_KEY')
+    if not api_key:
+        print("  LLM report skipped: OPENAI_API_KEY not set")
+        return None
+
+    try:
+        from openai import OpenAI
+    except ImportError:
+        print("  LLM report skipped: openai package not installed")
+        return None
+
+    from web.app import create_app
+    from web.models import SpsaIteration, SpsaRun, SpsaParam
+
+    try:
+        app = create_app()
+        with app.app_context():
+            # Load run info
+            run = SpsaRun.query.get(run_id)
+            if not run:
+                return None
+
+            # Load parameters with bounds
+            params = SpsaParam.query.filter_by(run_id=run_id).all()
+            active_groups = set(run.active_groups) if run.active_groups else None
+
+            # Load last 10 completed iterations
+            recent_iterations = SpsaIteration.query.filter(
+                SpsaIteration.run_id == run_id,
+                SpsaIteration.status == 'complete'
+            ).order_by(SpsaIteration.iteration_number.desc()).limit(10).all()
+            recent_iterations.reverse()  # chronological order
+
+            if not recent_iterations:
+                return None
+
+            # Build parameter table
+            param_lines = []
+            for p in sorted(params, key=lambda x: x.name):
+                active = '*' if (active_groups is None or p.group in active_groups) else ' '
+                current_val = recent_iterations[-1].base_parameters.get(p.name, p.value) if recent_iterations[-1].base_parameters else p.value
+                param_lines.append(
+                    f"  {active} {p.name}: current={current_val:.4f}, "
+                    f"min={p.min_value}, max={p.max_value}, initial={p.value:.4f}, "
+                    f"group={p.group}"
+                )
+
+            # Build iteration table
+            iter_lines = []
+            for it in recent_iterations:
+                elo_diff = float(it.elo_diff) if it.elo_diff else 0
+                ref_elo = float(it.ref_elo_estimate) if it.ref_elo_estimate else None
+                ref_str = f"{ref_elo:.0f}" if ref_elo else "n/a"
+
+                # Summarize gradient magnitudes
+                grad_mag = "n/a"
+                if it.gradient_estimate:
+                    mags = [abs(v) for v in it.gradient_estimate.values()]
+                    if mags:
+                        grad_mag = f"avg={sum(mags)/len(mags):.4f}, max={max(mags):.4f}"
+
+                iter_lines.append(
+                    f"  Iter {it.iteration_number}: elo_diff={elo_diff:+.1f}, "
+                    f"ref_elo={ref_str}, gradient=[{grad_mag}]"
+                )
+
+            # Compute convergence metrics (reuse logic from routes.py)
+            convergence_info = ""
+            if len(recent_iterations) >= 2:
+                updates = []
+                for i in range(1, len(recent_iterations)):
+                    prev = recent_iterations[i-1].base_parameters or {}
+                    curr = recent_iterations[i].base_parameters or {}
+                    for name in curr:
+                        if name in prev and prev[name] != 0:
+                            pct = abs(curr[name] - prev[name]) / abs(prev[name]) * 100
+                            updates.append(pct)
+                if updates:
+                    avg_update = sum(updates) / len(updates)
+                    convergence_info = f"Recent avg parameter update: {avg_update:.3f}%/iter"
+
+            prompt = f"""You are analyzing an SPSA chess engine parameter tuning run. Provide a concise report (3-5 paragraphs).
+
+Run: {run.name} — {run.description or 'No description'}
+Active groups: {', '.join(sorted(active_groups)) if active_groups else 'ALL'}
+Current iteration: {iteration_number}
+Games per iteration: {run.games_per_iteration}
+Time control: {run.timelow}-{run.timehigh}s/move
+
+Parameters (current value, min, max, initial) — * = active:
+{chr(10).join(param_lines)}
+
+Recent iterations (last {len(recent_iterations)}):
+{chr(10).join(iter_lines)}
+
+{convergence_info}
+
+Please analyze:
+1. Overall trend — is the run improving, plateauing, or degrading?
+2. Parameter convergence — which params have stabilized vs still moving?
+3. Any params near or at bounds?
+4. Recommendation: continue, stop, or adjust settings?
+Keep it concise and actionable."""
+
+            # Call OpenAI
+            client = OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=500,
+                temperature=0.3,
+            )
+            report = response.choices[0].message.content
+            return report.strip() if report else None
+
+    except Exception as e:
+        print(f"  LLM report generation failed: {e}")
+        return None
+
+
 def migrate_database():
     """Ensure database schema is up to date with new columns/tables."""
     from web.app import create_app
@@ -754,6 +901,19 @@ def migrate_database():
                 print("  Dropped active_from_iteration column.")
             except Exception:
                 db.session.rollback()
+
+        # Add llm_report column to spsa_iterations
+        try:
+            db.session.execute(db.text("SELECT llm_report FROM spsa_iterations LIMIT 1"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            print("  Adding llm_report column to spsa_iterations...")
+            db.session.execute(db.text(
+                "ALTER TABLE spsa_iterations ADD COLUMN llm_report TEXT"
+            ))
+            db.session.commit()
+            print("  Migration complete.")
 
         # Ensure a "Default" template run exists
         default_exists = db.session.execute(
@@ -1397,6 +1557,17 @@ def run_master():
         # ===== Mark iteration complete =====
         mark_iteration_complete(iteration_id, gradient or {}, elo_diff or 0.0, ref_elo_estimate)
         print(f"\nIteration {k} complete!")
+
+        # Generate LLM report every 5 iterations
+        if k % 5 == 0:
+            try:
+                report = generate_llm_report(run_id, k)
+                if report:
+                    save_llm_report(iteration_id, report)
+                    print(f"  LLM report saved for iteration {k}")
+            except Exception as e:
+                print(f"  LLM report failed: {e}")
+
         k += 1
 
     print(f"\n{'='*60}")
