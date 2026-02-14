@@ -972,12 +972,12 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
         timelow=timelow, timehigh=timehigh,
         games_per_iteration=games_per_iteration,
         max_iterations=max_iterations,
-        spsa_a=default_run.spsa_a, spsa_c=default_run.spsa_c,
-        spsa_big_a=default_run.spsa_big_a,
-        spsa_alpha=default_run.spsa_alpha, spsa_gamma=default_run.spsa_gamma,
-        max_elo_diff=default_run.max_elo_diff,
-        max_gradient_factor=default_run.max_gradient_factor,
-        ref_enabled=default_run.ref_enabled, ref_ratio=default_run.ref_ratio,
+        spsa_a=settings_source.spsa_a, spsa_c=settings_source.spsa_c,
+        spsa_big_a=settings_source.spsa_big_a,
+        spsa_alpha=settings_source.spsa_alpha, spsa_gamma=settings_source.spsa_gamma,
+        max_elo_diff=settings_source.max_elo_diff,
+        max_gradient_factor=settings_source.max_gradient_factor,
+        ref_enabled=settings_source.ref_enabled, ref_ratio=settings_source.ref_ratio,
         active_groups=selected_groups,
     )
     db.session.add(new_run)
