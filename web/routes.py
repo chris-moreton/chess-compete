@@ -915,6 +915,177 @@ def register_routes(app):
             llm_report_iteration=llm_report_iteration
         )
 
+    @app.route('/spsa/generate-report', methods=['POST'])
+    def spsa_generate_report():
+        """Generate an LLM analysis report for an SPSA run on demand."""
+        run_id = request.form.get('run_id', type=int)
+        if not run_id:
+            return redirect(url_for('spsa_dashboard'))
+
+        run = SpsaRun.query.get(run_id)
+        if not run:
+            return redirect(url_for('spsa_dashboard'))
+
+        # Get all completed iterations for this run
+        iterations = SpsaIteration.query.filter(
+            SpsaIteration.run_id == run_id,
+            SpsaIteration.status == 'complete'
+        ).order_by(SpsaIteration.iteration_number.asc()).all()
+
+        if not iterations:
+            return redirect(url_for('spsa_dashboard', run=run_id))
+
+        latest = iterations[-1]
+
+        # Check for API key
+        api_key = os.environ.get('OPENAI_API_KEY')
+        if not api_key:
+            return redirect(url_for('spsa_dashboard', run=run_id))
+
+        try:
+            from openai import OpenAI
+        except ImportError:
+            return redirect(url_for('spsa_dashboard', run=run_id))
+
+        # Load parameters with bounds
+        params = SpsaParam.query.filter_by(run_id=run_id).all()
+        active_groups = set(run.active_groups) if run.active_groups else None
+
+        # Build parameter table with current values and distance to bounds
+        param_lines = []
+        params_at_bounds = []
+        for p in sorted(params, key=lambda x: x.name):
+            active = '*' if (active_groups is None or p.group in active_groups) else ' '
+            current_val = latest.base_parameters.get(p.name, p.value) if latest.base_parameters else p.value
+            param_range = p.max_value - p.min_value
+            dist_to_min = (current_val - p.min_value) / param_range * 100 if param_range > 0 else 0
+            dist_to_max = (p.max_value - current_val) / param_range * 100 if param_range > 0 else 0
+            param_lines.append(
+                f"  {active} {p.name}: current={current_val:.4f}, "
+                f"min={p.min_value}, max={p.max_value}, step={p.step}, "
+                f"group={p.group}, "
+                f"dist_to_min={dist_to_min:.1f}%, dist_to_max={dist_to_max:.1f}%"
+            )
+            if dist_to_min < 5 or dist_to_max < 5:
+                bound = "MIN" if dist_to_min < dist_to_max else "MAX"
+                params_at_bounds.append(f"{p.name} ({dist_to_min:.1f}% from min, {dist_to_max:.1f}% from max) -> near {bound}")
+
+        # Build iteration summary — last 20 for detail, plus overall stats
+        recent = iterations[-20:]
+        iter_lines = []
+        for it in recent:
+            elo_diff = float(it.elo_diff) if it.elo_diff else 0
+            ref_elo = float(it.ref_elo_estimate) if it.ref_elo_estimate else None
+            ref_str = f"{ref_elo:.0f}" if ref_elo else "n/a"
+            grad_mag = "n/a"
+            if it.gradient_estimate:
+                mags = [abs(v) for v in it.gradient_estimate.values()]
+                if mags:
+                    grad_mag = f"avg={sum(mags)/len(mags):.4f}, max={max(mags):.4f}"
+            iter_lines.append(
+                f"  Iter {it.iteration_number}: elo_diff={elo_diff:+.1f}, "
+                f"ref_elo={ref_str}, gradient=[{grad_mag}]"
+            )
+
+        # Ref Elo trend — first 10, last 10 averages
+        ref_elos = [float(it.ref_elo_estimate) for it in iterations if it.ref_elo_estimate is not None]
+        ref_trend_info = ""
+        if len(ref_elos) >= 20:
+            early_avg = sum(ref_elos[:10]) / 10
+            recent_avg = sum(ref_elos[-10:]) / 10
+            ref_trend_info = (
+                f"Ref Elo trend: first 10 avg = {early_avg:.0f}, "
+                f"last 10 avg = {recent_avg:.0f}, "
+                f"change = {recent_avg - early_avg:+.0f}"
+            )
+        elif ref_elos:
+            ref_trend_info = f"Ref Elo: latest = {ref_elos[-1]:.0f}, avg = {sum(ref_elos)/len(ref_elos):.0f} ({len(ref_elos)} data points)"
+
+        # Convergence: avg update magnitude over last 10 vs first 10
+        convergence_info = ""
+        if len(iterations) >= 4:
+            def avg_update_pct(iters):
+                updates = []
+                for i in range(1, len(iters)):
+                    prev = iters[i-1].base_parameters or {}
+                    curr = iters[i].base_parameters or {}
+                    for name in curr:
+                        if name in prev and prev[name] != 0:
+                            updates.append(abs(curr[name] - prev[name]) / abs(prev[name]) * 100)
+                return sum(updates) / len(updates) if updates else 0
+
+            n = min(10, len(iterations) // 2)
+            early_update = avg_update_pct(iterations[:n+1])
+            recent_update = avg_update_pct(iterations[-n-1:])
+            convergence_info = (
+                f"Avg param update per iter: early={early_update:.4f}%, "
+                f"recent={recent_update:.4f}%"
+            )
+            if early_update > 0:
+                reduction = (1 - recent_update / early_update) * 100
+                convergence_info += f" (reduction: {reduction:.0f}%)"
+
+        bounds_section = ""
+        if params_at_bounds:
+            bounds_section = "Parameters near bounds (<5% distance):\n" + "\n".join(f"  {p}" for p in params_at_bounds)
+        else:
+            bounds_section = "No parameters are near their bounds."
+
+        prompt = f"""You are an expert analyzing an SPSA (Simultaneous Perturbation Stochastic Approximation) chess engine parameter tuning run. Generate a concise, actionable report.
+
+## Run Details
+Name: {run.name}
+Description: {run.description or 'No description'}
+Active parameter groups: {', '.join(sorted(active_groups)) if active_groups else 'ALL'}
+Total completed iterations: {len(iterations)}
+Games per iteration: {run.games_per_iteration}
+Time control: {run.timelow}-{run.timehigh}s/move
+
+## SPSA Hyperparameters
+a={run.spsa_a}, c={run.spsa_c}, A={int(run.spsa_big_a)}, alpha={run.spsa_alpha}, gamma={run.spsa_gamma}
+Elo diff cap: {int(run.max_elo_diff)}, Gradient factor cap: {run.max_gradient_factor}
+
+## Parameters (current value, bounds, step) — * = actively tuned
+{chr(10).join(param_lines)}
+
+## {bounds_section}
+
+## Recent Iterations (last {len(recent)})
+{chr(10).join(iter_lines)}
+
+## Trends
+{ref_trend_info}
+{convergence_info}
+
+## Please analyze the following:
+1. **Plateau detection** — Has the run reached a plateau? Is ref Elo still improving or has it flatlined? Look at the trend over early vs recent iterations.
+2. **Progress assessment** — Is the tuning making meaningful progress? Are parameter updates translating into Elo gains?
+3. **Bound issues** — Are any parameters stuck at or near their bounds? Should those bounds be widened?
+4. **Hyperparameter recommendations** — Should we adjust c (perturbation size), A (learning rate decay), or other SPSA settings? Is the learning rate decaying too fast or too slow?
+5. **Strategy** — Should we continue this run, stop it, or switch to tuning a different parameter group? Would it help to reset the effective iteration offset?
+6. **Anything else** notable — outlier iterations, suspicious gradients, parameters that seem to have no effect, etc.
+
+Be specific and reference actual parameter names, values, and numbers from the data. Keep it to 4-6 paragraphs."""
+
+        try:
+            client = OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=800,
+                temperature=0.3,
+            )
+            report = response.choices[0].message.content
+            if report:
+                report = report.strip()
+                # Save to the latest completed iteration
+                latest.llm_report = report
+                db.session.commit()
+        except Exception as e:
+            print(f"LLM report generation failed: {e}")
+
+        return redirect(url_for('spsa_dashboard', run=run_id))
+
     @app.route('/elo-stats')
     def elo_stats():
         """Elo statistics calculator - probability of detecting Elo differences."""
