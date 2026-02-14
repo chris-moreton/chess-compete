@@ -37,28 +37,7 @@ def create_app():
         from web import routes
         routes.register_routes(app)
 
-        # Lightweight schema migration for columns added by new code
-        _migrate_schema(db)
-
     return app
-
-
-def _migrate_schema(db):
-    """Add any missing columns that new code depends on. Idempotent."""
-    migrations = [
-        ("spsa_iterations", "llm_report", "ALTER TABLE spsa_iterations ADD COLUMN llm_report TEXT"),
-    ]
-    for table, column, ddl in migrations:
-        try:
-            db.session.execute(db.text(f"SELECT {column} FROM {table} LIMIT 1"))
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-            try:
-                db.session.execute(db.text(ddl))
-                db.session.commit()
-            except Exception:
-                db.session.rollback()
 
 
 if __name__ == '__main__':

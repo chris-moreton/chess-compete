@@ -902,19 +902,6 @@ def migrate_database():
             except Exception:
                 db.session.rollback()
 
-        # Add llm_report column to spsa_iterations
-        try:
-            db.session.execute(db.text("SELECT llm_report FROM spsa_iterations LIMIT 1"))
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-            print("  Adding llm_report column to spsa_iterations...")
-            db.session.execute(db.text(
-                "ALTER TABLE spsa_iterations ADD COLUMN llm_report TEXT"
-            ))
-            db.session.commit()
-            print("  Migration complete.")
-
         # Ensure a "Default" template run exists
         default_exists = db.session.execute(
             db.text("SELECT 1 FROM spsa_runs WHERE name = 'Default' LIMIT 1")
