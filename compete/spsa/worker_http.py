@@ -792,7 +792,7 @@ def get_reference_engine_path(config: dict) -> str | None:
 
 
 def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
-                    poll_interval: int = 10):
+                    poll_interval: int = 10, time_mult: float = 1.0):
     """
     Run the SPSA HTTP worker loop.
 
@@ -801,6 +801,7 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
         api_key: API key for authentication
         concurrency: Number of games to run in parallel
         poll_interval: Seconds to wait when no work is available
+        time_mult: Multiplier for timelow/timehigh values from iteration
     """
     hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
 
@@ -821,6 +822,8 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
     print(f"Host: {hostname}")
     print(f"API URL: {api_url}")
     print(f"Concurrency: {concurrency} games in parallel")
+    if time_mult != 1.0:
+        print(f"Time multiplier: {time_mult}x")
     print(f"Poll interval: {poll_interval}s when idle")
     print(f"Opening book: {len(OPENING_BOOK)} positions")
     print(f"Rusty-rival source: {get_rusty_rival_path(config)}")
@@ -857,7 +860,12 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                 phase_name = "SPSA (plus vs minus)" if phase == 'spsa' else "Reference (base vs Stockfish)"
                 print(f"\n\nIteration {iteration_num} - Phase: {phase_name}")
                 print(f"  Progress: {iteration['games_played']}/{iteration['target_games']} games")
-                print(f"  Time: {iteration['timelow_ms']}-{iteration['timehigh_ms']}ms/move")
+                effective_timelow = int(iteration['timelow_ms'] * time_mult)
+                effective_timehigh = int(iteration['timehigh_ms'] * time_mult)
+                time_str = f"  Time: {effective_timelow}-{effective_timehigh}ms/move"
+                if time_mult != 1.0:
+                    time_str += f" ({time_mult}x of {iteration['timelow_ms']}-{iteration['timehigh_ms']})"
+                print(time_str)
 
             # Check if phase is complete
             remaining = iteration['target_games'] - iteration['games_played']
@@ -902,7 +910,7 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                 start_time = time.time()
                 total, plus_nps, minus_nps = run_spsa_games(
                     plus_path, minus_path,
-                    iteration['timelow_ms'], iteration['timehigh_ms'],
+                    int(iteration['timelow_ms'] * time_mult), int(iteration['timehigh_ms'] * time_mult),
                     concurrency, on_spsa_game,
                     max_games=remaining
                 )
@@ -955,7 +963,7 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                 start_time = time.time()
                 total = run_ref_games(
                     base_path, ref_engine_path, ref_elo,
-                    iteration['timelow_ms'], iteration['timehigh_ms'],
+                    int(iteration['timelow_ms'] * time_mult), int(iteration['timehigh_ms'] * time_mult),
                     concurrency, on_ref_game,
                     max_games=remaining
                 )
@@ -988,6 +996,8 @@ def main():
                         help='Number of games to run in parallel (default: 1)')
     parser.add_argument('--poll-interval', '-p', type=int, default=10,
                         help='Seconds to wait when no work available (default: 10)')
+    parser.add_argument('--timemult', type=float, default=1.0,
+                        help='Multiplier for timelow/timehigh from iteration (default: 1.0)')
 
     args = parser.parse_args()
 
@@ -1003,7 +1013,8 @@ def main():
         api_url=args.api_url,
         api_key=args.api_key,
         concurrency=args.concurrency,
-        poll_interval=args.poll_interval
+        poll_interval=args.poll_interval,
+        time_mult=args.timemult
     )
 
 

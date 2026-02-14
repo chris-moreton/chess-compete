@@ -111,6 +111,8 @@ def main():
                         help="SPSA HTTP: API base URL (or set SPSA_API_URL env var)")
     parser.add_argument("--api-key", type=str, default=None,
                         help="SPSA HTTP: API key (or set SPSA_API_KEY env var)")
+    parser.add_argument("--timemult", type=float, default=1.0,
+                        help="SPSA HTTP: multiplier for timelow/timehigh from iteration (default: 1.0)")
 
     args = parser.parse_args()
 
@@ -263,7 +265,8 @@ def main():
             api_url=api_url,
             api_key=api_key,
             concurrency=args.concurrency,
-            poll_interval=10
+            poll_interval=10,
+            time_mult=args.timemult
         )
     elif args.cup:
         # Cup mode: knockout tournament with seeded brackets
