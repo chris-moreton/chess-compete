@@ -965,6 +965,17 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
     else:
         print(f"  All groups active ({sum(available_groups.values())} params)")
 
+    # Mark any incomplete iterations on existing runs as complete
+    from web.models import SpsaIteration
+    incomplete_iters = SpsaIteration.query.filter(
+        SpsaIteration.status.in_(['pending', 'in_progress', 'building', 'ref_pending'])
+    ).all()
+    if incomplete_iters:
+        for it in incomplete_iters:
+            it.status = 'complete'
+            it.completed_at = datetime.utcnow()
+        print(f"  Marked {len(incomplete_iters)} incomplete iteration(s) as complete")
+
     # Deactivate all runs, create the new one
     SpsaRun.query.update({SpsaRun.is_active: False})
     new_run = SpsaRun(

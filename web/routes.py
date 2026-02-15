@@ -1372,6 +1372,15 @@ Be specific, cite numbers, and be honest about uncertainty. 4-6 paragraphs."""
             if not isinstance(data[field], int) or data[field] < 0:
                 return jsonify({'error': f'invalid value for {field}'}), 400
 
+        # Reject results for completed iterations
+        iter_check = db.session.execute(db.text(
+            "SELECT status FROM spsa_iterations WHERE id = :id"
+        ), {'id': iteration_id}).fetchone()
+        if not iter_check:
+            return jsonify({'error': 'iteration not found'}), 404
+        if iter_check.status == 'complete':
+            return jsonify({'status': 'ignored', 'reason': 'iteration already complete', 'remaining': 0})
+
         # Atomic increment using SQL
         try:
             db.session.execute(
@@ -1441,6 +1450,15 @@ Be specific, cite numbers, and be honest about uncertainty. 4-6 paragraphs."""
                 return jsonify({'error': f'missing field: {field}'}), 400
             if not isinstance(data[field], int) or data[field] < 0:
                 return jsonify({'error': f'invalid value for {field}'}), 400
+
+        # Reject results for completed iterations
+        iter_check = db.session.execute(db.text(
+            "SELECT status FROM spsa_iterations WHERE id = :id"
+        ), {'id': iteration_id}).fetchone()
+        if not iter_check:
+            return jsonify({'error': 'iteration not found'}), 404
+        if iter_check.status == 'complete':
+            return jsonify({'status': 'ignored', 'reason': 'iteration already complete', 'remaining': 0})
 
         # Atomic increment using SQL
         try:
