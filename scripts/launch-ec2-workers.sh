@@ -37,7 +37,7 @@ else
 fi
 
 # ---------- Configuration ----------
-INSTANCE_TYPE="${INSTANCE_TYPE:-c7a.4xlarge}"
+INSTANCE_TYPE="${INSTANCE_TYPE:-c7i.4xlarge}"
 AMI_ID="${AMI_ID:-}"  # Auto-detected if empty
 KEY_NAME="${KEY_NAME:-}"
 SECURITY_GROUP="${SECURITY_GROUP:-}"
@@ -49,8 +49,8 @@ MAX_HOURS=""
 USE_SPOT=false
 
 # Spot fleet: diversified instance types (all 16-vCPU compute-optimized or general-purpose)
-# Spot fleet: c7a only (3.7GHz AMD EPYC Genoa)
-SPOT_INSTANCE_TYPES=("c7a.4xlarge")
+# Spot fleet: c7i only (3.2GHz Intel Xeon Sapphire Rapids)
+SPOT_INSTANCE_TYPES=("c7i.4xlarge")
 
 # ---------- Parse arguments ----------
 while [[ $# -gt 0 ]]; do
