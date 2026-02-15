@@ -580,7 +580,7 @@ def _sync_source_tree(src_path: Path, work_path: Path):
             else:
                 item.unlink()
 
-    ignore = shutil.ignore_patterns('target', '.git')
+    ignore = shutil.ignore_patterns('target', '.git', 'nul')
     shutil.copytree(src_path, work_path, ignore=ignore, dirs_exist_ok=True)
 
 
