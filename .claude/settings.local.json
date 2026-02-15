@@ -17,7 +17,18 @@
       "Bash(psql:*)",
       "Bash(git restore:*)",
       "Bash(git push)",
-      "Bash(python -m pytest:*)"
+      "Bash(python -m pytest:*)",
+      "Bash(git tag:*)",
+      "Bash(git push:*)",
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(echo:*)",
+      "Bash(git -C /Users/chris/git/chris-moreton/chess/rusty-rival ls-files:*)",
+      "Bash(git -C /Users/chris/git/chris-moreton/chess/rusty-rival config:*)",
+      "Bash(gh api:*)",
+      "Bash(cargo clean:*)",
+      "Bash(xargs cat:*)",
+      "Bash(chmod:*)"
     ]
   }
 }
