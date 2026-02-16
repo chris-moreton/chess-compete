@@ -48,9 +48,10 @@ COUNT=1
 MAX_HOURS=""
 USE_SPOT=false
 
-# Spot fleet: diversified instance types (all 16-vCPU compute-optimized or general-purpose)
-# Spot fleet: c7i only (3.2GHz Intel Xeon Sapphire Rapids)
-SPOT_INSTANCE_TYPES=("c7i.4xlarge")
+# Spot fleet: diversified across compute-optimized 16-vCPU instance types
+# Cheapest first — fleet will pick whatever's available below MAX_SPOT_PRICE
+SPOT_INSTANCE_TYPES=("c6i.4xlarge" "c6a.4xlarge" "c7i.4xlarge" "c7a.4xlarge")
+MAX_SPOT_PRICE="0.25"
 
 # ---------- Parse arguments ----------
 while [[ $# -gt 0 ]]; do
@@ -200,7 +201,7 @@ if [ "$USE_SPOT" = true ]; then
         if [ -n "$OVERRIDES" ]; then
             OVERRIDES="${OVERRIDES},"
         fi
-        OVERRIDES="${OVERRIDES}{\"InstanceType\":\"${ITYPE}\",\"SubnetId\":\"${SUBNET}\"}"
+        OVERRIDES="${OVERRIDES}{\"InstanceType\":\"${ITYPE}\",\"SubnetId\":\"${SUBNET}\",\"MaxPrice\":\"${MAX_SPOT_PRICE}\"}"
         # Track unique valid types
         if [[ ! " ${VALID_TYPES[*]} " =~ " ${ITYPE} " ]]; then
             VALID_TYPES+=("$ITYPE")
@@ -223,7 +224,7 @@ if [ "$USE_SPOT" = true ]; then
         exit 1
     fi
 
-    echo "Launching diversified spot fleet: $COUNT instances across ${#VALID_TYPES[@]} types..."
+    echo "Launching spot fleet: $COUNT instances across ${#VALID_TYPES[@]} types (max \$${MAX_SPOT_PRICE}/hr per instance)..."
     echo "  Instance types: ${VALID_TYPES[*]}"
 
     # Build optional fields for launch template
@@ -246,11 +247,11 @@ if [ "$USE_SPOT" = true ]; then
         --output text)
     echo "  Created launch template: $LT_ID ($LT_NAME)"
 
-    # Create fleet with capacity-optimized-prioritized allocation
+    # Create fleet with lowest-price allocation, capped at MAX_SPOT_PRICE
     FLEET_RESULT=$(aws ec2 create-fleet "${REGION_ARGS[@]}" \
         --type instant \
         --target-capacity-specification "TotalTargetCapacity=${COUNT},DefaultTargetCapacityType=spot" \
-        --spot-options "AllocationStrategy=capacity-optimized-prioritized" \
+        --spot-options "AllocationStrategy=lowest-price" \
         --launch-template-configs "[{\"LaunchTemplateSpecification\":{\"LaunchTemplateId\":\"${LT_ID}\",\"Version\":\"\$Latest\"},\"Overrides\":[${OVERRIDES}]}]" \
         --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=spsa-worker}]" \
         --output json)
@@ -278,10 +279,7 @@ if errors:
 
     LAUNCHED=$(echo "$INSTANCE_IDS" | wc -w | tr -d ' ')
     echo ""
-    echo "Launched $LAUNCHED/$COUNT spot instances (capacity-optimized across types/AZs):"
-    for ID in $INSTANCE_IDS; do
-        echo "  $ID"
-    done
+    echo "Launched $LAUNCHED/$COUNT spot instances:"
 
     if [ -n "$ERRORS" ]; then
         echo ""
@@ -298,6 +296,51 @@ if errors:
     if [ -n "$REGION" ]; then
         REGION_HINT=" --region $REGION"
     fi
+
+    # Query actual instance details and spot prices for cost estimate
+    INSTANCE_INFO=$(aws ec2 describe-instances "${REGION_ARGS[@]}" \
+        --instance-ids $INSTANCE_IDS \
+        --query 'Reservations[*].Instances[*].[InstanceId,InstanceType,Placement.AvailabilityZone]' \
+        --output text)
+
+    # Get current spot prices for launched instance types
+    SPOT_PRICES=$(aws ec2 describe-spot-price-history "${REGION_ARGS[@]}" \
+        --instance-types ${VALID_TYPES[*]} \
+        --product-descriptions "Linux/UNIX" \
+        --start-time "$(date -u +%Y-%m-%dT%H:%M:%S)" \
+        --output text)
+
+    # Print instance details and calculate cost estimate
+    python3 -c "
+import sys
+
+instance_lines = '''${INSTANCE_INFO}'''.strip().split('\n')
+price_lines = '''${SPOT_PRICES}'''.strip().split('\n')
+hours = ${MAX_HOURS}
+
+# Build price lookup: (type, az) -> price
+prices = {}
+for line in price_lines:
+    parts = line.split('\t')
+    if len(parts) >= 5:
+        az, itype, desc, price, ts = parts[0], parts[1], parts[2], parts[3], parts[4]
+        key = (itype, az)
+        if key not in prices or ts > prices[key][1]:
+            prices[key] = (float(price), ts)
+
+total_hourly = 0.0
+for line in instance_lines:
+    parts = line.split('\t')
+    if len(parts) >= 3:
+        iid, itype, az = parts[0], parts[1], parts[2]
+        price = prices.get((itype, az), (0.0,))[0]
+        total_hourly += price
+        print(f'  {iid}  {itype}  {az}  \${price:.4f}/hr')
+
+total_cost = total_hourly * hours
+print()
+print(f'Estimated cost ({len(instance_lines)} instances x {hours}h): \${total_cost:.2f} (avg \${total_hourly/len(instance_lines):.4f}/hr per instance)')
+"
 
     echo ""
     echo "Watch logs:"
