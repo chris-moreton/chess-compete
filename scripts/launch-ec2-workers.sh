@@ -4,12 +4,13 @@
 # Usage:
 #   ./scripts/launch-ec2-workers.sh -H 4              # 1 instance, auto-terminate after 4 hours
 #   ./scripts/launch-ec2-workers.sh -n 3 -H 6          # 3 instances, 6 hours
-#   ./scripts/launch-ec2-workers.sh -n 3 -H 4 --spot   # 3 spot instances (diversified fleet)
+#   ./scripts/launch-ec2-workers.sh -n 16 -H 6 --spot  # 16 spot instances spread across regions
 #   ./scripts/launch-ec2-workers.sh -n 3 -c 8 -H 2     # 3 instances, 8 concurrent games, 2 hours
-#   ./scripts/launch-ec2-workers.sh -n 4 -H 8 --spot -r us-east-1  # spot in US East
+#   ./scripts/launch-ec2-workers.sh -n 4 -H 8 --spot -r us-east-1  # spot in single region
 #
-# Spot mode uses a diversified fleet across multiple instance types and AZs
-# to reduce the risk of all workers being terminated at once.
+# Spot mode spreads instances across multiple regions and instance types
+# to reduce the risk of all workers being reclaimed at once.
+# Use -r to restrict to a single region.
 #
 # Workers self-terminate after 10 minutes of no work (--idle-timeout to change).
 #
@@ -18,7 +19,7 @@
 #   - .env file with SPSA_API_URL and SPSA_API_KEY
 #
 # Watching logs:
-#   aws ssm start-session --target <instance-id>
+#   aws ssm start-session --target <instance-id> --region <region>
 #   sudo tail -f /var/log/spsa-worker.log
 
 set -e
@@ -49,9 +50,11 @@ MAX_HOURS=""
 USE_SPOT=false
 
 # Spot fleet: diversified across compute-optimized 16-vCPU instance types
-# Cheapest first — fleet will pick whatever's available below MAX_SPOT_PRICE
 SPOT_INSTANCE_TYPES=("c6i.4xlarge" "c6a.4xlarge" "c7i.4xlarge" "c7a.4xlarge")
 MAX_SPOT_PRICE="0.25"
+
+# Regions to spread spot instances across (used when -r is not specified)
+SPOT_REGIONS=("eu-west-2" "us-east-1" "us-east-2" "us-west-2")
 
 # ---------- Parse arguments ----------
 while [[ $# -gt 0 ]]; do
@@ -89,24 +92,6 @@ fi
 if [ -z "$MAX_HOURS" ]; then
     echo "Error: -H/--hours is required (e.g. -H 4 for 4 hours)"
     exit 1
-fi
-
-# Build region args for all AWS CLI calls
-REGION_ARGS=()
-if [ -n "$REGION" ]; then
-    REGION_ARGS=(--region "$REGION")
-    echo "Using region: $REGION"
-fi
-
-# Auto-detect latest Amazon Linux 2023 AMI if not specified
-if [ -z "$AMI_ID" ]; then
-    echo "Auto-detecting latest Amazon Linux 2023 AMI..."
-    AMI_ID=$(aws ec2 describe-images "${REGION_ARGS[@]}" \
-        --owners amazon \
-        --filters "Name=name,Values=al2023-ami-2023*-x86_64" "Name=state,Values=available" \
-        --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
-        --output text)
-    echo "  Using AMI: $AMI_ID"
 fi
 
 # ---------- Build user-data script ----------
@@ -171,92 +156,93 @@ USER_DATA="${USER_DATA//__SHUTDOWN_MINUTES__/$SHUTDOWN_MINUTES}"
 # Encode user-data as base64 for fleet API
 USER_DATA_B64=$(echo "$USER_DATA" | base64)
 
-if [ "$USE_SPOT" = true ]; then
-    # ---------- Spot Fleet (diversified across instance types and AZs) ----------
-    echo "Checking instance type availability in region..."
+# ---------- launch_spot_in_region: launch N spot instances in a single region ----------
+launch_spot_in_region() {
+    local LAUNCH_REGION="$1"
+    local LAUNCH_COUNT="$2"
+    local LAUNCH_REGION_ARGS=(--region "$LAUNCH_REGION")
 
-    # Query which instance types are actually offered in each AZ
-    AVAILABLE=$(aws ec2 describe-instance-type-offerings "${REGION_ARGS[@]}" \
+    echo ""
+    echo "=== $LAUNCH_REGION: requesting $LAUNCH_COUNT instances ==="
+
+    # Auto-detect AMI for this region
+    local REGION_AMI
+    REGION_AMI=$(aws ec2 describe-images "${LAUNCH_REGION_ARGS[@]}" \
+        --owners amazon \
+        --filters "Name=name,Values=al2023-ami-2023*-x86_64" "Name=state,Values=available" \
+        --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
+        --output text)
+    echo "  AMI: $REGION_AMI"
+
+    # Query which instance types are offered in each AZ
+    local AVAILABLE
+    AVAILABLE=$(aws ec2 describe-instance-type-offerings "${LAUNCH_REGION_ARGS[@]}" \
         --location-type availability-zone \
         --filters "Name=instance-type,Values=$(IFS=,; echo "${SPOT_INSTANCE_TYPES[*]}")" \
         --query 'InstanceTypeOfferings[*].[InstanceType,Location]' \
         --output text)
 
-    # Get default subnet for each AZ (single API call, stored as "subnet\taz" lines)
-    AZ_SUBNET_MAP=$(aws ec2 describe-subnets "${REGION_ARGS[@]}" \
+    # Get default subnet for each AZ
+    local AZ_SUBNET_MAP
+    AZ_SUBNET_MAP=$(aws ec2 describe-subnets "${LAUNCH_REGION_ARGS[@]}" \
         --filters "Name=default-for-az,Values=true" \
         --query 'Subnets[*].[SubnetId,AvailabilityZone]' \
         --output text)
 
-    # Build overrides only for valid type/AZ combinations
-    OVERRIDES=""
-    VALID_TYPES=()
-    SKIPPED_TYPES=()
+    # Build overrides
+    local OVERRIDES=""
+    local VALID_TYPES=()
     while IFS=$'\t' read -r ITYPE AZ; do
-        # Look up subnet for this AZ
+        local SUBNET
         SUBNET=$(echo "$AZ_SUBNET_MAP" | awk -v az="$AZ" '$2 == az {print $1; exit}')
         if [ -z "$SUBNET" ]; then
-            continue  # No default subnet in this AZ
+            continue
         fi
         if [ -n "$OVERRIDES" ]; then
             OVERRIDES="${OVERRIDES},"
         fi
         OVERRIDES="${OVERRIDES}{\"InstanceType\":\"${ITYPE}\",\"SubnetId\":\"${SUBNET}\",\"MaxPrice\":\"${MAX_SPOT_PRICE}\"}"
-        # Track unique valid types
         if [[ ! " ${VALID_TYPES[*]} " =~ " ${ITYPE} " ]]; then
             VALID_TYPES+=("$ITYPE")
         fi
     done <<< "$AVAILABLE"
 
-    # Report which types were excluded
-    for ITYPE in "${SPOT_INSTANCE_TYPES[@]}"; do
-        if [[ ! " ${VALID_TYPES[*]} " =~ " ${ITYPE} " ]]; then
-            SKIPPED_TYPES+=("$ITYPE")
-        fi
-    done
-
-    if [ ${#SKIPPED_TYPES[@]} -gt 0 ]; then
-        echo "  Excluded (not offered in region): ${SKIPPED_TYPES[*]}"
-    fi
-
     if [ -z "$OVERRIDES" ]; then
-        echo "Error: None of the configured instance types are available in this region."
-        exit 1
+        echo "  No instance types available in $LAUNCH_REGION — skipping"
+        return
     fi
 
-    echo "Launching spot fleet: $COUNT instances across ${#VALID_TYPES[@]} types (max \$${MAX_SPOT_PRICE}/hr per instance)..."
     echo "  Instance types: ${VALID_TYPES[*]}"
 
     # Build optional fields for launch template
-    OPTIONAL_LT_FIELDS=""
+    local OPTIONAL_LT_FIELDS=""
     if [ -n "$KEY_NAME" ]; then
         OPTIONAL_LT_FIELDS="${OPTIONAL_LT_FIELDS},\"KeyName\":\"${KEY_NAME}\""
     fi
-    if [ -n "$SECURITY_GROUP" ]; then
-        OPTIONAL_LT_FIELDS="${OPTIONAL_LT_FIELDS},\"SecurityGroupIds\":[\"${SECURITY_GROUP}\"]"
-    fi
 
-    # Create a temporary launch template (required for create-fleet)
-    LT_NAME="spsa-worker-$(date +%s)"
-    LT_DATA="{\"ImageId\":\"${AMI_ID}\",\"UserData\":\"${USER_DATA_B64}\",\"IamInstanceProfile\":{\"Name\":\"SSMInstanceProfile\"},\"InstanceInitiatedShutdownBehavior\":\"terminate\"${OPTIONAL_LT_FIELDS}}"
+    # Create launch template
+    local LT_NAME="spsa-worker-$(date +%s)-${LAUNCH_REGION}"
+    local LT_DATA="{\"ImageId\":\"${REGION_AMI}\",\"UserData\":\"${USER_DATA_B64}\",\"IamInstanceProfile\":{\"Name\":\"SSMInstanceProfile\"},\"InstanceInitiatedShutdownBehavior\":\"terminate\"${OPTIONAL_LT_FIELDS}}"
 
-    LT_ID=$(aws ec2 create-launch-template "${REGION_ARGS[@]}" \
+    local LT_ID
+    LT_ID=$(aws ec2 create-launch-template "${LAUNCH_REGION_ARGS[@]}" \
         --launch-template-name "$LT_NAME" \
         --launch-template-data "$LT_DATA" \
         --query 'LaunchTemplate.LaunchTemplateId' \
         --output text)
-    echo "  Created launch template: $LT_ID ($LT_NAME)"
 
-    # Create fleet with lowest-price allocation, capped at MAX_SPOT_PRICE
-    FLEET_RESULT=$(aws ec2 create-fleet "${REGION_ARGS[@]}" \
+    # Create fleet
+    local FLEET_RESULT
+    FLEET_RESULT=$(aws ec2 create-fleet "${LAUNCH_REGION_ARGS[@]}" \
         --type instant \
-        --target-capacity-specification "TotalTargetCapacity=${COUNT},DefaultTargetCapacityType=spot" \
+        --target-capacity-specification "TotalTargetCapacity=${LAUNCH_COUNT},DefaultTargetCapacityType=spot" \
         --spot-options "AllocationStrategy=lowest-price" \
         --launch-template-configs "[{\"LaunchTemplateSpecification\":{\"LaunchTemplateId\":\"${LT_ID}\",\"Version\":\"\$Latest\"},\"Overrides\":[${OVERRIDES}]}]" \
         --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=spsa-worker}]" \
         --output json)
 
     # Extract instance IDs
+    local INSTANCE_IDS
     INSTANCE_IDS=$(echo "$FLEET_RESULT" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
@@ -265,6 +251,7 @@ print(' '.join(ids))
 ")
 
     # Check for errors
+    local ERRORS
     ERRORS=$(echo "$FLEET_RESULT" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
@@ -275,48 +262,41 @@ if errors:
 " 2>/dev/null || true)
 
     # Clean up launch template
-    aws ec2 delete-launch-template "${REGION_ARGS[@]}" --launch-template-id "$LT_ID" > /dev/null 2>&1
+    aws ec2 delete-launch-template "${LAUNCH_REGION_ARGS[@]}" --launch-template-id "$LT_ID" > /dev/null 2>&1
 
+    local LAUNCHED
     LAUNCHED=$(echo "$INSTANCE_IDS" | wc -w | tr -d ' ')
 
     if [ "$LAUNCHED" -eq 0 ]; then
-        echo ""
-        echo "Error: No instances launched. Check spot capacity in your region."
+        echo "  No instances launched in $LAUNCH_REGION"
         if [ -n "$ERRORS" ]; then
             echo "$ERRORS"
         fi
-        exit 1
+        return
     fi
 
-    REGION_HINT=""
-    if [ -n "$REGION" ]; then
-        REGION_HINT=" --region $REGION"
-    fi
-
-    # Query actual instance details and spot prices for cost estimate
-    INSTANCE_INFO=$(aws ec2 describe-instances "${REGION_ARGS[@]}" \
+    # Query instance details and spot prices for cost estimate
+    local INSTANCE_INFO
+    INSTANCE_INFO=$(aws ec2 describe-instances "${LAUNCH_REGION_ARGS[@]}" \
         --instance-ids $INSTANCE_IDS \
         --query 'Reservations[*].Instances[*].[InstanceId,InstanceType,Placement.AvailabilityZone]' \
         --output text 2>/dev/null || echo "")
 
-    # Get current spot prices for launched instance types
-    SPOT_PRICES=$(aws ec2 describe-spot-price-history "${REGION_ARGS[@]}" \
+    local SPOT_PRICES
+    SPOT_PRICES=$(aws ec2 describe-spot-price-history "${LAUNCH_REGION_ARGS[@]}" \
         --instance-types ${VALID_TYPES[*]} \
         --product-descriptions "Linux/UNIX" \
         --start-time "$(date -u +%Y-%m-%dT%H:%M:%S)" \
         --query 'SpotPriceHistory[*].[AvailabilityZone,InstanceType,ProductDescription,SpotPrice,Timestamp]' \
         --output text 2>/dev/null || echo "")
 
-    # Print instance details and calculate cost estimate
-    echo ""
-    echo "Launched $LAUNCHED/$COUNT spot instances:"
+    echo "  Launched $LAUNCHED/$LAUNCH_COUNT:"
     if [ -n "$INSTANCE_INFO" ] && [ -n "$SPOT_PRICES" ]; then
         python3 -c "
 instance_lines = '''${INSTANCE_INFO}'''.strip().split('\n')
 price_lines = '''${SPOT_PRICES}'''.strip().split('\n')
 hours = ${MAX_HOURS}
 
-# Build price lookup: (type, az) -> latest price
 prices = {}
 for line in price_lines:
     parts = line.split('\t')
@@ -336,37 +316,103 @@ for line in instance_lines:
         price = prices.get((itype, az), (0.0,))[0]
         total_hourly += price
         count += 1
-        print(f'  {iid}  {itype}  {az}  \${price:.4f}/hr')
+        print(f'    {iid}  {itype}  {az}  \${price:.4f}/hr')
 
 if count > 0:
     total_cost = total_hourly * hours
-    print()
-    print(f'Estimated cost ({count} instances x {hours}h): \${total_cost:.2f} (avg \${total_hourly/count:.4f}/hr per instance)')
-" 2>&1 || echo "  (could not calculate cost estimate)"
+    print(f'  Subtotal: \${total_cost:.2f} ({count} x {hours}h @ avg \${total_hourly/count:.4f}/hr)')
+" 2>&1 || echo "    (could not calculate cost estimate)"
     else
         for ID in $INSTANCE_IDS; do
-            echo "  $ID"
+            echo "    $ID"
         done
     fi
 
     if [ -n "$ERRORS" ]; then
-        echo ""
-        echo "Note: some type/AZ combos were unavailable (fleet diversified automatically):"
+        echo "  Note: some type/AZ combos unavailable:"
         echo "$ERRORS"
     fi
 
-    echo ""
-    echo "Watch logs:"
-    for ID in $INSTANCE_IDS; do
-        echo "  aws ssm start-session${REGION_HINT} --target $ID  # then: sudo tail -f /var/log/spsa-worker.log"
-    done
+    # Accumulate for summary
+    ALL_INSTANCE_IDS="${ALL_INSTANCE_IDS} $INSTANCE_IDS"
+    ALL_REGIONS_USED="${ALL_REGIONS_USED} $LAUNCH_REGION"
+    TOTAL_LAUNCHED=$((TOTAL_LAUNCHED + LAUNCHED))
+}
+
+if [ "$USE_SPOT" = true ]; then
+    # ---------- Spot Fleet (spread across regions) ----------
+    ALL_INSTANCE_IDS=""
+    ALL_REGIONS_USED=""
+    TOTAL_LAUNCHED=0
+
+    if [ -n "$REGION" ]; then
+        # Single region specified
+        echo "Launching $COUNT spot instances in $REGION (max \$${MAX_SPOT_PRICE}/hr per instance)..."
+        launch_spot_in_region "$REGION" "$COUNT"
+    else
+        # Spread across regions
+        NUM_REGIONS=${#SPOT_REGIONS[@]}
+        BASE_PER_REGION=$((COUNT / NUM_REGIONS))
+        REMAINDER=$((COUNT % NUM_REGIONS))
+
+        echo "Launching $COUNT spot instances across ${NUM_REGIONS} regions (max \$${MAX_SPOT_PRICE}/hr per instance)..."
+
+        for i in "${!SPOT_REGIONS[@]}"; do
+            REGION_COUNT=$BASE_PER_REGION
+            # Distribute remainder to first regions
+            if [ "$i" -lt "$REMAINDER" ]; then
+                REGION_COUNT=$((REGION_COUNT + 1))
+            fi
+            if [ "$REGION_COUNT" -gt 0 ]; then
+                launch_spot_in_region "${SPOT_REGIONS[$i]}" "$REGION_COUNT"
+            fi
+        done
+    fi
 
     echo ""
-    echo "Terminate all workers now:"
-    echo "  aws ec2 terminate-instances${REGION_HINT} --instance-ids $INSTANCE_IDS"
+    echo "========================================="
+    echo "Total: $TOTAL_LAUNCHED/$COUNT instances launched"
+    echo "========================================="
+
+    if [ "$TOTAL_LAUNCHED" -eq 0 ]; then
+        echo "Error: No instances launched in any region."
+        exit 1
+    fi
+
+    # Print terminate commands per region
+    echo ""
+    echo "Terminate all workers:"
+    for R in $(echo "$ALL_REGIONS_USED" | tr ' ' '\n' | sort -u); do
+        # Get instance IDs for this region
+        REGION_IDS=$(aws ec2 describe-instances --region "$R" \
+            --filters "Name=tag:Name,Values=spsa-worker" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[*].Instances[*].InstanceId' \
+            --output text 2>/dev/null | tr '\n' ' ')
+        if [ -n "$REGION_IDS" ]; then
+            echo "  aws ec2 terminate-instances --region $R --instance-ids $REGION_IDS"
+        fi
+    done
 
 else
     # ---------- On-demand (original approach) ----------
+    # Build region args
+    REGION_ARGS=()
+    if [ -n "$REGION" ]; then
+        REGION_ARGS=(--region "$REGION")
+        echo "Using region: $REGION"
+    fi
+
+    # Auto-detect AMI if not specified
+    if [ -z "$AMI_ID" ]; then
+        echo "Auto-detecting latest Amazon Linux 2023 AMI..."
+        AMI_ID=$(aws ec2 describe-images "${REGION_ARGS[@]}" \
+            --owners amazon \
+            --filters "Name=name,Values=al2023-ami-2023*-x86_64" "Name=state,Values=available" \
+            --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
+            --output text)
+        echo "  Using AMI: $AMI_ID"
+    fi
+
     AWS_ARGS=(
         aws ec2 run-instances
         --count "$COUNT"
