@@ -78,7 +78,7 @@ group = "search-pruning"
 # If static eval + margin[depth] < alpha, prune
 [alpha_prune_margin_base]
 value = 56.9147647686537
-min = 50
+min = 20
 max = 300
 step = 8
 group = "search-pruning"
