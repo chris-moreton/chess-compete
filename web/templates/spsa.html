@@ -624,6 +624,7 @@
             const allRefEloData = {{ ref_elo_data|tojson }};
             const allRefIterationNumbers = {{ ref_iteration_numbers|tojson }};
             const allRefGameResults = {{ ref_game_results|tojson }};
+            const allWorkersPerIteration = {{ workers_per_iteration|tojson }};
             const allParamsData = {{ params_data|tojson }};
             const paramNames = {{ param_names|tojson }};
             const allStabilityData = {{ stability_data|tojson }};
@@ -713,6 +714,7 @@
                 const refEloData = filterData(allRefEloData, allRefIterationNumbers, currentFilter);
                 const refIterationNumbers = filterData(allRefIterationNumbers, allRefIterationNumbers, currentFilter);
                 const refGameResults = filterData(allRefGameResults, allRefIterationNumbers, currentFilter);
+                const workersPerIteration = filterData(allWorkersPerIteration, allRefIterationNumbers, currentFilter);
                 const paramsData = filterObjectData(allParamsData, allIterationNumbers, currentFilter);
                 const stabilityIterations = filterData(allStabilityIterations, allStabilityIterations, currentFilter);
                 const stabilityData = filterObjectData(allStabilityData, allStabilityIterations, currentFilter);
@@ -777,7 +779,8 @@
                                 showLine: false,
                                 fill: false,
                                 pointRadius: 2.5,
-                                pointHoverRadius: 6
+                                pointHoverRadius: 6,
+                                yAxisID: 'y'
                             }, {
                                 label: `${maWindow}-iter Moving Avg`,
                                 data: movingAvgData,
@@ -787,7 +790,19 @@
                                 tension: 0.3,
                                 pointRadius: 0,
                                 pointHoverRadius: 0,
-                                spanGaps: true
+                                spanGaps: true,
+                                yAxisID: 'y'
+                            }, {
+                                label: 'Workers',
+                                data: workersPerIteration,
+                                borderColor: 'rgba(76, 175, 80, 0.6)',
+                                backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                                borderWidth: 1.5,
+                                fill: true,
+                                tension: 0.3,
+                                pointRadius: 0,
+                                pointHoverRadius: 3,
+                                yAxisID: 'y2'
                             }]
                         },
                         options: {
@@ -841,6 +856,21 @@
                                         stepSize: 10
                                     },
                                     grid: { color: '#333' }
+                                },
+                                y2: {
+                                    position: 'right',
+                                    title: {
+                                        display: true,
+                                        text: 'Workers',
+                                        color: 'rgba(76, 175, 80, 0.8)'
+                                    },
+                                    min: 0,
+                                    max: 32,
+                                    ticks: {
+                                        color: 'rgba(76, 175, 80, 0.8)',
+                                        stepSize: 8
+                                    },
+                                    grid: { display: false }
                                 }
                             }
                         },

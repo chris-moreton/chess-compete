@@ -639,6 +639,7 @@ def register_routes(app):
                                    active_worker_count=active_worker_count,
                                    update_data={}, avg_update_data=[], update_iterations=[],
                                    convergence_score=0, recent_avg_update=0, last_update={},
+                                   workers_per_iteration=[],
                                    )
 
         # Get parameter names from ALL iterations (union of all params seen)
@@ -853,6 +854,24 @@ def register_routes(app):
                 ref_elo_filtered.append(elo)
                 ref_results_filtered.append(ref_game_results[i])
 
+        # Count distinct workers per iteration (for overlay on ref Elo chart)
+        iter_id_map = {it.iteration_number: it.id for it in iterations}
+        workers_per_iteration = []
+        if ref_iteration_numbers:
+            ref_iter_ids = [iter_id_map[n] for n in ref_iteration_numbers if n in iter_id_map]
+            if ref_iter_ids:
+                worker_counts_raw = db.session.execute(db.text("""
+                    SELECT iteration_id, COUNT(DISTINCT worker_id) as worker_count
+                    FROM spsa_worker_heartbeats
+                    WHERE iteration_id = ANY(:ids)
+                    GROUP BY iteration_id
+                """), {'ids': ref_iter_ids}).fetchall()
+                worker_count_map = {row.iteration_id: row.worker_count for row in worker_counts_raw}
+                workers_per_iteration = [
+                    worker_count_map.get(iter_id_map.get(n, -1), 0)
+                    for n in ref_iteration_numbers
+                ]
+
         # Get latest effective iteration from completed iterations
         latest_effective_iteration = None
         if iterations:
@@ -874,6 +893,7 @@ def register_routes(app):
             ref_elo_data=ref_elo_filtered,
             ref_iteration_numbers=ref_iteration_numbers,
             ref_game_results=ref_results_filtered,
+            workers_per_iteration=workers_per_iteration,
             latest_ref_elo=latest_ref_elo,
             rolling_elo_avg=rolling_elo_avg,
             rolling_elo_target_games=rolling_elo_target_games,
