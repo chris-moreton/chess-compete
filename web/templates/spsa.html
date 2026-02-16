@@ -432,31 +432,6 @@
             </div>
         </div>
 
-        <!-- AI Analysis Card -->
-        <div class="chart-container">
-            <div style="display: flex; align-items: center; justify-content: space-between; cursor: pointer;" onclick="document.getElementById('ai-report-body').style.display = document.getElementById('ai-report-body').style.display === 'none' ? 'block' : 'none'; document.getElementById('ai-report-toggle').textContent = document.getElementById('ai-report-body').style.display === 'none' ? '\u25B6' : '\u25BC';">
-                <h2 style="margin-bottom: 0; display: flex; align-items: center; gap: 8px;">
-                    <span id="ai-report-toggle">{% if llm_report %}&#x25BC;{% else %}&#x25B6;{% endif %}</span> AI Analysis
-                    {% if llm_report_iteration %}
-                    <span style="font-size: 12px; color: #888; font-weight: normal;">(iteration {{ llm_report_iteration }})</span>
-                    {% endif %}
-                </h2>
-            </div>
-            <div id="ai-report-body" style="display: {{ 'block' if llm_report else 'none' }}; margin-top: 15px;">
-                {% if llm_report %}
-                <div style="white-space: pre-wrap; color: #ccc; font-size: 14px; line-height: 1.6;">{{ llm_report }}</div>
-                {% else %}
-                <p style="color: #888;">No AI analysis generated yet.</p>
-                {% endif %}
-                <form action="/spsa/generate-report" method="post" style="margin-top: 15px;" onclick="event.stopPropagation();">
-                    <input type="hidden" name="run_id" value="{{ selected_run.id }}">
-                    <button type="submit" id="generate-report-btn" style="padding: 8px 16px; background: #0f3460; color: #eee; border: 1px solid #1a5276; border-radius: 4px; cursor: pointer; font-size: 13px;" onclick="this.disabled=true; this.textContent='Generating...'; this.form.submit();">
-                        {{ 'Regenerate Report' if llm_report else 'Generate Report' }}
-                    </button>
-                </form>
-            </div>
-        </div>
-
         {% if in_progress %}
         <div class="in-progress-banner {{ 'workers-none' if active_worker_count|default(0) == 0 else 'workers-low' if active_worker_count|default(0) < 4 else 'workers-mid' if active_worker_count|default(0) < 8 else 'workers-good' }}" id="progress-banner">
             <h3>Iteration <span id="current-iteration">{{ in_progress.iteration_number }}</span>{% if in_progress.effective_iteration %} (eff: {{ in_progress.effective_iteration }}){% endif %} In Progress</h3>
