@@ -51,7 +51,7 @@ USE_SPOT=false
 
 # Spot fleet: diversified across compute-optimized 16-vCPU instance types
 SPOT_INSTANCE_TYPES=("c6i.4xlarge" "c6a.4xlarge" "c7i.4xlarge" "c7a.4xlarge")
-MAX_SPOT_PRICE="0.25"
+MAX_SPOT_PRICE="0.30"
 
 # Regions to spread spot instances across (used when -r is not specified)
 SPOT_REGIONS=("eu-west-2" "us-east-1" "us-east-2" "us-west-2")
