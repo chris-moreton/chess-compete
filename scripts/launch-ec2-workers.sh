@@ -278,17 +278,13 @@ if errors:
     aws ec2 delete-launch-template "${REGION_ARGS[@]}" --launch-template-id "$LT_ID" > /dev/null 2>&1
 
     LAUNCHED=$(echo "$INSTANCE_IDS" | wc -w | tr -d ' ')
-    echo ""
-    echo "Launched $LAUNCHED/$COUNT spot instances:"
-
-    if [ -n "$ERRORS" ]; then
-        echo ""
-        echo "Fleet errors (partial capacity):"
-        echo "$ERRORS"
-    fi
 
     if [ "$LAUNCHED" -eq 0 ]; then
+        echo ""
         echo "Error: No instances launched. Check spot capacity in your region."
+        if [ -n "$ERRORS" ]; then
+            echo "$ERRORS"
+        fi
         exit 1
     fi
 
@@ -301,46 +297,63 @@ if errors:
     INSTANCE_INFO=$(aws ec2 describe-instances "${REGION_ARGS[@]}" \
         --instance-ids $INSTANCE_IDS \
         --query 'Reservations[*].Instances[*].[InstanceId,InstanceType,Placement.AvailabilityZone]' \
-        --output text)
+        --output text 2>/dev/null || echo "")
 
     # Get current spot prices for launched instance types
     SPOT_PRICES=$(aws ec2 describe-spot-price-history "${REGION_ARGS[@]}" \
         --instance-types ${VALID_TYPES[*]} \
         --product-descriptions "Linux/UNIX" \
         --start-time "$(date -u +%Y-%m-%dT%H:%M:%S)" \
-        --output text)
+        --query 'SpotPriceHistory[*].[AvailabilityZone,InstanceType,ProductDescription,SpotPrice,Timestamp]' \
+        --output text 2>/dev/null || echo "")
 
     # Print instance details and calculate cost estimate
-    python3 -c "
-import sys
-
+    echo ""
+    echo "Launched $LAUNCHED/$COUNT spot instances:"
+    if [ -n "$INSTANCE_INFO" ] && [ -n "$SPOT_PRICES" ]; then
+        python3 -c "
 instance_lines = '''${INSTANCE_INFO}'''.strip().split('\n')
 price_lines = '''${SPOT_PRICES}'''.strip().split('\n')
 hours = ${MAX_HOURS}
 
-# Build price lookup: (type, az) -> price
+# Build price lookup: (type, az) -> latest price
 prices = {}
 for line in price_lines:
     parts = line.split('\t')
-    if len(parts) >= 5:
-        az, itype, desc, price, ts = parts[0], parts[1], parts[2], parts[3], parts[4]
+    if len(parts) >= 4:
+        az, itype, desc, price = parts[0], parts[1], parts[2], parts[3]
+        ts = parts[4] if len(parts) >= 5 else ''
         key = (itype, az)
         if key not in prices or ts > prices[key][1]:
             prices[key] = (float(price), ts)
 
 total_hourly = 0.0
+count = 0
 for line in instance_lines:
     parts = line.split('\t')
     if len(parts) >= 3:
         iid, itype, az = parts[0], parts[1], parts[2]
         price = prices.get((itype, az), (0.0,))[0]
         total_hourly += price
+        count += 1
         print(f'  {iid}  {itype}  {az}  \${price:.4f}/hr')
 
-total_cost = total_hourly * hours
-print()
-print(f'Estimated cost ({len(instance_lines)} instances x {hours}h): \${total_cost:.2f} (avg \${total_hourly/len(instance_lines):.4f}/hr per instance)')
-"
+if count > 0:
+    total_cost = total_hourly * hours
+    print()
+    print(f'Estimated cost ({count} instances x {hours}h): \${total_cost:.2f} (avg \${total_hourly/count:.4f}/hr per instance)')
+" 2>&1 || echo "  (could not calculate cost estimate)"
+    else
+        for ID in $INSTANCE_IDS; do
+            echo "  $ID"
+        done
+    fi
+
+    if [ -n "$ERRORS" ]; then
+        echo ""
+        echo "Note: some type/AZ combos were unavailable (fleet diversified automatically):"
+        echo "$ERRORS"
+    fi
 
     echo ""
     echo "Watch logs:"
