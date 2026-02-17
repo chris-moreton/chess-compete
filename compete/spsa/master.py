@@ -41,6 +41,121 @@ SPSA_DIR = Path(__file__).parent
 CHESS_COMPETE_DIR = SPSA_DIR.parent.parent
 load_dotenv(CHESS_COMPETE_DIR / '.env')
 
+# Canonical default parameters: all ~100 SPSA-tunable params with their current
+# engine_constants.rs values, min/max bounds, step sizes, and group assignments.
+# Used when creating new runs or backfilling missing params on existing runs.
+DEFAULT_PARAMS = {
+    # ==================== search-pruning ====================
+    'beta_prune_margin_per_depth': {'value': 152, 'min': 50, 'max': 300, 'step': 15, 'group': 'search-pruning'},
+    'beta_prune_max_depth': {'value': 10, 'min': 4, 'max': 16, 'step': 1, 'group': 'search-pruning'},
+    'null_move_reduce_depth_base': {'value': 4, 'min': 2, 'max': 8, 'step': 1, 'group': 'search-pruning'},
+    'null_move_min_depth': {'value': 8, 'min': 4, 'max': 14, 'step': 1, 'group': 'search-pruning'},
+    'see_prune_margin': {'value': 25, 'min': 5, 'max': 80, 'step': 5, 'group': 'search-pruning'},
+    'see_prune_max_depth': {'value': 10, 'min': 4, 'max': 16, 'step': 1, 'group': 'search-pruning'},
+    'alpha_prune_margin_base': {'value': 54, 'min': 20, 'max': 120, 'step': 8, 'group': 'search-pruning'},
+    'alpha_prune_margin_per_depth': {'value': 66, 'min': 30, 'max': 120, 'step': 8, 'group': 'search-pruning'},
+    'lmp_threshold_depth1': {'value': 7, 'min': 3, 'max': 15, 'step': 1, 'group': 'search-pruning'},
+    'lmp_threshold_depth2': {'value': 6, 'min': 3, 'max': 20, 'step': 1, 'group': 'search-pruning'},
+    'lmp_threshold_depth3': {'value': 7, 'min': 3, 'max': 25, 'step': 1, 'group': 'search-pruning'},
+    'lmr_legal_moves_before_attempt': {'value': 4, 'min': 2, 'max': 8, 'step': 1, 'group': 'search-pruning'},
+    'lmr_min_depth': {'value': 3, 'min': 2, 'max': 6, 'step': 1, 'group': 'search-pruning'},
+    'iid_min_depth': {'value': 3, 'min': 2, 'max': 8, 'step': 1, 'group': 'search-pruning'},
+    'iid_reduce_depth': {'value': 2, 'min': 1, 'max': 6, 'step': 1, 'group': 'search-pruning'},
+    # ==================== reductions-extensions ====================
+    'lmr_history_good_divisor': {'value': 24, 'min': 4, 'max': 60, 'step': 4, 'group': 'reductions-extensions'},
+    'lmr_history_bad_divisor': {'value': 26, 'min': 4, 'max': 60, 'step': 4, 'group': 'reductions-extensions'},
+    'lmr_continuation_good_threshold': {'value': 7865, 'min': 2000, 'max': 15000, 'step': 500, 'group': 'reductions-extensions'},
+    'lmr_continuation_bad_threshold': {'value': -8020, 'min': -15000, 'max': -2000, 'step': 500, 'group': 'reductions-extensions'},
+    'probcut_min_depth': {'value': 13, 'min': 8, 'max': 20, 'step': 1, 'group': 'reductions-extensions'},
+    'probcut_margin': {'value': 126, 'min': 50, 'max': 250, 'step': 15, 'group': 'reductions-extensions'},
+    'probcut_depth_reduction': {'value': 4, 'min': 2, 'max': 8, 'step': 1, 'group': 'reductions-extensions'},
+    'multicut_min_depth': {'value': 20, 'min': 12, 'max': 28, 'step': 1, 'group': 'reductions-extensions'},
+    'multicut_depth_reduction': {'value': 7, 'min': 3, 'max': 12, 'step': 1, 'group': 'reductions-extensions'},
+    'multicut_moves_to_try': {'value': 9, 'min': 4, 'max': 16, 'step': 1, 'group': 'reductions-extensions'},
+    'multicut_required_cutoffs': {'value': 7, 'min': 3, 'max': 12, 'step': 1, 'group': 'reductions-extensions'},
+    'singular_extension_min_depth': {'value': 10, 'min': 6, 'max': 16, 'step': 1, 'group': 'reductions-extensions'},
+    'singular_extension_depth_margin': {'value': 6, 'min': 2, 'max': 10, 'step': 1, 'group': 'reductions-extensions'},
+    'singular_extension_depth_reduction': {'value': 5, 'min': 2, 'max': 8, 'step': 1, 'group': 'reductions-extensions'},
+    'singular_extension_margin_multiplier': {'value': 5, 'min': 1, 'max': 12, 'step': 1, 'group': 'reductions-extensions'},
+    'threat_extension_margin': {'value': 400, 'min': 100, 'max': 800, 'step': 50, 'group': 'reductions-extensions'},
+    # ==================== move-ordering ====================
+    'move_score_mate_killer': {'value': 1763, 'min': 800, 'max': 3000, 'step': 100, 'group': 'move-ordering'},
+    'move_score_killer_1': {'value': 1169, 'min': 400, 'max': 2000, 'step': 80, 'group': 'move-ordering'},
+    'move_score_killer_2': {'value': 566, 'min': 200, 'max': 1500, 'step': 60, 'group': 'move-ordering'},
+    'move_score_history_max': {'value': 624, 'min': 200, 'max': 1500, 'step': 60, 'group': 'move-ordering'},
+    'move_score_distant_killer_1': {'value': 303, 'min': 50, 'max': 800, 'step': 40, 'group': 'move-ordering'},
+    'move_score_distant_killer_2': {'value': 239, 'min': 50, 'max': 800, 'step': 40, 'group': 'move-ordering'},
+    'move_score_countermove': {'value': 263, 'min': 50, 'max': 800, 'step': 40, 'group': 'move-ordering'},
+    'move_score_pawn_push_7th': {'value': 291, 'min': 50, 'max': 800, 'step': 40, 'group': 'move-ordering'},
+    'move_score_pawn_push_6th': {'value': 105, 'min': 20, 'max': 500, 'step': 30, 'group': 'move-ordering'},
+    'countermove_history_divisor': {'value': 235, 'min': 50, 'max': 600, 'step': 30, 'group': 'move-ordering'},
+    'followup_history_divisor': {'value': 538, 'min': 100, 'max': 1200, 'step': 50, 'group': 'move-ordering'},
+    'capture_history_divisor': {'value': 1120, 'min': 200, 'max': 2500, 'step': 100, 'group': 'move-ordering'},
+    # ==================== evaluation ====================
+    'rook_open_file_bonus': {'value': 28, 'min': 5, 'max': 60, 'step': 5, 'group': 'evaluation'},
+    'rook_semi_open_file_bonus': {'value': 22, 'min': 5, 'max': 50, 'step': 5, 'group': 'evaluation'},
+    'value_knight_outpost': {'value': 18, 'min': 5, 'max': 40, 'step': 4, 'group': 'evaluation'},
+    'value_rook_behind_passed_pawn': {'value': 37, 'min': 10, 'max': 80, 'step': 6, 'group': 'evaluation'},
+    'value_guarded_passed_pawn': {'value': 25, 'min': 5, 'max': 60, 'step': 5, 'group': 'evaluation'},
+    'doubled_pawn_penalty': {'value': 26, 'min': 5, 'max': 50, 'step': 5, 'group': 'evaluation'},
+    'isolated_pawn_penalty': {'value': 11, 'min': 2, 'max': 30, 'step': 3, 'group': 'evaluation'},
+    'value_backward_pawn_penalty': {'value': 27, 'min': 5, 'max': 50, 'step': 5, 'group': 'evaluation'},
+    'value_bishop_pair': {'value': 5, 'min': 0, 'max': 50, 'step': 5, 'group': 'evaluation'},
+    'space_bonus_per_square': {'value': 14, 'min': 2, 'max': 30, 'step': 3, 'group': 'evaluation'},
+    'value_rooks_on_same_file': {'value': 8, 'min': 0, 'max': 30, 'step': 3, 'group': 'evaluation'},
+    'rooks_on_seventh_rank_bonus': {'value': 20, 'min': 5, 'max': 50, 'step': 5, 'group': 'evaluation'},
+    'trapped_bishop_penalty': {'value': 100, 'min': 30, 'max': 200, 'step': 15, 'group': 'evaluation'},
+    'trapped_rook_penalty': {'value': 50, 'min': 15, 'max': 120, 'step': 10, 'group': 'evaluation'},
+    # ==================== piece-values ====================
+    'pawn_value_opening': {'value': 117, 'min': 70, 'max': 170, 'step': 10, 'group': 'piece-values'},
+    'pawn_value_endgame': {'value': 233, 'min': 150, 'max': 320, 'step': 15, 'group': 'piece-values'},
+    'knight_value_opening': {'value': 590, 'min': 400, 'max': 750, 'step': 20, 'group': 'piece-values'},
+    'knight_value_endgame': {'value': 636, 'min': 450, 'max': 800, 'step': 20, 'group': 'piece-values'},
+    'bishop_value_opening': {'value': 666, 'min': 450, 'max': 800, 'step': 20, 'group': 'piece-values'},
+    'bishop_value_endgame': {'value': 673, 'min': 450, 'max': 850, 'step': 20, 'group': 'piece-values'},
+    'rook_value_opening': {'value': 1035, 'min': 800, 'max': 1250, 'step': 25, 'group': 'piece-values'},
+    'rook_value_endgame': {'value': 1152, 'min': 900, 'max': 1350, 'step': 25, 'group': 'piece-values'},
+    'queen_value_opening': {'value': 2049, 'min': 1600, 'max': 2500, 'step': 40, 'group': 'piece-values'},
+    'queen_value_endgame': {'value': 2357, 'min': 1800, 'max': 2800, 'step': 40, 'group': 'piece-values'},
+    # ==================== king-play (new group) ====================
+    'king_threat_bonus_knight': {'value': 16, 'min': 4, 'max': 40, 'step': 4, 'group': 'king-play'},
+    'king_threat_bonus_queen': {'value': 12, 'min': 4, 'max': 40, 'step': 4, 'group': 'king-play'},
+    'king_threat_bonus_bishop': {'value': 12, 'min': 4, 'max': 40, 'step': 4, 'group': 'king-play'},
+    'king_threat_bonus_rook': {'value': 10, 'min': 2, 'max': 30, 'step': 3, 'group': 'king-play'},
+    'value_king_attacks_minor': {'value': 20, 'min': 5, 'max': 50, 'step': 5, 'group': 'king-play'},
+    'value_king_attacks_rook': {'value': 15, 'min': 3, 'max': 40, 'step': 4, 'group': 'king-play'},
+    'value_king_mobility': {'value': 6, 'min': 1, 'max': 20, 'step': 2, 'group': 'king-play'},
+    'value_king_cannot_catch_pawn': {'value': 500, 'min': 200, 'max': 800, 'step': 40, 'group': 'king-play'},
+    'value_king_cannot_catch_pawn_pieces_remain': {'value': 500, 'min': 200, 'max': 800, 'step': 40, 'group': 'king-play'},
+    'value_king_distance_passed_pawn_multiplier': {'value': 4, 'min': 1, 'max': 10, 'step': 1, 'group': 'king-play'},
+    'value_king_supports_passed_pawn': {'value': 3, 'min': 1, 'max': 10, 'step': 1, 'group': 'king-play'},
+    # ==================== passed-pawns (new group) ====================
+    'passed_pawn_bonus_rank2': {'value': 24, 'min': 5, 'max': 50, 'step': 5, 'group': 'passed-pawns'},
+    'passed_pawn_bonus_rank3': {'value': 26, 'min': 5, 'max': 55, 'step': 5, 'group': 'passed-pawns'},
+    'passed_pawn_bonus_rank4': {'value': 30, 'min': 10, 'max': 65, 'step': 6, 'group': 'passed-pawns'},
+    'passed_pawn_bonus_rank5': {'value': 36, 'min': 15, 'max': 80, 'step': 7, 'group': 'passed-pawns'},
+    'passed_pawn_bonus_rank6': {'value': 44, 'min': 20, 'max': 100, 'step': 8, 'group': 'passed-pawns'},
+    'passed_pawn_bonus_rank7': {'value': 56, 'min': 25, 'max': 120, 'step': 10, 'group': 'passed-pawns'},
+    'connected_passed_pawn_rank2': {'value': 12, 'min': 2, 'max': 30, 'step': 3, 'group': 'passed-pawns'},
+    'connected_passed_pawn_rank3': {'value': 18, 'min': 5, 'max': 40, 'step': 4, 'group': 'passed-pawns'},
+    'connected_passed_pawn_rank4': {'value': 28, 'min': 10, 'max': 60, 'step': 5, 'group': 'passed-pawns'},
+    'connected_passed_pawn_rank5': {'value': 42, 'min': 15, 'max': 80, 'step': 7, 'group': 'passed-pawns'},
+    'connected_passed_pawn_rank6': {'value': 60, 'min': 25, 'max': 120, 'step': 10, 'group': 'passed-pawns'},
+    'connected_passed_pawn_rank7': {'value': 80, 'min': 30, 'max': 160, 'step': 12, 'group': 'passed-pawns'},
+    'blocked_passed_pawn_penalty': {'value': 80, 'min': 20, 'max': 160, 'step': 12, 'group': 'passed-pawns'},
+    'knight_blockade_penalty': {'value': 60, 'min': 15, 'max': 120, 'step': 10, 'group': 'passed-pawns'},
+    # ==================== piece-activity (new group) ====================
+    'bishop_mobility_base': {'value': -15, 'min': -30, 'max': 0, 'step': 3, 'group': 'piece-activity'},
+    'bishop_mobility_scale_x100': {'value': 1023, 'min': 400, 'max': 2000, 'step': 60, 'group': 'piece-activity'},
+    'queen_mobility_base': {'value': -12, 'min': -25, 'max': 0, 'step': 3, 'group': 'piece-activity'},
+    'queen_mobility_scale_x100': {'value': 720, 'min': 300, 'max': 1500, 'step': 50, 'group': 'piece-activity'},
+    'value_bishop_pair_fewer_pawns_bonus': {'value': 3, 'min': 0, 'max': 12, 'step': 1, 'group': 'piece-activity'},
+    'bishop_knight_imbalance_bonus': {'value': 15, 'min': 3, 'max': 35, 'step': 3, 'group': 'piece-activity'},
+    'knight_attacks_pawn_general_bonus': {'value': 12, 'min': 2, 'max': 30, 'step': 3, 'group': 'piece-activity'},
+    'knight_fork_threat_score': {'value': 5, 'min': 1, 'max': 15, 'step': 2, 'group': 'piece-activity'},
+}
+
+
 def with_db_retry(func, max_retries=5, retry_delay=10):
     """Execute a database operation with retry logic."""
     last_error = None
@@ -195,6 +310,7 @@ def generate_perturbations(params: dict, c_k: float, active_groups: set | None) 
 PARAMETER_CONSTRAINTS = [
     ('multicut_depth_reduction', 'multicut_min_depth'),
     ('singular_extension_depth_reduction', 'singular_extension_min_depth'),
+    ('iid_reduce_depth', 'iid_min_depth'),
 ]
 
 
@@ -995,17 +1111,17 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
     db.session.flush()  # get ID
 
     if seed_mode == 'defaults':
-        print(f"  Seeding with midpoint defaults (bounds from run {runs_with_params[-1].id})...")
-        for p in source_params:
-            midpoint = (p.min_value + p.max_value) / 2.0
+        print(f"  Seeding from DEFAULT_PARAMS...")
+        for name, cfg in DEFAULT_PARAMS.items():
             db.session.add(SpsaParam(
-                run_id=new_run.id, name=p.name,
-                value=midpoint, min_value=p.min_value,
-                max_value=p.max_value, step=p.step,
-                group=p.group,
+                run_id=new_run.id, name=name,
+                value=cfg['value'], min_value=cfg['min'],
+                max_value=cfg['max'], step=cfg['step'],
+                group=cfg['group'],
             ))
     elif seed_mode == 'copy':
         print(f"  Copying params from run {source_run_id}...")
+        copied_names = set()
         for p in source_params:
             db.session.add(SpsaParam(
                 run_id=new_run.id, name=p.name,
@@ -1013,6 +1129,20 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
                 max_value=p.max_value, step=p.step,
                 group=p.group,
             ))
+            copied_names.add(p.name)
+        # Backfill any new params not in the source run
+        new_count = 0
+        for name, cfg in DEFAULT_PARAMS.items():
+            if name not in copied_names:
+                db.session.add(SpsaParam(
+                    run_id=new_run.id, name=name,
+                    value=cfg['value'], min_value=cfg['min'],
+                    max_value=cfg['max'], step=cfg['step'],
+                    group=cfg['group'],
+                ))
+                new_count += 1
+        if new_count:
+            print(f"  Added {new_count} new params from defaults")
 
     db.session.commit()
     param_count = SpsaParam.query.filter_by(run_id=new_run.id).count()

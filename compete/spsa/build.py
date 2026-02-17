@@ -168,6 +168,25 @@ PARAM_MAPPINGS = {
         'pub const LMR_CONTINUATION_BAD_THRESHOLD: i32 = {value};'
     ),
     # ==========================================================================
+    # SEARCH ADDITIONS
+    # ==========================================================================
+    'lmr_legal_moves_before_attempt': (
+        r'pub const LMR_LEGAL_MOVES_BEFORE_ATTEMPT: u8 = \d+;',
+        'pub const LMR_LEGAL_MOVES_BEFORE_ATTEMPT: u8 = {value};'
+    ),
+    'lmr_min_depth': (
+        r'pub const LMR_MIN_DEPTH: u8 = \d+;',
+        'pub const LMR_MIN_DEPTH: u8 = {value};'
+    ),
+    'iid_min_depth': (
+        r'pub const IID_MIN_DEPTH: u8 = \d+;',
+        'pub const IID_MIN_DEPTH: u8 = {value};'
+    ),
+    'iid_reduce_depth': (
+        r'pub const IID_REDUCE_DEPTH: u8 = \d+;',
+        'pub const IID_REDUCE_DEPTH: u8 = {value};'
+    ),
+    # ==========================================================================
     # EVALUATION PARAMETERS
     # ==========================================================================
     # Rook file bonuses
@@ -215,6 +234,120 @@ PARAM_MAPPINGS = {
     'space_bonus_per_square': (
         r'pub const SPACE_BONUS_PER_SQUARE: Score = \d+;',
         'pub const SPACE_BONUS_PER_SQUARE: Score = {value};'
+    ),
+    # Rooks on same file / seventh rank
+    'value_rooks_on_same_file': (
+        r'pub const VALUE_ROOKS_ON_SAME_FILE: Score = \d+;',
+        'pub const VALUE_ROOKS_ON_SAME_FILE: Score = {value};'
+    ),
+    'rooks_on_seventh_rank_bonus': (
+        r'pub const ROOKS_ON_SEVENTH_RANK_BONUS: Score = \d+;',
+        'pub const ROOKS_ON_SEVENTH_RANK_BONUS: Score = {value};'
+    ),
+    # Trapped pieces
+    'trapped_bishop_penalty': (
+        r'pub const TRAPPED_BISHOP_PENALTY: Score = \d+;',
+        'pub const TRAPPED_BISHOP_PENALTY: Score = {value};'
+    ),
+    'trapped_rook_penalty': (
+        r'pub const TRAPPED_ROOK_PENALTY: Score = \d+;',
+        'pub const TRAPPED_ROOK_PENALTY: Score = {value};'
+    ),
+    # ==========================================================================
+    # MOBILITY CURVE PARAMETERS
+    # ==========================================================================
+    'bishop_mobility_base': (
+        r'pub const BISHOP_MOBILITY_BASE: Score = -?\d+;',
+        'pub const BISHOP_MOBILITY_BASE: Score = {value};'
+    ),
+    'bishop_mobility_scale_x100': (
+        r'pub const BISHOP_MOBILITY_SCALE_X100: i32 = \d+;',
+        'pub const BISHOP_MOBILITY_SCALE_X100: i32 = {value};'
+    ),
+    'queen_mobility_base': (
+        r'pub const QUEEN_MOBILITY_BASE: Score = -?\d+;',
+        'pub const QUEEN_MOBILITY_BASE: Score = {value};'
+    ),
+    'queen_mobility_scale_x100': (
+        r'pub const QUEEN_MOBILITY_SCALE_X100: i32 = \d+;',
+        'pub const QUEEN_MOBILITY_SCALE_X100: i32 = {value};'
+    ),
+    # ==========================================================================
+    # PIECE ACTIVITY PARAMETERS
+    # ==========================================================================
+    'value_bishop_pair_fewer_pawns_bonus': (
+        r'pub const VALUE_BISHOP_PAIR_FEWER_PAWNS_BONUS: Score = \d+;',
+        'pub const VALUE_BISHOP_PAIR_FEWER_PAWNS_BONUS: Score = {value};'
+    ),
+    'bishop_knight_imbalance_bonus': (
+        r'pub const BISHOP_KNIGHT_IMBALANCE_BONUS: Score = \d+;',
+        'pub const BISHOP_KNIGHT_IMBALANCE_BONUS: Score = {value};'
+    ),
+    'knight_attacks_pawn_general_bonus': (
+        r'pub const KNIGHT_ATTACKS_PAWN_GENERAL_BONUS: Score = \d+;',
+        'pub const KNIGHT_ATTACKS_PAWN_GENERAL_BONUS: Score = {value};'
+    ),
+    'knight_fork_threat_score': (
+        r'pub const KNIGHT_FORK_THREAT_SCORE: Score = \d+;',
+        'pub const KNIGHT_FORK_THREAT_SCORE: Score = {value};'
+    ),
+    # ==========================================================================
+    # KING PLAY PARAMETERS
+    # ==========================================================================
+    'king_threat_bonus_knight': (
+        r'pub const KING_THREAT_BONUS_KNIGHT: Score = \d+;',
+        'pub const KING_THREAT_BONUS_KNIGHT: Score = {value};'
+    ),
+    'king_threat_bonus_queen': (
+        r'pub const KING_THREAT_BONUS_QUEEN: Score = \d+;',
+        'pub const KING_THREAT_BONUS_QUEEN: Score = {value};'
+    ),
+    'king_threat_bonus_bishop': (
+        r'pub const KING_THREAT_BONUS_BISHOP: Score = \d+;',
+        'pub const KING_THREAT_BONUS_BISHOP: Score = {value};'
+    ),
+    'king_threat_bonus_rook': (
+        r'pub const KING_THREAT_BONUS_ROOK: Score = \d+;',
+        'pub const KING_THREAT_BONUS_ROOK: Score = {value};'
+    ),
+    'value_king_attacks_minor': (
+        r'pub const VALUE_KING_ATTACKS_MINOR: Score = \d+;',
+        'pub const VALUE_KING_ATTACKS_MINOR: Score = {value};'
+    ),
+    'value_king_attacks_rook': (
+        r'pub const VALUE_KING_ATTACKS_ROOK: Score = \d+;',
+        'pub const VALUE_KING_ATTACKS_ROOK: Score = {value};'
+    ),
+    'value_king_mobility': (
+        r'pub const VALUE_KING_MOBILITY: Score = \d+;',
+        'pub const VALUE_KING_MOBILITY: Score = {value};'
+    ),
+    'value_king_cannot_catch_pawn': (
+        r'pub const VALUE_KING_CANNOT_CATCH_PAWN: Score = \d+;',
+        'pub const VALUE_KING_CANNOT_CATCH_PAWN: Score = {value};'
+    ),
+    'value_king_cannot_catch_pawn_pieces_remain': (
+        r'pub const VALUE_KING_CANNOT_CATCH_PAWN_PIECES_REMAIN: Score = \d+;',
+        'pub const VALUE_KING_CANNOT_CATCH_PAWN_PIECES_REMAIN: Score = {value};'
+    ),
+    'value_king_distance_passed_pawn_multiplier': (
+        r'pub const VALUE_KING_DISTANCE_PASSED_PAWN_MULTIPLIER: Score = \d+;',
+        'pub const VALUE_KING_DISTANCE_PASSED_PAWN_MULTIPLIER: Score = {value};'
+    ),
+    'value_king_supports_passed_pawn': (
+        r'pub const VALUE_KING_SUPPORTS_PASSED_PAWN: Score = \d+;',
+        'pub const VALUE_KING_SUPPORTS_PASSED_PAWN: Score = {value};'
+    ),
+    # ==========================================================================
+    # PASSED PAWN BLOCKER PARAMETERS
+    # ==========================================================================
+    'blocked_passed_pawn_penalty': (
+        r'pub const BLOCKED_PASSED_PAWN_PENALTY: Score = \d+;',
+        'pub const BLOCKED_PASSED_PAWN_PENALTY: Score = {value};'
+    ),
+    'knight_blockade_penalty': (
+        r'pub const KNIGHT_BLOCKADE_PENALTY: Score = \d+;',
+        'pub const KNIGHT_BLOCKADE_PENALTY: Score = {value};'
     ),
 }
 
@@ -267,6 +400,18 @@ ARRAY_PARAM_MAPPINGS = {
         'pattern': r'pub const LMP_MOVE_THRESHOLDS: \[u8; 4\] = \[[^\]]+\];',
         'template': 'pub const LMP_MOVE_THRESHOLDS: [u8; 4] = [{values}];',
         'params': ['0', 'lmp_threshold_depth1', 'lmp_threshold_depth2', 'lmp_threshold_depth3'],
+    },
+    'passed_pawn_bonus': {
+        'pattern': r'pub const VALUE_PASSED_PAWN_BONUS: \[Score; 6\] = \[[^\]]+\];',
+        'template': 'pub const VALUE_PASSED_PAWN_BONUS: [Score; 6] = [{values}];',
+        'params': ['passed_pawn_bonus_rank2', 'passed_pawn_bonus_rank3', 'passed_pawn_bonus_rank4',
+                   'passed_pawn_bonus_rank5', 'passed_pawn_bonus_rank6', 'passed_pawn_bonus_rank7'],
+    },
+    'connected_passed_pawns': {
+        'pattern': r'pub const VALUE_CONNECTED_PASSED_PAWNS: \[Score; 6\] = \[[^\]]+\];',
+        'template': 'pub const VALUE_CONNECTED_PASSED_PAWNS: [Score; 6] = [{values}];',
+        'params': ['connected_passed_pawn_rank2', 'connected_passed_pawn_rank3', 'connected_passed_pawn_rank4',
+                   'connected_passed_pawn_rank5', 'connected_passed_pawn_rank6', 'connected_passed_pawn_rank7'],
     },
 }
 
@@ -343,6 +488,32 @@ def apply_parameters(content: str, params: dict) -> str:
         values_str = ', '.join(str(v) for v in values)
 
         mapping = ARRAY_PARAM_MAPPINGS['lmp_move_thresholds']
+        replacement = mapping['template'].format(values=values_str)
+        content = re.sub(mapping['pattern'], replacement, content)
+
+    # Apply PASSED_PAWN_BONUS array
+    ppb_params = ['passed_pawn_bonus_rank2', 'passed_pawn_bonus_rank3', 'passed_pawn_bonus_rank4',
+                  'passed_pawn_bonus_rank5', 'passed_pawn_bonus_rank6', 'passed_pawn_bonus_rank7']
+    if any(p in params for p in ppb_params):
+        defaults = [24, 26, 30, 36, 44, 56]
+        values = []
+        for i, p in enumerate(ppb_params):
+            values.append(int(round(params.get(p, defaults[i]))))
+        values_str = ', '.join(str(v) for v in values)
+        mapping = ARRAY_PARAM_MAPPINGS['passed_pawn_bonus']
+        replacement = mapping['template'].format(values=values_str)
+        content = re.sub(mapping['pattern'], replacement, content)
+
+    # Apply CONNECTED_PASSED_PAWNS array
+    cpp_params = ['connected_passed_pawn_rank2', 'connected_passed_pawn_rank3', 'connected_passed_pawn_rank4',
+                  'connected_passed_pawn_rank5', 'connected_passed_pawn_rank6', 'connected_passed_pawn_rank7']
+    if any(p in params for p in cpp_params):
+        defaults = [12, 18, 28, 42, 60, 80]
+        values = []
+        for i, p in enumerate(cpp_params):
+            values.append(int(round(params.get(p, defaults[i]))))
+        values_str = ', '.join(str(v) for v in values)
+        mapping = ARRAY_PARAM_MAPPINGS['connected_passed_pawns']
         replacement = mapping['template'].format(values=values_str)
         content = re.sub(mapping['pattern'], replacement, content)
 
@@ -493,36 +664,3 @@ def build_spsa_engines(src_path: Path, output_base: Path,
         minus_path = minus_future.result()
 
     return plus_path, minus_path
-
-
-if __name__ == '__main__':
-    # Test: build with current params
-    try:
-        import tomllib
-    except ImportError:
-        import tomli as tomllib
-
-    spsa_dir = Path(__file__).parent
-
-    # Load config to get rusty-rival path
-    with open(spsa_dir / 'config.toml', 'rb') as f:
-        config = tomllib.load(f)
-
-    src_path = get_rusty_rival_path(config)
-
-    # Load params
-    with open(spsa_dir / 'params.toml', 'rb') as f:
-        params_config = tomllib.load(f)
-
-    # Extract current values
-    params = {name: cfg['value'] for name, cfg in params_config.items()}
-
-    print(f"Rusty-rival path: {src_path}")
-    print(f"Parameters: {params}")
-    print(f"Building engine with current parameters...")
-
-    output_path = spsa_dir / 'test-build'
-    if build_engine(src_path, output_path, params):
-        print(f"Success! Binary at: {output_path}")
-    else:
-        print("Build failed!")
