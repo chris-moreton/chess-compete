@@ -165,6 +165,18 @@ launch_spot_in_region() {
     echo ""
     echo "=== $LAUNCH_REGION: requesting $LAUNCH_COUNT instances ==="
 
+    # Clean up old fleets to avoid MaxFleetCountExceeded
+    local OLD_FLEETS
+    OLD_FLEETS=$(aws ec2 describe-fleets "${LAUNCH_REGION_ARGS[@]}" \
+        --query 'Fleets[?FleetState!=`deleted` && FleetState!=`deleted_running` && FleetState!=`deleted_terminating`].FleetId' \
+        --output text 2>/dev/null || echo "")
+    if [ -n "$OLD_FLEETS" ]; then
+        echo "  Cleaning up old fleets..."
+        for FID in $OLD_FLEETS; do
+            aws ec2 delete-fleets "${LAUNCH_REGION_ARGS[@]}" --fleet-ids "$FID" --no-terminate-instances > /dev/null 2>&1 || true
+        done
+    fi
+
     # Auto-detect AMI for this region
     local REGION_AMI
     REGION_AMI=$(aws ec2 describe-images "${LAUNCH_REGION_ARGS[@]}" \
