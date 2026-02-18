@@ -1050,10 +1050,23 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
     else:
         source_params = SpsaParam.query.filter_by(run_id=runs_with_params[-1].id).all()
 
+    # Build group counts from what the new run will actually contain.
+    # For 'defaults' mode: all params come from DEFAULT_PARAMS.
+    # For 'copy' mode: source params + backfilled DEFAULT_PARAMS entries.
     available_groups = {}
-    for p in source_params:
-        grp = p.group or 'ungrouped'
-        available_groups[grp] = available_groups.get(grp, 0) + 1
+    if seed_mode == 'defaults':
+        for name, cfg in DEFAULT_PARAMS.items():
+            grp = cfg['group']
+            available_groups[grp] = available_groups.get(grp, 0) + 1
+    else:
+        source_names = {p.name for p in source_params}
+        for p in source_params:
+            grp = p.group or 'ungrouped'
+            available_groups[grp] = available_groups.get(grp, 0) + 1
+        for name, cfg in DEFAULT_PARAMS.items():
+            if name not in source_names:
+                grp = cfg['group']
+                available_groups[grp] = available_groups.get(grp, 0) + 1
 
     print("\nAvailable parameter groups:")
     sorted_groups = sorted(available_groups.items())
