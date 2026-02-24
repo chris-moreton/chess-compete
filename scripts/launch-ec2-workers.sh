@@ -49,8 +49,8 @@ COUNT=1
 MAX_HOURS=""
 USE_SPOT=false
 
-# Spot fleet: diversified across compute-optimized 16-vCPU instance types
-SPOT_INSTANCE_TYPES=("c6i.4xlarge" "c6a.4xlarge" "c7i.4xlarge" "c7a.4xlarge")
+# Spot fleet: diversified across compute-optimized and general-purpose 16-vCPU instance types
+SPOT_INSTANCE_TYPES=("c6i.4xlarge" "c6a.4xlarge" "c7i.4xlarge" "c7a.4xlarge" "c5.4xlarge" "c5a.4xlarge" "m6i.4xlarge" "m6a.4xlarge" "m7i.4xlarge" "m7a.4xlarge")
 MAX_SPOT_PRICE="0.50"
 
 # Regions to spread spot instances across (used when -r is not specified)
@@ -248,7 +248,7 @@ launch_spot_in_region() {
     FLEET_RESULT=$(aws ec2 create-fleet "${LAUNCH_REGION_ARGS[@]}" \
         --type instant \
         --target-capacity-specification "TotalTargetCapacity=${LAUNCH_COUNT},DefaultTargetCapacityType=spot" \
-        --spot-options "AllocationStrategy=lowest-price" \
+        --spot-options "AllocationStrategy=capacity-optimized" \
         --launch-template-configs "[{\"LaunchTemplateSpecification\":{\"LaunchTemplateId\":\"${LT_ID}\",\"Version\":\"\$Latest\"},\"Overrides\":[${OVERRIDES}]}]" \
         --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=spsa-worker}]" \
         --output json)
