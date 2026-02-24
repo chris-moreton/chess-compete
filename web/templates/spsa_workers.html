@@ -264,6 +264,7 @@
                     <th>Ref Games</th>
                     <th>Total Games</th>
                     <th>Avg NPS</th>
+                    <th>Timemult</th>
                     <th>First Seen</th>
                 </tr>
             </thead>
@@ -278,6 +279,7 @@
                     <td>{{ "{:,}".format(w.total_ref_games) }}</td>
                     <td>{{ "{:,}".format(w.total_games) }}</td>
                     <td class="nps-value">{% if w.avg_nps %}{{ "{:,}".format(w.avg_nps) }}{% else %}-{% endif %}</td>
+                    <td>{% if w.last_timemult %}{{ "%.2f"|format(w.last_timemult) }}x{% else %}-{% endif %}</td>
                     <td>{{ w.first_seen_at.strftime('%Y-%m-%d %H:%M') }}</td>
                 </tr>
                 {% endfor %}

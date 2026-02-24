@@ -1338,6 +1338,12 @@ def register_routes(app):
                 last_seen_str = f"{int(time_since.total_seconds() / 86400)}d ago"
                 status = 'offline'
 
+            # Get latest timemult from most recent heartbeat
+            latest_hb = SpsaWorkerHeartbeat.query.filter_by(worker_id=w.id).order_by(
+                SpsaWorkerHeartbeat.created_at.desc()
+            ).first()
+            last_timemult = latest_hb.timemult if latest_hb else None
+
             workers_data.append({
                 'id': w.id,
                 'name': w.worker_name,
@@ -1351,6 +1357,7 @@ def register_routes(app):
                 'total_spsa_games': w.total_spsa_games,
                 'total_ref_games': w.total_ref_games,
                 'avg_nps': w.avg_nps,
+                'last_timemult': last_timemult,
             })
 
         # Get all heartbeats for charts (last 3 days)
