@@ -35,7 +35,7 @@ try:
 except ImportError:
     import tomli as tomllib
 
-from compete.game import play_game, GameConfig, play_game_from_config
+from compete.game import play_game, GameConfig, play_game_from_config, calibrate_nps, CALIBRATION_TARGET_NPS
 from compete.openings import OPENING_BOOK
 from compete.spsa.build import build_spsa_engines, build_engine, get_rusty_rival_path
 from compete.spsa.progress import ProgressDisplay
@@ -86,7 +86,8 @@ class APIClient:
 
     def report_spsa_results(self, iteration_id: int, games: int,
                            plus_wins: int, minus_wins: int, draws: int,
-                           worker_name: str = None, avg_nps: int = None) -> int | None:
+                           worker_name: str = None, avg_nps: int = None,
+                           timemult: float = None) -> int | None:
         """
         Report SPSA game results.
 
@@ -103,6 +104,8 @@ class APIClient:
                 payload['worker_name'] = worker_name
             if avg_nps:
                 payload['avg_nps'] = avg_nps
+            if timemult is not None:
+                payload['timemult'] = round(timemult, 3)
 
             resp = self.session.post(
                 f'{self.base_url}/api/spsa/iterations/{iteration_id}/results',
@@ -118,7 +121,8 @@ class APIClient:
 
     def report_ref_results(self, iteration_id: int, games: int,
                           wins: int, losses: int, draws: int,
-                          worker_name: str = None, avg_nps: int = None) -> int | None:
+                          worker_name: str = None, avg_nps: int = None,
+                          timemult: float = None) -> int | None:
         """
         Report reference game results.
 
@@ -135,6 +139,8 @@ class APIClient:
                 payload['worker_name'] = worker_name
             if avg_nps:
                 payload['avg_nps'] = avg_nps
+            if timemult is not None:
+                payload['timemult'] = round(timemult, 3)
 
             resp = self.session.post(
                 f'{self.base_url}/api/spsa/iterations/{iteration_id}/ref-results',
@@ -330,7 +336,8 @@ def run_spsa_games(
     timelow_ms: int, timehigh_ms: int,
     concurrency: int,
     on_game_complete: callable,
-    max_games: int = 0
+    max_games: int = 0,
+    auto_timemult: bool = False
 ) -> tuple[dict, float, float]:
     """
     Run SPSA games (plus vs minus), calling on_game_complete after every game.
@@ -440,6 +447,10 @@ def run_spsa_games(
                 plus_nps_count += 1
                 game_result['avg_nps'] = result.black_nps
 
+        # Include timemult if calibration was used
+        if hasattr(result, 'timemult') and result.timemult is not None:
+            game_result['timemult'] = result.timemult
+
         return game_result
 
     if concurrency > 1:
@@ -459,12 +470,15 @@ def run_spsa_games(
             pending_futures = {}  # future -> config
             next_game_index = 0
 
+            # Determine calibration engine path for this run
+            cal_path = plus_path if auto_timemult else None
+
             # Submit initial games up to concurrency limit (capped by max_games)
             initial_limit = concurrency if max_games <= 0 else min(concurrency, max_games)
             while next_game_index < initial_limit:
                 config = make_config(next_game_index, next_game_index)
                 callback = make_move_callback(next_game_index)
-                future = executor.submit(play_game_from_config, config, callback)
+                future = executor.submit(play_game_from_config, config, callback, cal_path)
                 pending_futures[future] = config
                 progress.start_game(next_game_index, 'spsa')
                 next_game_index += 1
@@ -518,7 +532,7 @@ def run_spsa_games(
                         elif keep_adding and (max_games <= 0 or next_game_index < max_games):
                             new_config = make_config(next_game_index, next_game_index)
                             callback = make_move_callback(next_game_index)
-                            new_future = executor.submit(play_game_from_config, new_config, callback)
+                            new_future = executor.submit(play_game_from_config, new_config, callback, cal_path)
                             pending_futures[new_future] = new_config
                             progress.start_game(next_game_index, 'spsa')
                             next_game_index += 1
@@ -578,7 +592,8 @@ def run_ref_games(
     timelow_ms: int, timehigh_ms: int,
     concurrency: int,
     on_game_complete: callable,
-    max_games: int = 0
+    max_games: int = 0,
+    auto_timemult: bool = False
 ) -> dict:
     """
     Run reference games (base vs Stockfish), calling on_game_complete after every game.
@@ -677,6 +692,10 @@ def run_ref_games(
             if result.black_nps:
                 game_result['avg_nps'] = result.black_nps
 
+        # Include timemult if calibration was used
+        if hasattr(result, 'timemult') and result.timemult is not None:
+            game_result['timemult'] = result.timemult
+
         return game_result
 
     if concurrency > 1:
@@ -696,12 +715,15 @@ def run_ref_games(
             pending_futures = {}  # future -> config
             next_game_index = 0
 
+            # Determine calibration engine path for this run (base engine, not Stockfish)
+            cal_path = base_path if auto_timemult else None
+
             # Submit initial games up to concurrency limit (capped by max_games)
             initial_limit = concurrency if max_games <= 0 else min(concurrency, max_games)
             while next_game_index < initial_limit:
                 config = make_config(next_game_index, next_game_index)
                 callback = make_move_callback(next_game_index)
-                future = executor.submit(play_game_from_config, config, callback)
+                future = executor.submit(play_game_from_config, config, callback, cal_path)
                 pending_futures[future] = config
                 progress.start_game(next_game_index, 'ref')
                 next_game_index += 1
@@ -755,7 +777,7 @@ def run_ref_games(
                         elif keep_adding and (max_games <= 0 or next_game_index < max_games):
                             new_config = make_config(next_game_index, next_game_index)
                             callback = make_move_callback(next_game_index)
-                            new_future = executor.submit(play_game_from_config, new_config, callback)
+                            new_future = executor.submit(play_game_from_config, new_config, callback, cal_path)
                             pending_futures[new_future] = new_config
                             progress.start_game(next_game_index, 'ref')
                             next_game_index += 1
@@ -842,7 +864,7 @@ def get_reference_engine_path(config: dict) -> str | None:
 
 def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                     poll_interval: int = 10, time_mult: float = 1.0,
-                    idle_timeout: int = 0):
+                    idle_timeout: int = 0, auto_timemult: bool = False):
     """
     Run the SPSA HTTP worker loop.
 
@@ -853,7 +875,11 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
         poll_interval: Seconds to wait when no work is available
         time_mult: Multiplier for timelow/timehigh values from iteration
         idle_timeout: Shutdown after this many minutes of no work (0 = disabled)
+        auto_timemult: If True, calibrate NPS before each game and auto-compute timemult
     """
+    # When auto_timemult is enabled, force static time_mult to 1.0
+    if auto_timemult:
+        time_mult = 1.0
     hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
 
     # Create API client
@@ -873,7 +899,9 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
     print(f"Host: {hostname}")
     print(f"API URL: {api_url}")
     print(f"Concurrency: {concurrency} games in parallel")
-    if time_mult != 1.0:
+    if auto_timemult:
+        print(f"Time multiplier: AUTO (calibrate before each game, target {CALIBRATION_TARGET_NPS:,} NPS)")
+    elif time_mult != 1.0:
         print(f"Time multiplier: {time_mult}x")
     print(f"Poll interval: {poll_interval}s when idle")
     print(f"Opening book: {len(OPENING_BOOK)} positions")
@@ -955,10 +983,11 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                 def on_spsa_game(results: dict) -> int:
                     nonlocal games_total
                     game_nps = results.get('avg_nps')
+                    game_timemult = results.get('timemult')
                     remaining = api.report_spsa_results(
                         iteration_id, 1,
                         results['plus_wins'], results['minus_wins'], results['draws'],
-                        worker_name=hostname, avg_nps=game_nps
+                        worker_name=hostname, avg_nps=game_nps, timemult=game_timemult
                     )
                     if remaining is None:
                         print("  Warning: Failed to report results to API")
@@ -973,7 +1002,8 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                     plus_path, minus_path,
                     int(iteration['timelow_ms'] * time_mult), int(iteration['timehigh_ms'] * time_mult),
                     concurrency, on_spsa_game,
-                    max_games=remaining
+                    max_games=remaining,
+                    auto_timemult=auto_timemult
                 )
                 elapsed = time.time() - start_time
 
@@ -1008,10 +1038,11 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                 def on_ref_game(results: dict) -> int:
                     nonlocal ref_games_total
                     game_nps = results.get('avg_nps')
+                    game_timemult = results.get('timemult')
                     remaining = api.report_ref_results(
                         iteration_id, 1,
                         results['wins'], results['losses'], results['draws'],
-                        worker_name=hostname, avg_nps=game_nps
+                        worker_name=hostname, avg_nps=game_nps, timemult=game_timemult
                     )
                     if remaining is None:
                         print("  Warning: Failed to report results to API")
@@ -1026,7 +1057,8 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                     base_path, ref_engine_path, ref_elo,
                     int(iteration['timelow_ms'] * time_mult), int(iteration['timehigh_ms'] * time_mult),
                     concurrency, on_ref_game,
-                    max_games=remaining
+                    max_games=remaining,
+                    auto_timemult=auto_timemult
                 )
                 elapsed = time.time() - start_time
 
@@ -1061,6 +1093,8 @@ def main():
                         help='Multiplier for timelow/timehigh from iteration (default: 1.0)')
     parser.add_argument('--idle-timeout', type=int, default=0,
                         help='Shutdown after N minutes of no work (0 = disabled, default: 0)')
+    parser.add_argument('--auto-timemult', action='store_true',
+                        help='Auto-calibrate NPS before each game and compute timemult dynamically')
 
     args = parser.parse_args()
 
@@ -1078,7 +1112,8 @@ def main():
         concurrency=args.concurrency,
         poll_interval=args.poll_interval,
         time_mult=args.timemult,
-        idle_timeout=args.idle_timeout
+        idle_timeout=args.idle_timeout,
+        auto_timemult=args.auto_timemult
     )
 
 

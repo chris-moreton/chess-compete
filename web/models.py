@@ -388,6 +388,7 @@ class SpsaWorkerHeartbeat(db.Model):
     phase = db.Column(db.String(20), nullable=False)  # 'spsa' or 'ref'
     games_reported = db.Column(db.Integer, nullable=False)
     avg_nps = db.Column(db.Integer)  # NPS for this batch
+    timemult = db.Column(db.Float)  # Auto-calibrated time multiplier
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
     # Relationships

@@ -17,6 +17,12 @@ import chess.engine
 import chess.pgn
 
 
+# NPS calibration constants
+CALIBRATION_TARGET_NPS = 2_000_000
+CALIBRATION_DEPTH = 15
+CALIBRATION_MAX_TIMEMULT = 5.0
+
+
 @dataclass
 class GameConfig:
     """Configuration for a single game, used for parallel execution."""
@@ -47,20 +53,72 @@ class GameResult:
     opening_fen: Optional[str]
     white_nps: Optional[int] = None
     black_nps: Optional[int] = None
+    timemult: Optional[float] = None
 
 
-def play_game_from_config(config: GameConfig, on_move: callable = None) -> GameResult:
+def calibrate_nps(engine_path: str) -> tuple[int, float]:
+    """
+    Calibrate NPS by searching startpos to a fixed depth.
+
+    Returns (measured_nps, timemult) where timemult = CALIBRATION_TARGET_NPS / measured_nps,
+    capped at CALIBRATION_MAX_TIMEMULT. Falls back to (0, 1.0) on failure.
+    """
+    try:
+        cmd = engine_path if isinstance(engine_path, list) else str(engine_path)
+        engine = chess.engine.SimpleEngine.popen_uci(cmd, stderr=subprocess.DEVNULL)
+        board = chess.Board()
+        info = engine.analyse(board, chess.engine.Limit(depth=CALIBRATION_DEPTH))
+        engine.quit()
+
+        nodes = info.get("nodes", 0)
+        time_spent = info.get("time", 0.0)
+        if time_spent > 0 and nodes > 0:
+            nps = int(nodes / time_spent)
+            timemult = CALIBRATION_TARGET_NPS / nps
+            timemult = min(timemult, CALIBRATION_MAX_TIMEMULT)
+            return nps, round(timemult, 3)
+        else:
+            print("  Calibration: no timing data, using timemult=1.0")
+            return 0, 1.0
+    except Exception as e:
+        print(f"  Calibration failed: {e}, using timemult=1.0")
+        return 0, 1.0
+
+
+def play_game_from_config(config: GameConfig, on_move: callable = None,
+                          calibration_engine_path: str = None) -> GameResult:
     """Play a game from a GameConfig - suitable for ThreadPoolExecutor."""
+    timemult = None
+    effective_config = config
+    if calibration_engine_path:
+        nps, tm = calibrate_nps(calibration_engine_path)
+        timemult = tm
+        adjusted_time = config.time_per_move * tm
+        # Create a new config with adjusted time
+        effective_config = GameConfig(
+            game_index=config.game_index,
+            white_name=config.white_name,
+            black_name=config.black_name,
+            white_path=config.white_path,
+            black_path=config.black_path,
+            white_uci_options=config.white_uci_options,
+            black_uci_options=config.black_uci_options,
+            time_per_move=adjusted_time,
+            opening_fen=config.opening_fen,
+            opening_name=config.opening_name,
+            is_engine1_white=config.is_engine1_white,
+        )
+
     result, game = play_game(
-        engine1_cmd=config.white_path,
-        engine2_cmd=config.black_path,
-        engine1_name=config.white_name,
-        engine2_name=config.black_name,
-        time_per_move=config.time_per_move,
-        start_fen=config.opening_fen,
-        opening_name=config.opening_name,
-        engine1_uci_options=config.white_uci_options,
-        engine2_uci_options=config.black_uci_options,
+        engine1_cmd=effective_config.white_path,
+        engine2_cmd=effective_config.black_path,
+        engine1_name=effective_config.white_name,
+        engine2_name=effective_config.black_name,
+        time_per_move=effective_config.time_per_move,
+        start_fen=effective_config.opening_fen,
+        opening_name=effective_config.opening_name,
+        engine1_uci_options=effective_config.white_uci_options,
+        engine2_uci_options=effective_config.black_uci_options,
         on_move=on_move
     )
 
@@ -75,11 +133,12 @@ def play_game_from_config(config: GameConfig, on_move: callable = None) -> GameR
         is_engine1_white=config.is_engine1_white,
         white_name=config.white_name,
         black_name=config.black_name,
-        time_per_move=config.time_per_move,
+        time_per_move=effective_config.time_per_move,
         opening_name=config.opening_name,
         opening_fen=config.opening_fen,
         white_nps=white_nps,
-        black_nps=black_nps
+        black_nps=black_nps,
+        timemult=timemult
     )
 
 

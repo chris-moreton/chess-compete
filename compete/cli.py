@@ -115,6 +115,8 @@ def main():
                         help="SPSA HTTP: multiplier for timelow/timehigh from iteration (default: 1.0)")
     parser.add_argument("--idle-timeout", type=int, default=0,
                         help="SPSA HTTP: shutdown after N minutes of no work (0 = disabled)")
+    parser.add_argument("--auto-timemult", action="store_true",
+                        help="SPSA HTTP: auto-calibrate NPS before each game and compute timemult dynamically")
 
     args = parser.parse_args()
 
@@ -269,7 +271,8 @@ def main():
             concurrency=args.concurrency,
             poll_interval=10,
             time_mult=args.timemult,
-            idle_timeout=args.idle_timeout
+            idle_timeout=args.idle_timeout,
+            auto_timemult=args.auto_timemult
         )
     elif args.cup:
         # Cup mode: knockout tournament with seeded brackets

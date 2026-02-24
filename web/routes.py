@@ -1084,7 +1084,7 @@ def register_routes(app):
         })
 
     def record_worker_activity(worker_name: str, iteration_id: int, phase: str,
-                                games: int, avg_nps: int = None):
+                                games: int, avg_nps: int = None, timemult: float = None):
         """
         Record worker activity in the tracking tables.
 
@@ -1128,12 +1128,13 @@ def register_routes(app):
                 iteration_id=iteration_id,
                 phase=phase,
                 games_reported=games,
-                avg_nps=avg_nps
+                avg_nps=avg_nps,
+                timemult=timemult
             )
             db.session.add(heartbeat)
 
-            # Prune heartbeats older than 24 hours
-            cutoff_time = datetime.utcnow() - timedelta(hours=24)
+            # Prune heartbeats older than 3 days (retain for full run duration)
+            cutoff_time = datetime.utcnow() - timedelta(hours=72)
             SpsaWorkerHeartbeat.query.filter(
                 SpsaWorkerHeartbeat.created_at < cutoff_time
             ).delete(synchronize_session=False)
@@ -1219,7 +1220,8 @@ def register_routes(app):
         # Record worker activity (optional, won't fail the request)
         worker_name = data.get('worker_name') or request.headers.get('X-Worker-Host')
         avg_nps = data.get('avg_nps')
-        record_worker_activity(worker_name, iteration_id, 'spsa', data['games'], avg_nps)
+        timemult = data.get('timemult')
+        record_worker_activity(worker_name, iteration_id, 'spsa', data['games'], avg_nps, timemult)
 
         return jsonify({'status': 'ok', 'remaining': remaining})
 
@@ -1298,7 +1300,8 @@ def register_routes(app):
         # Record worker activity (optional, won't fail the request)
         worker_name = data.get('worker_name') or request.headers.get('X-Worker-Host')
         avg_nps = data.get('avg_nps')
-        record_worker_activity(worker_name, iteration_id, 'ref', data['games'], avg_nps)
+        timemult = data.get('timemult')
+        record_worker_activity(worker_name, iteration_id, 'ref', data['games'], avg_nps, timemult)
 
         return jsonify({'status': 'ok', 'remaining': remaining})
 
@@ -1311,8 +1314,8 @@ def register_routes(app):
         """Dashboard showing SPSA worker activity and statistics."""
         from collections import defaultdict
 
-        # Get workers seen in the last 24 hours
-        cutoff_24h = datetime.utcnow() - timedelta(hours=24)
+        # Get workers seen in the last 3 days
+        cutoff_24h = datetime.utcnow() - timedelta(hours=72)
         workers = SpsaWorker.query.filter(
             SpsaWorker.last_seen_at >= cutoff_24h
         ).order_by(SpsaWorker.last_seen_at.desc()).all()
@@ -1350,8 +1353,8 @@ def register_routes(app):
                 'avg_nps': w.avg_nps,
             })
 
-        # Get all heartbeats for charts (last 24 hours)
-        twenty_four_hours_ago = now - timedelta(hours=24)
+        # Get all heartbeats for charts (last 3 days)
+        twenty_four_hours_ago = now - timedelta(hours=72)
         all_heartbeats = SpsaWorkerHeartbeat.query.filter(
             SpsaWorkerHeartbeat.created_at >= twenty_four_hours_ago
         ).order_by(SpsaWorkerHeartbeat.created_at.asc()).all()
@@ -1431,6 +1434,7 @@ def register_routes(app):
                 'phase': h.phase,
                 'games': h.games_reported,
                 'nps': h.avg_nps,
+                'timemult': h.timemult,
                 'run_number': iteration.run_id if iteration else None,
                 'iteration_number': iteration.iteration_number if iteration else None,
                 'time': time_str,

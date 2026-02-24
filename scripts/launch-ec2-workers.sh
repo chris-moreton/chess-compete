@@ -45,14 +45,13 @@ SECURITY_GROUP="${SECURITY_GROUP:-}"
 REGION=""
 CONCURRENCY="${CONCURRENCY:-16}"
 IDLE_TIMEOUT=10  # Minutes of no work before self-terminating (0 = disabled)
-TIME_MULT=""
 COUNT=1
 MAX_HOURS=""
 USE_SPOT=false
 
 # Spot fleet: diversified across compute-optimized 16-vCPU instance types
 SPOT_INSTANCE_TYPES=("c6i.4xlarge" "c6a.4xlarge" "c7i.4xlarge" "c7a.4xlarge")
-MAX_SPOT_PRICE="0.30"
+MAX_SPOT_PRICE="0.50"
 
 # Regions to spread spot instances across (used when -r is not specified)
 SPOT_REGIONS=("eu-west-2" "us-east-1" "us-east-2" "us-west-2")
@@ -69,7 +68,6 @@ while [[ $# -gt 0 ]]; do
         --key)            KEY_NAME="$2"; shift 2 ;;
         --sg)             SECURITY_GROUP="$2"; shift 2 ;;
         --region|-r)      REGION="$2"; shift 2 ;;
-        --timemult)       TIME_MULT="$2"; shift 2 ;;
         --spot)           USE_SPOT=true; shift ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
@@ -141,7 +139,7 @@ su - ec2-user -c '
     export RUSTFLAGS="-C target-cpu=native"
     export RUST_MIN_STACK=4097152
     cd ~/chess-compete
-    python3.11 -m compete --spsa-http -c __CONCURRENCY__ --idle-timeout __IDLE_TIMEOUT__ __TIMEMULT_ARG__
+    python3.11 -m compete --spsa-http -c __CONCURRENCY__ --idle-timeout __IDLE_TIMEOUT__ --auto-timemult
 '
 USERDATA
 )
@@ -152,11 +150,6 @@ USER_DATA="${USER_DATA//__SPSA_API_URL__/$SPSA_API_URL}"
 USER_DATA="${USER_DATA//__SPSA_API_KEY__/$SPSA_API_KEY}"
 USER_DATA="${USER_DATA//__CONCURRENCY__/$CONCURRENCY}"
 USER_DATA="${USER_DATA//__IDLE_TIMEOUT__/$IDLE_TIMEOUT}"
-if [ -n "$TIME_MULT" ]; then
-    USER_DATA="${USER_DATA//__TIMEMULT_ARG__/--timemult $TIME_MULT}"
-else
-    USER_DATA="${USER_DATA//__TIMEMULT_ARG__/}"
-fi
 USER_DATA="${USER_DATA//__MAX_HOURS__/$MAX_HOURS}"
 USER_DATA="${USER_DATA//__SHUTDOWN_MINUTES__/$SHUTDOWN_MINUTES}"
 
