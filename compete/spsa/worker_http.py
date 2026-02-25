@@ -17,6 +17,7 @@ Environment variables (can be set in .env file):
 import os
 import random
 import socket
+import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
@@ -179,6 +180,23 @@ def write_cached_iteration(engine_dir: Path, iteration_number: int):
     cache_file.write_text(str(iteration_number))
 
 
+def _pull_source_if_git(src_path):
+    """Pull latest source if it's a git repo. Failures are non-fatal."""
+    git_dir = Path(src_path) / '.git'
+    if git_dir.exists():
+        print(f"  Pulling latest rusty-rival source...")
+        pull_result = subprocess.run(
+            ['git', 'pull'], cwd=src_path,
+            capture_output=True, text=True
+        )
+        if pull_result.returncode == 0:
+            output = pull_result.stdout.strip()
+            if 'Already up to date' not in output:
+                print(f"  Updated: {output.splitlines()[-1]}")
+        else:
+            print(f"  Warning: git pull failed: {pull_result.stderr.strip()}")
+
+
 def ensure_spsa_engines_built(iteration: dict, config: dict, force_rebuild: bool = False) -> tuple[str, str]:
     """
     Ensure SPSA engine binaries (plus/minus) exist, building from API parameters if needed.
@@ -241,6 +259,7 @@ def ensure_spsa_engines_built(iteration: dict, config: dict, force_rebuild: bool
     print(f"\n  Building plus/minus engines for iteration {iteration_number}...")
 
     src_path = get_rusty_rival_path(config)
+    _pull_source_if_git(src_path)
 
     # Build with parameters from API
     plus_params = iteration['plus_parameters']
@@ -315,6 +334,7 @@ def ensure_base_engine_ready(iteration: dict, config: dict) -> str:
     # Need to build base engine with updated parameters
     print(f"\n  Building base engine for iteration {iteration_number}...")
     src_path = get_rusty_rival_path(config)
+    _pull_source_if_git(src_path)
     base_params = iteration['base_parameters']
 
     if not build_engine(src_path, base_dir, base_params):

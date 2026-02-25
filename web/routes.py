@@ -1312,13 +1312,34 @@ def register_routes(app):
     @app.route('/spsa/workers')
     def spsa_workers():
         """Dashboard showing SPSA worker activity and statistics."""
-        from collections import defaultdict
+        from sqlalchemy.orm import joinedload
 
         # Get workers seen in the last 3 days
-        cutoff_24h = datetime.utcnow() - timedelta(hours=72)
+        cutoff = datetime.utcnow() - timedelta(hours=72)
         workers = SpsaWorker.query.filter(
-            SpsaWorker.last_seen_at >= cutoff_24h
+            SpsaWorker.last_seen_at >= cutoff
         ).order_by(SpsaWorker.last_seen_at.desc()).all()
+
+        # Batch-fetch latest timemult for all workers in one query
+        worker_ids = [w.id for w in workers]
+        latest_timemults = {}
+        if worker_ids:
+            # Subquery: max heartbeat id per worker (most recent)
+            from sqlalchemy import func
+            latest_hb_subq = db.session.query(
+                SpsaWorkerHeartbeat.worker_id,
+                func.max(SpsaWorkerHeartbeat.id).label('max_id')
+            ).filter(
+                SpsaWorkerHeartbeat.worker_id.in_(worker_ids)
+            ).group_by(SpsaWorkerHeartbeat.worker_id).subquery()
+
+            latest_hbs = db.session.query(
+                SpsaWorkerHeartbeat.worker_id, SpsaWorkerHeartbeat.timemult
+            ).join(
+                latest_hb_subq,
+                SpsaWorkerHeartbeat.id == latest_hb_subq.c.max_id
+            ).all()
+            latest_timemults = {row.worker_id: row.timemult for row in latest_hbs}
 
         # Calculate time since last seen for each worker
         now = datetime.utcnow()
@@ -1338,12 +1359,6 @@ def register_routes(app):
                 last_seen_str = f"{int(time_since.total_seconds() / 86400)}d ago"
                 status = 'offline'
 
-            # Get latest timemult from most recent heartbeat
-            latest_hb = SpsaWorkerHeartbeat.query.filter_by(worker_id=w.id).order_by(
-                SpsaWorkerHeartbeat.created_at.desc()
-            ).first()
-            last_timemult = latest_hb.timemult if latest_hb else None
-
             workers_data.append({
                 'id': w.id,
                 'name': w.worker_name,
@@ -1357,71 +1372,14 @@ def register_routes(app):
                 'total_spsa_games': w.total_spsa_games,
                 'total_ref_games': w.total_ref_games,
                 'avg_nps': w.avg_nps,
-                'last_timemult': last_timemult,
+                'last_timemult': latest_timemults.get(w.id),
             })
 
-        # Get all heartbeats for charts (last 3 days)
-        twenty_four_hours_ago = now - timedelta(hours=72)
-        all_heartbeats = SpsaWorkerHeartbeat.query.filter(
-            SpsaWorkerHeartbeat.created_at >= twenty_four_hours_ago
-        ).order_by(SpsaWorkerHeartbeat.created_at.asc()).all()
-
-        # Build worker name lookup
-        worker_names = {w.id: w.worker_name for w in workers}
-
-        # --- Chart 1: Cumulative games over time per worker ---
-        # Group heartbeats by worker and accumulate games
-        games_timeline = defaultdict(list)  # worker_name -> [(timestamp, cumulative_games)]
-        worker_cumulative = defaultdict(int)
-
-        for h in all_heartbeats:
-            worker_name = worker_names.get(h.worker_id, 'unknown')
-            worker_cumulative[worker_name] += h.games_reported
-            games_timeline[worker_name].append({
-                'timestamp': h.created_at.isoformat(),
-                'games': worker_cumulative[worker_name]
-            })
-
-        # --- Chart 2: NPS trends over time per worker ---
-        nps_timeline = defaultdict(list)  # worker_name -> [(timestamp, nps)]
-        for h in all_heartbeats:
-            if h.avg_nps:
-                worker_name = worker_names.get(h.worker_id, 'unknown')
-                nps_timeline[worker_name].append({
-                    'timestamp': h.created_at.isoformat(),
-                    'nps': h.avg_nps
-                })
-
-        # --- Chart 3: Activity heatmap (hour of day vs day of week) ---
-        # Count games per (day_of_week, hour) bucket
-        activity_heatmap = defaultdict(int)  # (day, hour) -> game count
-        for h in all_heartbeats:
-            day = h.created_at.weekday()  # 0=Monday, 6=Sunday
-            hour = h.created_at.hour
-            activity_heatmap[(day, hour)] += h.games_reported
-
-        # Convert to list format for Chart.js matrix
-        heatmap_data = []
-        for day in range(7):
-            for hour in range(24):
-                count = activity_heatmap.get((day, hour), 0)
-                if count > 0:
-                    heatmap_data.append({'x': hour, 'y': day, 'v': count})
-
-        # --- Chart 4: Contribution pie chart (last 24h from heartbeats) ---
-        contribution_counts = defaultdict(int)
-        for h in all_heartbeats:
-            worker_name = worker_names.get(h.worker_id, 'unknown')
-            contribution_counts[worker_name] += h.games_reported
-        contribution_data = [
-            {'name': name, 'games': games}
-            for name, games in contribution_counts.items() if games > 0
-        ]
-        # Sort by games descending
-        contribution_data.sort(key=lambda x: -x['games'])
-
-        # Get recent heartbeats for activity table (last 100)
-        heartbeats = SpsaWorkerHeartbeat.query.order_by(
+        # Get recent heartbeats for activity table (eager-load relationships)
+        heartbeats = SpsaWorkerHeartbeat.query.options(
+            joinedload(SpsaWorkerHeartbeat.worker),
+            joinedload(SpsaWorkerHeartbeat.iteration),
+        ).order_by(
             SpsaWorkerHeartbeat.created_at.desc()
         ).limit(100).all()
 
@@ -1465,9 +1423,4 @@ def register_routes(app):
             active_workers=active_workers,
             total_games=total_games,
             avg_nps=avg_nps_all,
-            # Chart data
-            games_timeline=dict(games_timeline),
-            nps_timeline=dict(nps_timeline),
-            heatmap_data=heatmap_data,
-            contribution_data=contribution_data,
         )
