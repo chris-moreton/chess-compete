@@ -163,6 +163,7 @@
                     <th>Avg NPS</th>
                     <th>Cores</th>
                     <th>Timemult</th>
+                    <th>Eff. Games</th>
                     <th>First Seen</th>
                 </tr>
             </thead>
@@ -179,6 +180,7 @@
                     <td class="nps-value">{% if w.avg_nps %}{{ "{:,}".format(w.avg_nps) }}{% else %}-{% endif %}</td>
                     <td>{% if w.concurrency %}{{ w.concurrency }}{% else %}-{% endif %}</td>
                     <td>{% if w.last_timemult %}{{ "%.2f"|format(w.last_timemult) }}x{% else %}-{% endif %}</td>
+                    <td>{% if w.effective_concurrency is not none %}{{ "%.1f"|format(w.effective_concurrency) }}{% else %}-{% endif %}</td>
                     <td>{{ w.first_seen_at.strftime('%Y-%m-%d %H:%M') }}</td>
                 </tr>
                 {% endfor %}

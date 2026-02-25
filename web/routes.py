@@ -1386,6 +1386,7 @@ def register_routes(app):
                 'avg_nps': w.avg_nps,
                 'last_timemult': tm,
                 'concurrency': conc,
+                'effective_concurrency': (conc / tm) if conc and tm and tm > 0 else (conc if conc else None),
             })
 
         # Compute effective concurrent games from workers seen in last 15 minutes

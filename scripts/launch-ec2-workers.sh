@@ -106,6 +106,20 @@ echo "=== $(date) Starting SPSA worker setup ==="
 echo "=== Auto-shutdown scheduled in __MAX_HOURS__ hour(s) ==="
 shutdown -h +__SHUTDOWN_MINUTES__
 
+# Hard deadline watchdog: independently terminates this instance after __MAX_HOURS__ hours
+# Uses wall-clock sleep + EC2 self-terminate as a failsafe in case shutdown gets cancelled
+(
+    sleep $((__SHUTDOWN_MINUTES__ * 60 + 300))  # MAX_HOURS + 5 min grace
+    echo "=== $(date) WATCHDOG: hard deadline reached, self-terminating ==="
+    INSTANCE_ID=$(curl -s --connect-timeout 2 http://169.254.169.254/latest/meta-data/instance-id || true)
+    REGION=$(curl -s --connect-timeout 2 http://169.254.169.254/latest/meta-data/placement/region || true)
+    if [ -n "$INSTANCE_ID" ] && [ -n "$REGION" ]; then
+        aws ec2 terminate-instances --region "$REGION" --instance-ids "$INSTANCE_ID" 2>&1 || true
+    fi
+    shutdown -h now 2>/dev/null || true
+) &
+disown
+
 # Install system packages
 yum install -y python3.11 python3.11-pip git gcc
 
