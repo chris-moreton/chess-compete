@@ -20,7 +20,7 @@ import chess.pgn
 # NPS calibration constants
 CALIBRATION_TARGET_NPS = 2_000_000
 CALIBRATION_DEPTH = 15
-CALIBRATION_MAX_TIMEMULT = 5.0
+CALIBRATION_MAX_TIMEMULT = None
 
 
 @dataclass
@@ -75,7 +75,8 @@ def calibrate_nps(engine_path: str) -> tuple[int, float]:
         if time_spent > 0 and nodes > 0:
             nps = int(nodes / time_spent)
             timemult = CALIBRATION_TARGET_NPS / nps
-            timemult = min(timemult, CALIBRATION_MAX_TIMEMULT)
+            if CALIBRATION_MAX_TIMEMULT is not None:
+                timemult = min(timemult, CALIBRATION_MAX_TIMEMULT)
             return nps, round(timemult, 3)
         else:
             print("  Calibration: no timing data, using timemult=1.0")
