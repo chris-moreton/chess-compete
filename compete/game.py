@@ -21,6 +21,7 @@ import chess.pgn
 CALIBRATION_TARGET_NPS = 2_000_000
 CALIBRATION_DEPTH = 15
 CALIBRATION_MAX_TIMEMULT = None
+CALIBRATION_MIN_TIME_PER_MOVE = 0.1  # 100ms floor
 
 
 @dataclass
@@ -94,7 +95,7 @@ def play_game_from_config(config: GameConfig, on_move: callable = None,
     if calibration_engine_path:
         nps, tm = calibrate_nps(calibration_engine_path)
         timemult = tm
-        adjusted_time = config.time_per_move * tm
+        adjusted_time = max(config.time_per_move * tm, CALIBRATION_MIN_TIME_PER_MOVE)
         # Create a new config with adjusted time
         effective_config = GameConfig(
             game_index=config.game_index,
