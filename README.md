@@ -1,5 +1,6 @@
 # Chess Engine Competition Framework
 
+
 A comprehensive engine vs engine testing harness with Elo tracking, automatic engine management, multiple competition modes, and distributed SPSA parameter tuning.
 
 **Key Features:**
