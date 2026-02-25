@@ -389,6 +389,7 @@ class SpsaWorkerHeartbeat(db.Model):
     games_reported = db.Column(db.Integer, nullable=False)
     avg_nps = db.Column(db.Integer)  # NPS for this batch
     timemult = db.Column(db.Float)  # Auto-calibrated time multiplier
+    concurrency = db.Column(db.Integer)  # Worker's concurrency setting
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
     # Relationships

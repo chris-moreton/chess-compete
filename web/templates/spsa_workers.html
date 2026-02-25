@@ -140,6 +140,10 @@
                 <div class="value">{% if avg_nps %}{{ "{:,}".format(avg_nps) }}{% else %}-{% endif %}</div>
                 <div class="label">Avg NPS</div>
             </div>
+            <div class="stat-card">
+                <div class="value">{{ effective_concurrency }}</div>
+                <div class="label">Effective Concurrent Games</div>
+            </div>
         </div>
 
 
@@ -157,6 +161,7 @@
                     <th>Ref Games</th>
                     <th>Total Games</th>
                     <th>Avg NPS</th>
+                    <th>Cores</th>
                     <th>Timemult</th>
                     <th>First Seen</th>
                 </tr>
@@ -172,6 +177,7 @@
                     <td>{{ "{:,}".format(w.total_ref_games) }}</td>
                     <td>{{ "{:,}".format(w.total_games) }}</td>
                     <td class="nps-value">{% if w.avg_nps %}{{ "{:,}".format(w.avg_nps) }}{% else %}-{% endif %}</td>
+                    <td>{% if w.concurrency %}{{ w.concurrency }}{% else %}-{% endif %}</td>
                     <td>{% if w.last_timemult %}{{ "%.2f"|format(w.last_timemult) }}x{% else %}-{% endif %}</td>
                     <td>{{ w.first_seen_at.strftime('%Y-%m-%d %H:%M') }}</td>
                 </tr>

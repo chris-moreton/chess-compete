@@ -1084,7 +1084,8 @@ def register_routes(app):
         })
 
     def record_worker_activity(worker_name: str, iteration_id: int, phase: str,
-                                games: int, avg_nps: int = None, timemult: float = None):
+                                games: int, avg_nps: int = None, timemult: float = None,
+                                concurrency: int = None):
         """
         Record worker activity in the tracking tables.
 
@@ -1129,7 +1130,8 @@ def register_routes(app):
                 phase=phase,
                 games_reported=games,
                 avg_nps=avg_nps,
-                timemult=timemult
+                timemult=timemult,
+                concurrency=concurrency
             )
             db.session.add(heartbeat)
 
@@ -1221,7 +1223,8 @@ def register_routes(app):
         worker_name = data.get('worker_name') or request.headers.get('X-Worker-Host')
         avg_nps = data.get('avg_nps')
         timemult = data.get('timemult')
-        record_worker_activity(worker_name, iteration_id, 'spsa', data['games'], avg_nps, timemult)
+        concurrency = data.get('concurrency')
+        record_worker_activity(worker_name, iteration_id, 'spsa', data['games'], avg_nps, timemult, concurrency)
 
         return jsonify({'status': 'ok', 'remaining': remaining})
 
@@ -1301,7 +1304,8 @@ def register_routes(app):
         worker_name = data.get('worker_name') or request.headers.get('X-Worker-Host')
         avg_nps = data.get('avg_nps')
         timemult = data.get('timemult')
-        record_worker_activity(worker_name, iteration_id, 'ref', data['games'], avg_nps, timemult)
+        concurrency = data.get('concurrency')
+        record_worker_activity(worker_name, iteration_id, 'ref', data['games'], avg_nps, timemult, concurrency)
 
         return jsonify({'status': 'ok', 'remaining': remaining})
 
@@ -1314,17 +1318,16 @@ def register_routes(app):
         """Dashboard showing SPSA worker activity and statistics."""
         from sqlalchemy.orm import joinedload
 
-        # Get workers seen in the last 3 days
-        cutoff = datetime.utcnow() - timedelta(hours=72)
+        # Get workers seen in the last 4 hours
+        cutoff = datetime.utcnow() - timedelta(hours=4)
         workers = SpsaWorker.query.filter(
             SpsaWorker.last_seen_at >= cutoff
         ).order_by(SpsaWorker.last_seen_at.desc()).all()
 
-        # Batch-fetch latest timemult for all workers in one query
+        # Batch-fetch latest timemult and concurrency for all workers in one query
         worker_ids = [w.id for w in workers]
-        latest_timemults = {}
+        latest_hb_data = {}  # worker_id -> {timemult, concurrency}
         if worker_ids:
-            # Subquery: max heartbeat id per worker (most recent)
             from sqlalchemy import func
             latest_hb_subq = db.session.query(
                 SpsaWorkerHeartbeat.worker_id,
@@ -1334,12 +1337,17 @@ def register_routes(app):
             ).group_by(SpsaWorkerHeartbeat.worker_id).subquery()
 
             latest_hbs = db.session.query(
-                SpsaWorkerHeartbeat.worker_id, SpsaWorkerHeartbeat.timemult
+                SpsaWorkerHeartbeat.worker_id,
+                SpsaWorkerHeartbeat.timemult,
+                SpsaWorkerHeartbeat.concurrency
             ).join(
                 latest_hb_subq,
                 SpsaWorkerHeartbeat.id == latest_hb_subq.c.max_id
             ).all()
-            latest_timemults = {row.worker_id: row.timemult for row in latest_hbs}
+            latest_hb_data = {
+                row.worker_id: {'timemult': row.timemult, 'concurrency': row.concurrency}
+                for row in latest_hbs
+            }
 
         # Calculate time since last seen for each worker
         now = datetime.utcnow()
@@ -1359,6 +1367,10 @@ def register_routes(app):
                 last_seen_str = f"{int(time_since.total_seconds() / 86400)}d ago"
                 status = 'offline'
 
+            hb_info = latest_hb_data.get(w.id, {})
+            tm = hb_info.get('timemult')
+            conc = hb_info.get('concurrency')
+
             workers_data.append({
                 'id': w.id,
                 'name': w.worker_name,
@@ -1372,8 +1384,22 @@ def register_routes(app):
                 'total_spsa_games': w.total_spsa_games,
                 'total_ref_games': w.total_ref_games,
                 'avg_nps': w.avg_nps,
-                'last_timemult': latest_timemults.get(w.id),
+                'last_timemult': tm,
+                'concurrency': conc,
             })
+
+        # Compute effective concurrent games from workers seen in last 15 minutes
+        active_cutoff = timedelta(minutes=15)
+        effective_concurrency = 0.0
+        for w in workers_data:
+            time_since = now - w['last_seen_at']
+            if time_since <= active_cutoff:
+                conc = w.get('concurrency')
+                tm = w.get('last_timemult')
+                if conc and tm and tm > 0:
+                    effective_concurrency += conc / tm
+                elif conc:
+                    effective_concurrency += conc
 
         # Get recent heartbeats for activity table (eager-load relationships)
         heartbeats = SpsaWorkerHeartbeat.query.options(
@@ -1423,4 +1449,5 @@ def register_routes(app):
             active_workers=active_workers,
             total_games=total_games,
             avg_nps=avg_nps_all,
+            effective_concurrency=round(effective_concurrency, 1),
         )

@@ -88,7 +88,7 @@ class APIClient:
     def report_spsa_results(self, iteration_id: int, games: int,
                            plus_wins: int, minus_wins: int, draws: int,
                            worker_name: str = None, avg_nps: int = None,
-                           timemult: float = None) -> int | None:
+                           timemult: float = None, concurrency: int = None) -> int | None:
         """
         Report SPSA game results.
 
@@ -107,6 +107,8 @@ class APIClient:
                 payload['avg_nps'] = avg_nps
             if timemult is not None:
                 payload['timemult'] = round(timemult, 3)
+            if concurrency is not None:
+                payload['concurrency'] = concurrency
 
             resp = self.session.post(
                 f'{self.base_url}/api/spsa/iterations/{iteration_id}/results',
@@ -123,7 +125,7 @@ class APIClient:
     def report_ref_results(self, iteration_id: int, games: int,
                           wins: int, losses: int, draws: int,
                           worker_name: str = None, avg_nps: int = None,
-                          timemult: float = None) -> int | None:
+                          timemult: float = None, concurrency: int = None) -> int | None:
         """
         Report reference game results.
 
@@ -142,6 +144,8 @@ class APIClient:
                 payload['avg_nps'] = avg_nps
             if timemult is not None:
                 payload['timemult'] = round(timemult, 3)
+            if concurrency is not None:
+                payload['concurrency'] = concurrency
 
             resp = self.session.post(
                 f'{self.base_url}/api/spsa/iterations/{iteration_id}/ref-results',
@@ -1007,7 +1011,8 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                     remaining = api.report_spsa_results(
                         iteration_id, 1,
                         results['plus_wins'], results['minus_wins'], results['draws'],
-                        worker_name=hostname, avg_nps=game_nps, timemult=game_timemult
+                        worker_name=hostname, avg_nps=game_nps, timemult=game_timemult,
+                        concurrency=concurrency
                     )
                     if remaining is None:
                         print("  Warning: Failed to report results to API")
@@ -1062,7 +1067,8 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                     remaining = api.report_ref_results(
                         iteration_id, 1,
                         results['wins'], results['losses'], results['draws'],
-                        worker_name=hostname, avg_nps=game_nps, timemult=game_timemult
+                        worker_name=hostname, avg_nps=game_nps, timemult=game_timemult,
+                        concurrency=concurrency
                     )
                     if remaining is None:
                         print("  Warning: Failed to report results to API")
