@@ -91,7 +91,7 @@ DEFAULT_PARAMS = {
     'countermove_history_divisor': {'value': 235, 'min': 50, 'max': 600, 'step': 30, 'group': 'move-ordering'},
     'followup_history_divisor': {'value': 538, 'min': 100, 'max': 1200, 'step': 50, 'group': 'move-ordering'},
     'capture_history_divisor': {'value': 1120, 'min': 200, 'max': 2500, 'step': 100, 'group': 'move-ordering'},
-    # ==================== evaluation ====================
+    # ==================== evaluation (SPSA tuned, Run 10) ====================
     'rook_open_file_bonus': {'value': 28, 'min': 5, 'max': 60, 'step': 5, 'group': 'evaluation'},
     'rook_semi_open_file_bonus': {'value': 22, 'min': 5, 'max': 50, 'step': 5, 'group': 'evaluation'},
     'value_knight_outpost': {'value': 18, 'min': 5, 'max': 40, 'step': 4, 'group': 'evaluation'},
@@ -106,7 +106,7 @@ DEFAULT_PARAMS = {
     'rooks_on_seventh_rank_bonus': {'value': 20, 'min': 5, 'max': 50, 'step': 5, 'group': 'evaluation'},
     'trapped_bishop_penalty': {'value': 100, 'min': 30, 'max': 200, 'step': 15, 'group': 'evaluation'},
     'trapped_rook_penalty': {'value': 50, 'min': 15, 'max': 120, 'step': 10, 'group': 'evaluation'},
-    # ==================== piece-values ====================
+    # ==================== piece-values (SPSA tuned, Run 6) ====================
     'pawn_value_opening': {'value': 117, 'min': 70, 'max': 170, 'step': 10, 'group': 'piece-values'},
     'pawn_value_endgame': {'value': 233, 'min': 150, 'max': 320, 'step': 15, 'group': 'piece-values'},
     'knight_value_opening': {'value': 590, 'min': 400, 'max': 750, 'step': 20, 'group': 'piece-values'},

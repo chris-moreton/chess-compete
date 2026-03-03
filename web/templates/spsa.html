@@ -388,6 +388,10 @@
                 <h3>Active Workers</h3>
                 <div class="value" id="active-worker-count">{{ active_worker_count|default(0) }}</div>
             </div>
+            <div class="summary-card">
+                <h3>Eff. Concurrent</h3>
+                <div class="value" id="effective-concurrency">{{ effective_concurrency|default(0) }}</div>
+            </div>
         </div>
 
         <!-- Elo Cards -->
@@ -1207,6 +1211,10 @@
                     const cls = w === 0 ? 'workers-none' : w < 4 ? 'workers-low' : w < 8 ? 'workers-mid' : 'workers-good';
                     banner.className = 'in-progress-banner ' + cls;
                 }
+                if (data.effective_concurrency !== undefined) {
+                    const el = document.getElementById('effective-concurrency');
+                    if (el) el.textContent = data.effective_concurrency;
+                }
             }
 
             // Poll every 5 seconds
@@ -1350,6 +1358,10 @@
                     const w = data.active_workers;
                     const cls = w === 0 ? 'workers-none' : w < 4 ? 'workers-low' : w < 8 ? 'workers-mid' : 'workers-good';
                     banner.className = 'in-progress-banner ' + cls;
+                }
+                if (data.effective_concurrency !== undefined) {
+                    const el = document.getElementById('effective-concurrency');
+                    if (el) el.textContent = data.effective_concurrency;
                 }
             }
 

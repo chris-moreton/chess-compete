@@ -637,6 +637,7 @@ def register_routes(app):
                                    in_progress=in_progress, active_param_names=active_param_names,
                                    param_group_map=param_group_map,
                                    active_worker_count=active_worker_count,
+                                   effective_concurrency=0,
                                    update_data={}, avg_update_data=[], update_iterations=[],
                                    convergence_score=0, recent_avg_update=0, last_update={},
                                    workers_per_iteration=[],
@@ -877,11 +878,38 @@ def register_routes(app):
         if iterations:
             latest_effective_iteration = iterations[-1].effective_iteration
 
-        # Count active workers (seen in last 5 minutes)
+        # Count active workers (seen in last 5 minutes) and effective concurrency
         active_cutoff = datetime.utcnow() - timedelta(minutes=5)
-        active_worker_count = SpsaWorker.query.filter(
+        active_workers_list = SpsaWorker.query.filter(
             SpsaWorker.last_seen_at >= active_cutoff
-        ).count()
+        ).all()
+        active_worker_count = len(active_workers_list)
+
+        # Compute effective concurrent games from active workers
+        effective_concurrency = 0.0
+        if active_workers_list:
+            from sqlalchemy import func as sa_func
+            aw_ids = [w.id for w in active_workers_list]
+            latest_hb_subq = db.session.query(
+                SpsaWorkerHeartbeat.worker_id,
+                sa_func.max(SpsaWorkerHeartbeat.id).label('max_id')
+            ).filter(
+                SpsaWorkerHeartbeat.worker_id.in_(aw_ids)
+            ).group_by(SpsaWorkerHeartbeat.worker_id).subquery()
+
+            latest_hbs = db.session.query(
+                SpsaWorkerHeartbeat.concurrency,
+                SpsaWorkerHeartbeat.timemult
+            ).join(
+                latest_hb_subq,
+                SpsaWorkerHeartbeat.id == latest_hb_subq.c.max_id
+            ).all()
+            for hb in latest_hbs:
+                if hb.concurrency and hb.timemult and hb.timemult > 0:
+                    effective_concurrency += hb.concurrency / hb.timemult
+                elif hb.concurrency:
+                    effective_concurrency += hb.concurrency
+        effective_concurrency = round(effective_concurrency, 1)
 
         return render_template(
             'spsa.html',
@@ -914,6 +942,7 @@ def register_routes(app):
             active_param_names=active_param_names,
             param_group_map=param_group_map,
             active_worker_count=active_worker_count,
+            effective_concurrency=effective_concurrency,
             update_data=update_data,
             avg_update_data=avg_update_data,
             update_iterations=update_iterations,
@@ -935,11 +964,37 @@ def register_routes(app):
         All database access happens server-side - no credentials exposed to frontend.
         Accepts optional 'run' query parameter to filter by run_id.
         """
-        # Active worker count (seen in last 5 minutes)
+        # Active worker count and effective concurrency (seen in last 5 minutes)
         active_cutoff = datetime.utcnow() - timedelta(minutes=5)
-        active_workers = SpsaWorker.query.filter(
+        active_workers_list = SpsaWorker.query.filter(
             SpsaWorker.last_seen_at >= active_cutoff
-        ).count()
+        ).all()
+        active_workers = len(active_workers_list)
+
+        effective_concurrency = 0.0
+        if active_workers_list:
+            from sqlalchemy import func as sa_func
+            aw_ids = [w.id for w in active_workers_list]
+            latest_hb_subq = db.session.query(
+                SpsaWorkerHeartbeat.worker_id,
+                sa_func.max(SpsaWorkerHeartbeat.id).label('max_id')
+            ).filter(
+                SpsaWorkerHeartbeat.worker_id.in_(aw_ids)
+            ).group_by(SpsaWorkerHeartbeat.worker_id).subquery()
+
+            latest_hbs = db.session.query(
+                SpsaWorkerHeartbeat.concurrency,
+                SpsaWorkerHeartbeat.timemult
+            ).join(
+                latest_hb_subq,
+                SpsaWorkerHeartbeat.id == latest_hb_subq.c.max_id
+            ).all()
+            for hb in latest_hbs:
+                if hb.concurrency and hb.timemult and hb.timemult > 0:
+                    effective_concurrency += hb.concurrency / hb.timemult
+                elif hb.concurrency:
+                    effective_concurrency += hb.concurrency
+        effective_concurrency = round(effective_concurrency, 1)
 
         # Get run_id from query param (optional)
         run_id = request.args.get('run', type=int)
@@ -964,7 +1019,8 @@ def register_routes(app):
                 'target_games': in_progress.target_games,
                 'ref_games_played': in_progress.ref_games_played,
                 'ref_target_games': in_progress.ref_target_games,
-                'active_workers': active_workers
+                'active_workers': active_workers,
+                'effective_concurrency': effective_concurrency
             })
 
         # No in-progress iteration, return the latest completed one
@@ -982,7 +1038,8 @@ def register_routes(app):
                 'target_games': latest.target_games,
                 'ref_games_played': latest.ref_games_played,
                 'ref_target_games': latest.ref_target_games,
-                'active_workers': active_workers
+                'active_workers': active_workers,
+                'effective_concurrency': effective_concurrency
             })
 
         # No iterations at all
@@ -993,7 +1050,8 @@ def register_routes(app):
             'target_games': 0,
             'ref_games_played': 0,
             'ref_target_games': 0,
-            'active_workers': active_workers
+            'active_workers': active_workers,
+            'effective_concurrency': effective_concurrency
         })
 
     # =========================================================================
