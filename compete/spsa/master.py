@@ -144,14 +144,14 @@ DEFAULT_PARAMS = {
     'connected_passed_pawn_rank7': {'value': 87, 'min': 30, 'max': 160, 'step': 12, 'group': 'passed-pawns'},
     'blocked_passed_pawn_penalty': {'value': 54, 'min': 20, 'max': 160, 'step': 12, 'group': 'passed-pawns'},
     'knight_blockade_penalty': {'value': 51, 'min': 15, 'max': 120, 'step': 10, 'group': 'passed-pawns'},
-    # ==================== piece-activity (new group) ====================
+    # ==================== piece-activity (SPSA tuned, Run 14) ====================
     'bishop_mobility_base': {'value': -15, 'min': -30, 'max': 0, 'step': 3, 'group': 'piece-activity'},
-    'bishop_mobility_scale_x100': {'value': 1023, 'min': 400, 'max': 2000, 'step': 60, 'group': 'piece-activity'},
-    'queen_mobility_base': {'value': -12, 'min': -25, 'max': 0, 'step': 3, 'group': 'piece-activity'},
-    'queen_mobility_scale_x100': {'value': 720, 'min': 300, 'max': 1500, 'step': 50, 'group': 'piece-activity'},
-    'value_bishop_pair_fewer_pawns_bonus': {'value': 3, 'min': 0, 'max': 12, 'step': 1, 'group': 'piece-activity'},
-    'bishop_knight_imbalance_bonus': {'value': 15, 'min': 3, 'max': 35, 'step': 3, 'group': 'piece-activity'},
-    'knight_attacks_pawn_general_bonus': {'value': 12, 'min': 2, 'max': 30, 'step': 3, 'group': 'piece-activity'},
+    'bishop_mobility_scale_x100': {'value': 1059, 'min': 400, 'max': 2000, 'step': 60, 'group': 'piece-activity'},
+    'queen_mobility_base': {'value': -10, 'min': -25, 'max': 0, 'step': 3, 'group': 'piece-activity'},
+    'queen_mobility_scale_x100': {'value': 743, 'min': 300, 'max': 1500, 'step': 50, 'group': 'piece-activity'},
+    'value_bishop_pair_fewer_pawns_bonus': {'value': 4, 'min': 0, 'max': 12, 'step': 1, 'group': 'piece-activity'},
+    'bishop_knight_imbalance_bonus': {'value': 20, 'min': 3, 'max': 35, 'step': 3, 'group': 'piece-activity'},
+    'knight_attacks_pawn_general_bonus': {'value': 3, 'min': 2, 'max': 30, 'step': 3, 'group': 'piece-activity'},
     'knight_fork_threat_score': {'value': 5, 'min': 1, 'max': 15, 'step': 2, 'group': 'piece-activity'},
 }
 
