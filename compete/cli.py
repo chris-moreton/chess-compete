@@ -117,6 +117,8 @@ def main():
                         help="SPSA HTTP: shutdown after N minutes of no work (0 = disabled)")
     parser.add_argument("--auto-timemult", action="store_true",
                         help="SPSA HTTP: auto-calibrate NPS before each game and compute timemult dynamically")
+    parser.add_argument("--threads", type=int, default=None,
+                        help="Number of threads (sent as UCI 'Threads' option if engine supports it)")
 
     args = parser.parse_args()
 
@@ -281,7 +283,7 @@ def main():
         run_cup(engine_dir, args.cup_engines, args.games, time_per_move or 1.0,
                 args.cup_name, time_low, time_high,
                 engine_type=args.enginetype, include_inactive=args.includeinactive,
-                concurrency=args.concurrency)
+                concurrency=args.concurrency, threads=args.threads)
     elif args.epd_solve:
         # EPD solve mode: test engine's ability to find correct moves
         epd_path = Path(args.epd_solve)
@@ -346,7 +348,7 @@ def main():
             print("Warning: Engine arguments ignored in random mode")
         run_random(engine_dir, args.games, time_per_move, results_dir, args.weighted, time_low, time_high,
                    engine_type=args.enginetype, include_inactive=args.includeinactive,
-                   concurrency=args.concurrency)
+                   concurrency=args.concurrency, threads=args.threads)
     elif args.gauntlet:
         # Gauntlet mode: test one engine against all others
         if len(resolved_engines) != 1:
@@ -355,16 +357,17 @@ def main():
         run_gauntlet(resolved_engines[0], engine_dir, args.games, time_per_move or 1.0, results_dir,
                      time_low, time_high,
                      engine_type=args.enginetype, include_inactive=args.includeinactive,
-                     concurrency=args.concurrency)
+                     concurrency=args.concurrency, threads=args.threads)
     elif len(resolved_engines) >= 3:
         # Round-robin league for 3+ engines
         run_league(resolved_engines, engine_dir, args.games, time_per_move or 1.0, results_dir,
-                   use_opening_book, time_low, time_high, concurrency=args.concurrency)
+                   use_opening_book, time_low, time_high, concurrency=args.concurrency,
+                   threads=args.threads)
     elif len(resolved_engines) == 2:
         # Head-to-head match for exactly 2 engines
         run_match(resolved_engines[0], resolved_engines[1], engine_dir,
                   args.games, time_per_move or 1.0, use_opening_book, time_low, time_high,
-                  concurrency=args.concurrency)
+                  concurrency=args.concurrency, threads=args.threads)
     else:
         print("Error: At least 2 engines are required (or use --random or --gauntlet mode)")
         sys.exit(1)

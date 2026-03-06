@@ -28,7 +28,7 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
               num_games: int, time_per_move: float,
               use_opening_book: bool = True,
               time_low: float = None, time_high: float = None,
-              concurrency: int = 1) -> dict:
+              concurrency: int = 1, threads: int = None) -> dict:
     """Run a match between two engines, alternating colors.
 
     Args:
@@ -147,7 +147,8 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
             time_per_move=game_time,
             opening_fen=opening_fen,
             opening_name=opening_name,
-            is_engine1_white=is_engine1_white
+            is_engine1_white=is_engine1_white,
+            threads=threads
         )
         game_configs.append(config)
 
@@ -487,7 +488,7 @@ def run_league(engine_names: list[str], engine_dir: Path,
                games_per_pairing: int, time_per_move: float, results_dir: Path,
                use_opening_book: bool = True,
                time_low: float = None, time_high: float = None,
-               concurrency: int = 1):
+               concurrency: int = 1, threads: int = None):
     """Run a round-robin league with interleaved pairings."""
 
     pairings = list(combinations(engine_names, 2))
@@ -603,7 +604,8 @@ def run_league(engine_names: list[str], engine_dir: Path,
                         time_per_move=round_time,
                         opening_fen=opening_fen,
                         opening_name=opening_name,
-                        is_engine1_white=not color_swap
+                        is_engine1_white=not color_swap,
+                        threads=threads
                     )
                     configs.append(config)
 
@@ -683,7 +685,7 @@ def run_league(engine_names: list[str], engine_dir: Path,
 
                     result, game = play_game(white_path, black_path, white, black,
                                              round_time, opening_fen, opening_name,
-                                             white_uci, black_uci)
+                                             white_uci, black_uci, threads=threads)
 
                     # Save to database with full PGN
                     save_game_to_db(white, black, result, f"{round_time:.2f}s/move",
@@ -749,7 +751,7 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
                  num_rounds: int, time_per_move: float, results_dir: Path,
                  time_low: float = None, time_high: float = None,
                  engine_type: str = None, include_inactive: bool = False,
-                 concurrency: int = 1):
+                 concurrency: int = 1, threads: int = None):
     """
     Test a challenger engine against all other engines in the engines directory.
     Plays in rounds: each round consists of 2 games (1 as white, 1 as black) against each opponent.
@@ -849,7 +851,8 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
                 time_per_move=round_time,
                 opening_fen=opening_fen1,
                 opening_name=opening_name1,
-                is_engine1_white=True
+                is_engine1_white=True,
+                threads=threads
             )
             game_configs.append(config1)
             config_metadata.append((opponent, True))
@@ -867,7 +870,8 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
                 time_per_move=round_time,
                 opening_fen=opening_fen2,
                 opening_name=opening_name2,
-                is_engine1_white=False
+                is_engine1_white=False,
+                threads=threads
             )
             game_configs.append(config2)
             config_metadata.append((opponent, False))
@@ -949,7 +953,7 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
 def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results_dir: Path, weighted: bool = False,
                time_low: float = None, time_high: float = None,
                engine_type: str = None, include_inactive: bool = False,
-               concurrency: int = 1):
+               concurrency: int = 1, threads: int = None):
     """
     Randomly select pairs of engines and play 2-game matches (1 white, 1 black).
     Each game uses a random opening.
@@ -1130,7 +1134,8 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
                     white_uci_options=engine1_uci, black_uci_options=engine2_uci,
                     time_per_move=match_time,
                     opening_fen=opening_fen1, opening_name=opening_name1,
-                    is_engine1_white=True
+                    is_engine1_white=True,
+                    threads=threads
                 )
                 game_configs.append(config1)
 
@@ -1143,7 +1148,8 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
                     white_uci_options=engine2_uci, black_uci_options=engine1_uci,
                     time_per_move=match_time,
                     opening_fen=opening_fen2, opening_name=opening_name2,
-                    is_engine1_white=False
+                    is_engine1_white=False,
+                    threads=threads
                 )
                 game_configs.append(config2)
 
@@ -1188,7 +1194,7 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
             result, game = play_game(engine1_path, engine2_path,
                                       engine1, engine2,
                                       match_time, opening_fen, opening_name,
-                                      engine1_uci, engine2_uci)
+                                      engine1_uci, engine2_uci, threads=threads)
 
             save_game_to_db(engine1, engine2, result, f"{match_time:.2f}s/move",
                             opening_name, opening_fen, str(game),
@@ -1229,7 +1235,7 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
             result, game = play_game(engine2_path, engine1_path,
                                       engine2, engine1,
                                       match_time, opening_fen, opening_name,
-                                      engine2_uci, engine1_uci)
+                                      engine2_uci, engine1_uci, threads=threads)
 
             save_game_to_db(engine2, engine1, result, f"{match_time:.2f}s/move",
                             opening_name, opening_fen, str(game),

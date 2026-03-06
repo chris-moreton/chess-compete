@@ -126,7 +126,8 @@ def get_round_name(remaining_participants: int) -> str:
 def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
                    games_per_match: int, time_per_move: float,
                    time_low: float = None, time_high: float = None,
-                   cup_id: int = None, concurrency: int = 1) -> tuple[str, float, float, int, bool, bool]:
+                   cup_id: int = None, concurrency: int = 1,
+                   threads: int = None) -> tuple[str, float, float, int, bool, bool]:
     """
     Play a cup match between two engines.
 
@@ -165,7 +166,7 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
 
         result, game = play_game(white_path, black_path, white_name, black_name,
                                  game_time, opening_fen, opening_name,
-                                 white_uci, black_uci)
+                                 white_uci, black_uci, threads=threads)
 
         # Save to database
         save_game_to_db(white_name, black_name, result, f"{game_time:.2f}s/move",
@@ -201,7 +202,8 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
                 time_per_move=pair_time,
                 opening_fen=opening_fen1,
                 opening_name=opening_name1,
-                is_engine1_white=True
+                is_engine1_white=True,
+                threads=threads
             )
             all_configs.append(config1)
 
@@ -217,7 +219,8 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
                 time_per_move=pair_time,
                 opening_fen=opening_fen2,
                 opening_name=opening_name2,
-                is_engine1_white=False
+                is_engine1_white=False,
+                threads=threads
             )
             all_configs.append(config2)
 
@@ -354,7 +357,7 @@ def run_cup(engine_dir: Path, num_engines: int = None, games_per_match: int = 10
             time_per_move: float = 1.0, cup_name: str = None,
             time_low: float = None, time_high: float = None,
             engine_type: str = None, include_inactive: bool = False,
-            concurrency: int = 1):
+            concurrency: int = 1, threads: int = None):
     """
     Run a complete knockout cup competition.
 
@@ -559,7 +562,8 @@ def run_cup(engine_dir: Path, num_engines: int = None, games_per_match: int = 10
             winner_name, e1_points, e2_points, games, is_tb, coin_flip = play_cup_match(
                 engine1_name, engine2_name, engine_dir,
                 games_per_match, time_per_move,
-                time_low, time_high, cup_id, concurrency
+                time_low, time_high, cup_id, concurrency,
+                threads=threads
             )
 
             winner_seed = match_data['engine1_seed'] if winner_name == engine1_name else match_data['engine2_seed']

@@ -38,6 +38,7 @@ class GameConfig:
     opening_fen: Optional[str]
     opening_name: Optional[str]
     is_engine1_white: bool  # Track which engine is white for result attribution
+    threads: Optional[int] = None  # Number of threads (if engine supports it)
 
 
 @dataclass
@@ -121,7 +122,8 @@ def play_game_from_config(config: GameConfig, on_move: callable = None,
         opening_name=effective_config.opening_name,
         engine1_uci_options=effective_config.white_uci_options,
         engine2_uci_options=effective_config.black_uci_options,
-        on_move=on_move
+        on_move=on_move,
+        threads=effective_config.threads
     )
 
     # Extract NPS from game headers
@@ -186,7 +188,8 @@ def play_game(engine1_cmd: Path | list, engine2_cmd: Path | list,
               opening_name: str = None,
               engine1_uci_options: dict = None,
               engine2_uci_options: dict = None,
-              on_move: callable = None) -> tuple[str, chess.pgn.Game]:
+              on_move: callable = None,
+              threads: int = None) -> tuple[str, chess.pgn.Game]:
     """Play a single game and return (result, pgn_game).
 
     engine1_cmd/engine2_cmd can be:
@@ -203,6 +206,13 @@ def play_game(engine1_cmd: Path | list, engine2_cmd: Path | list,
     cmd2 = engine2_cmd if isinstance(engine2_cmd, list) else str(engine2_cmd)
     engine1 = chess.engine.SimpleEngine.popen_uci(cmd1, stderr=subprocess.DEVNULL)
     engine2 = chess.engine.SimpleEngine.popen_uci(cmd2, stderr=subprocess.DEVNULL)
+
+    # Add Threads option if requested and supported by the engine
+    if threads:
+        if "Threads" in engine1.options:
+            engine1_uci_options = {**(engine1_uci_options or {}), "Threads": threads}
+        if "Threads" in engine2.options:
+            engine2_uci_options = {**(engine2_uci_options or {}), "Threads": threads}
 
     # Configure UCI options if provided
     if engine1_uci_options:
