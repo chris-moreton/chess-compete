@@ -683,12 +683,13 @@ def check_threads_support(engine_cmd) -> bool:
         True if the engine advertises a "Threads" option
     """
     import chess.engine
+    import concurrent.futures
 
     cache_key = str(engine_cmd)
     if cache_key in _threads_support_cache:
         return _threads_support_cache[cache_key]
 
-    try:
+    def _check():
         if isinstance(engine_cmd, list):
             cmd = engine_cmd
         else:
@@ -697,6 +698,12 @@ def check_threads_support(engine_cmd) -> bool:
         engine = chess.engine.SimpleEngine.popen_uci(cmd)
         supports = "Threads" in engine.options
         engine.quit()
+        return supports
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_check)
+            supports = future.result(timeout=5)
         _threads_support_cache[cache_key] = supports
         return supports
     except Exception:
