@@ -159,12 +159,15 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
     # Run games
     hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
 
+    games_completed = 0
+
     def on_game_complete(config: GameConfig, game_result: GameResult):
         """Handle each completed game."""
-        nonlocal engine1_points, engine2_points
+        nonlocal engine1_points, engine2_points, games_completed
 
         # Update results
         results[game_result.result] += 1
+        games_completed += 1
 
         # Calculate points
         if game_result.result == "1-0":
@@ -180,6 +183,16 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
         elif game_result.result == "1/2-1/2":
             engine1_points += 0.5
             engine2_points += 0.5
+
+        # Print progress
+        nps_info = ""
+        if game_result.white_nps or game_result.black_nps:
+            w_nps = f"{game_result.white_nps // 1000}k" if game_result.white_nps else "?"
+            b_nps = f"{game_result.black_nps // 1000}k" if game_result.black_nps else "?"
+            nps_info = f" [NPS: {w_nps}/{b_nps}]"
+        opening = f"  [{game_result.opening_name}]" if game_result.opening_name else ""
+        print(f"Game {games_completed:3d}/{num_games}: {game_result.white_name} (W) vs {game_result.black_name} -> {game_result.result}{nps_info}{opening}"
+              f"  | {engine1_name} {engine1_points:.1f} - {engine2_points:.1f} {engine2_name}")
 
         # Save to database
         save_game_to_db(
