@@ -47,6 +47,8 @@
                         <select id="engine-type">
                             <option value="" {% if not engine_type %}selected{% endif %}>All</option>
                             <option value="rusty" {% if engine_type == 'rusty' %}selected{% endif %}>Rusty Rival</option>
+                            <option value="rusty_1cpu" {% if engine_type == 'rusty_1cpu' %}selected{% endif %}>Rusty Rival (1 cpu)</option>
+                            <option value="rusty_multi" {% if engine_type == 'rusty_multi' %}selected{% endif %}>Rusty Rival (multi cpu)</option>
                             <option value="stockfish" {% if engine_type == 'stockfish' %}selected{% endif %}>Stockfish</option>
                         </select>
                     </div>

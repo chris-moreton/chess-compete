@@ -25,8 +25,8 @@ def get_engine_type(name: str) -> str:
     """
     if name.startswith('sf-'):
         return 'stockfish'
-    # Official releases: vX.X.X pattern (semantic versioning)
-    if re.match(r'^v\d+\.\d+\.\d+$', name):
+    # Official releases: vX.X.X pattern (semantic versioning), optionally with -XCPU suffix
+    if re.match(r'^v\d+\.\d+\.\d+(-\d+CPU)?$', name):
         return 'official'
     # Dev versions: vXXX-name pattern
     if re.match(r'^v\d{2,3}-', name):
@@ -40,7 +40,10 @@ def engine_matches_type_filter(engine_name: str, engine_type_filter: str | None)
 
     Args:
         engine_name: Name of the engine
-        engine_type_filter: 'rusty' for Rusty Rival (v*), 'stockfish' for Stockfish (sf*), None for all
+        engine_type_filter: 'rusty' for all Rusty Rival (v*),
+                           'rusty_1cpu' for single-CPU Rusty Rival (v* without -XCPU suffix),
+                           'rusty_multi' for multi-CPU Rusty Rival (v* with -XCPU suffix),
+                           'stockfish' for Stockfish (sf*), None for all
 
     Returns:
         True if the engine matches the filter
@@ -49,9 +52,45 @@ def engine_matches_type_filter(engine_name: str, engine_type_filter: str | None)
         return True
     if engine_type_filter == 'rusty':
         return engine_name.startswith('v')
+    if engine_type_filter == 'rusty_1cpu':
+        return engine_name.startswith('v') and not re.search(r'-\d+CPU$', engine_name)
+    if engine_type_filter == 'rusty_multi':
+        return engine_name.startswith('v') and bool(re.search(r'-\d+CPU$', engine_name))
     if engine_type_filter == 'stockfish':
         return engine_name.startswith('sf')
     return True
+
+
+def apply_engine_type_sql_filter(query, engine_type, white_engine_alias, black_engine_alias):
+    """
+    Apply engine type SQL filter to a query. Both players must match.
+
+    Args:
+        query: SQLAlchemy query
+        engine_type: Filter type ('rusty', 'rusty_1cpu', 'rusty_multi', 'stockfish', or None)
+        white_engine_alias: Aliased Engine for white
+        black_engine_alias: Aliased Engine for black
+
+    Returns:
+        Filtered query
+    """
+    if engine_type == 'rusty':
+        query = query.filter(white_engine_alias.name.like('v%'))
+        query = query.filter(black_engine_alias.name.like('v%'))
+    elif engine_type == 'rusty_1cpu':
+        query = query.filter(white_engine_alias.name.like('v%'))
+        query = query.filter(black_engine_alias.name.like('v%'))
+        query = query.filter(~white_engine_alias.name.op('~')(r'\d+CPU$'))
+        query = query.filter(~black_engine_alias.name.op('~')(r'\d+CPU$'))
+    elif engine_type == 'rusty_multi':
+        query = query.filter(white_engine_alias.name.like('v%'))
+        query = query.filter(black_engine_alias.name.like('v%'))
+        query = query.filter(white_engine_alias.name.op('~')(r'\d+CPU$'))
+        query = query.filter(black_engine_alias.name.op('~')(r'\d+CPU$'))
+    elif engine_type == 'stockfish':
+        query = query.filter(white_engine_alias.name.like('sf%'))
+        query = query.filter(black_engine_alias.name.like('sf%'))
+    return query
 
 
 def get_db():
@@ -167,12 +206,7 @@ def recalculate_elos_incremental(min_time_ms: int, max_time_ms: int, hostname: s
         query = query.filter(Game.hostname == hostname)
 
     # Apply engine type filter - BOTH players must match
-    if engine_type == 'rusty':
-        query = query.filter(WhiteEngine.name.like('v%'))
-        query = query.filter(BlackEngine.name.like('v%'))
-    elif engine_type == 'stockfish':
-        query = query.filter(WhiteEngine.name.like('sf%'))
-        query = query.filter(BlackEngine.name.like('sf%'))
+    query = apply_engine_type_sql_filter(query, engine_type, WhiteEngine, BlackEngine)
 
     games = query.order_by(Game.id).all()
 
@@ -339,12 +373,7 @@ def get_h2h_raw_data(min_time_ms=0, max_time_ms=999999999, hostname=None, engine
         query = query.filter(Game.hostname == hostname)
 
     # Apply engine type filter - BOTH players must match
-    if engine_type == 'rusty':
-        query = query.filter(WhiteEngine.name.like('v%'))
-        query = query.filter(BlackEngine.name.like('v%'))
-    elif engine_type == 'stockfish':
-        query = query.filter(WhiteEngine.name.like('sf%'))
-        query = query.filter(BlackEngine.name.like('sf%'))
+    query = apply_engine_type_sql_filter(query, engine_type, WhiteEngine, BlackEngine)
 
     results = query.group_by(
         Game.white_engine_id,
@@ -823,12 +852,7 @@ def get_game_results_for_filter(min_time_ms: int, max_time_ms: int, hostname: st
         query = query.filter(Game.hostname == hostname)
 
     # Apply engine type filter - BOTH players must match
-    if engine_type == 'rusty':
-        query = query.filter(WhiteEngine.name.like('v%'))
-        query = query.filter(BlackEngine.name.like('v%'))
-    elif engine_type == 'stockfish':
-        query = query.filter(WhiteEngine.name.like('sf%'))
-        query = query.filter(BlackEngine.name.like('sf%'))
+    query = apply_engine_type_sql_filter(query, engine_type, WhiteEngine, BlackEngine)
 
     return query.all()
 
@@ -1149,12 +1173,7 @@ def recalculate_all_and_store(min_time_ms: int, max_time_ms: int, hostname: str 
     )
     if hostname is not None:
         query = query.filter(Game.hostname == hostname)
-    if engine_type == 'rusty':
-        query = query.filter(WhiteEngine.name.like('v%'))
-        query = query.filter(BlackEngine.name.like('v%'))
-    elif engine_type == 'stockfish':
-        query = query.filter(WhiteEngine.name.like('sf%'))
-        query = query.filter(BlackEngine.name.like('sf%'))
+    query = apply_engine_type_sql_filter(query, engine_type, WhiteEngine, BlackEngine)
 
     last_game_id = query.scalar() or 0
 

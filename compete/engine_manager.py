@@ -4,6 +4,7 @@ Engine discovery, initialization, and management.
 
 import os
 import platform
+import re
 import stat
 import subprocess
 import sys
@@ -464,6 +465,12 @@ def _engine_matches_type(name: str, engine_type: str | None) -> bool:
         return True
     if engine_type == 'rusty':
         return name.startswith('v') and len(name) > 1 and name[1:2].isdigit()
+    if engine_type == 'rusty_1cpu':
+        return (name.startswith('v') and len(name) > 1 and name[1:2].isdigit()
+                and not re.search(r'-\d+CPU$', name))
+    if engine_type == 'rusty_multi':
+        return (name.startswith('v') and len(name) > 1 and name[1:2].isdigit()
+                and bool(re.search(r'-\d+CPU$', name)))
     if engine_type == 'stockfish':
         return name.startswith('sf')
     return True
@@ -659,3 +666,66 @@ def resolve_engine_name(shorthand: str, engine_dir: Path) -> str:
     else:
         print(f"Error: Ambiguous engine name '{shorthand}' matches: {', '.join(sorted(matches))}")
         sys.exit(1)
+
+
+_threads_support_cache = {}
+
+
+def check_threads_support(engine_cmd) -> bool:
+    """
+    Check if an engine supports the UCI Threads option.
+    Results are cached by command string.
+
+    Args:
+        engine_cmd: Path or list (for Java engines) to the engine binary
+
+    Returns:
+        True if the engine advertises a "Threads" option
+    """
+    import chess.engine
+
+    cache_key = str(engine_cmd)
+    if cache_key in _threads_support_cache:
+        return _threads_support_cache[cache_key]
+
+    try:
+        if isinstance(engine_cmd, list):
+            cmd = engine_cmd
+        else:
+            cmd = [str(engine_cmd)]
+
+        engine = chess.engine.SimpleEngine.popen_uci(cmd)
+        supports = "Threads" in engine.options
+        engine.quit()
+        _threads_support_cache[cache_key] = supports
+        return supports
+    except Exception:
+        _threads_support_cache[cache_key] = False
+        return False
+
+
+def resolve_engine_display_name(engine_name: str, engine_cmd, threads: int | None) -> str:
+    """
+    Resolve engine display name based on thread count and engine support.
+
+    If threads > 1 and the engine supports UCI Threads, appends '-XCPU' suffix.
+
+    Args:
+        engine_name: Original engine name
+        engine_cmd: Path or list to the engine binary
+        threads: Number of threads (None or <= 1 means no suffix)
+
+    Returns:
+        Potentially modified engine name with CPU suffix
+    """
+    if threads is None or threads <= 1:
+        return engine_name
+
+    # Already has a CPU suffix
+    if re.search(r'-\d+CPU$', engine_name):
+        return engine_name
+
+    if check_threads_support(engine_cmd):
+        return f"{engine_name}-{threads}CPU"
+
+    return engine_name

@@ -18,7 +18,7 @@ import chess.engine
 
 from compete.constants import PROVISIONAL_GAMES, DEFAULT_ELO
 from compete.database import load_elo_ratings, save_game_to_db, get_initial_elo, save_epd_test_run
-from compete.engine_manager import get_engine_info, get_active_engines
+from compete.engine_manager import get_engine_info, get_active_engines, resolve_engine_display_name
 from compete.game import play_game, calculate_elo_difference, GameConfig, GameResult, play_game_from_config
 from compete.openings import OPENING_BOOK, load_epd_positions, load_epd_for_solving
 from compete.epd import EpdPosition, SolveResult
@@ -37,6 +37,10 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
 
     engine1_path, engine1_uci_options = get_engine_info(engine1_name, engine_dir)
     engine2_path, engine2_uci_options = get_engine_info(engine2_name, engine_dir)
+
+    # Resolve display names for multi-CPU runs
+    engine1_name = resolve_engine_display_name(engine1_name, engine1_path, threads)
+    engine2_name = resolve_engine_display_name(engine2_name, engine2_path, threads)
 
     use_time_range = time_low is not None and time_high is not None
 
@@ -491,6 +495,12 @@ def run_league(engine_names: list[str], engine_dir: Path,
                concurrency: int = 1, threads: int = None):
     """Run a round-robin league with interleaved pairings."""
 
+    # Resolve display names for multi-CPU runs (before any other use of engine_names)
+    engine_info_raw = {name: get_engine_info(name, engine_dir) for name in engine_names}
+    engine_names = [resolve_engine_display_name(name, engine_info_raw[name][0], threads) for name in engine_names]
+    engine_info = {resolve_engine_display_name(name, engine_info_raw[name][0], threads): engine_info_raw[name]
+                   for name in engine_info_raw}
+
     pairings = list(combinations(engine_names, 2))
     num_pairings = len(pairings)
     use_time_range = time_low is not None and time_high is not None
@@ -561,9 +571,6 @@ def run_league(engine_names: list[str], engine_dir: Path,
             openings.extend(extra)
     else:
         openings = [(None, None)] * num_rounds
-
-    # Get engine paths and UCI options
-    engine_info = {name: get_engine_info(name, engine_dir) for name in engine_names}
 
     game_num = 0
     hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
@@ -770,6 +777,18 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
         print(f"Error: No opponent engines found in {engine_dir}")
         sys.exit(1)
 
+    # Get engine paths and UCI options, then resolve display names for multi-CPU
+    challenger_path, challenger_uci = get_engine_info(challenger_name, engine_dir)
+    challenger_name = resolve_engine_display_name(challenger_name, challenger_path, threads)
+    opponent_info = {}
+    resolved_opponents = []
+    for opp in opponents:
+        path, uci = get_engine_info(opp, engine_dir)
+        resolved_name = resolve_engine_display_name(opp, path, threads)
+        opponent_info[resolved_name] = (path, uci)
+        resolved_opponents.append(resolved_name)
+    opponents = resolved_opponents
+
     games_per_opponent = num_rounds * 2  # 2 games per round (1 white, 1 black)
     total_games = len(opponents) * games_per_opponent
 
@@ -815,10 +834,6 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
         prov = "?" if data["games"] < PROVISIONAL_GAMES else ""
         print(f"  {opp}: {data['elo']:.0f} ({data['games']} games){prov}")
     print()
-
-    # Get engine paths and UCI options
-    challenger_path, challenger_uci = get_engine_info(challenger_name, engine_dir)
-    opponent_info = {opp: get_engine_info(opp, engine_dir) for opp in opponents}
 
     # Track results per opponent
     results_per_opponent = {opp: {"wins": 0, "losses": 0, "draws": 0} for opp in opponents}
@@ -1109,6 +1124,8 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
                 engine1, engine2 = pick_engines()
                 engine1_path, engine1_uci = get_engine_info(engine1, engine_dir)
                 engine2_path, engine2_uci = get_engine_info(engine2, engine_dir)
+                engine1 = resolve_engine_display_name(engine1, engine1_path, threads)
+                engine2 = resolve_engine_display_name(engine2, engine2_path, threads)
 
                 if use_time_range:
                     match_time = random.uniform(time_low, time_high)
@@ -1175,6 +1192,8 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
             engine1, engine2 = pick_engines()
             engine1_path, engine1_uci = get_engine_info(engine1, engine_dir)
             engine2_path, engine2_uci = get_engine_info(engine2, engine_dir)
+            engine1 = resolve_engine_display_name(engine1, engine1_path, threads)
+            engine2 = resolve_engine_display_name(engine2, engine2_path, threads)
 
             if use_time_range:
                 match_time = random.uniform(time_low, time_high)

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from compete.constants import PROVISIONAL_GAMES
 from compete.database import load_elo_ratings, save_game_to_db, get_initial_elo
-from compete.engine_manager import get_engine_info, ensure_engines_initialized
+from compete.engine_manager import get_engine_info, ensure_engines_initialized, resolve_engine_display_name
 from compete.game import play_game, GameConfig, GameResult, play_game_from_config
 from compete.openings import OPENING_BOOK
 from compete.parallel import run_games_parallel
@@ -145,6 +145,10 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
     """
     engine1_path, engine1_uci = get_engine_info(engine1_name, engine_dir)
     engine2_path, engine2_uci = get_engine_info(engine2_name, engine_dir)
+
+    # Resolve display names for multi-CPU runs
+    engine1_name = resolve_engine_display_name(engine1_name, engine1_path, threads)
+    engine2_name = resolve_engine_display_name(engine2_name, engine2_path, threads)
 
     use_time_range = time_low is not None and time_high is not None
     hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
