@@ -59,16 +59,6 @@
                     </div>
 
                     <div class="filter-group">
-                        <form action="/force-recalculate" method="POST" style="display: inline;">
-                            <input type="hidden" name="min_time" value="{{ min_time }}">
-                            <input type="hidden" name="max_time" value="{{ max_time }}">
-                            <input type="hidden" name="hostname" value="{{ hostname or '' }}">
-                            <input type="hidden" name="engine_type" value="{{ engine_type or '' }}">
-                            <input type="hidden" name="all" value="{{ '1' if not active_only else '' }}">
-                            <input type="hidden" name="sort" value="{{ sort_column or '' }}">
-                            <input type="hidden" name="sort_dir" value="{{ sort_direction or '' }}">
-                            <button type="submit" class="reset-btn">Force Recalculate</button>
-                        </form>
                     </div>
                 </div>
 

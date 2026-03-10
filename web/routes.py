@@ -33,8 +33,8 @@ def register_routes(app):
         engine_type = request.args.get('engine_type') or None  # Empty string -> None
 
         # Get sort parameters (for preserving across refreshes)
-        sort_column = request.args.get('sort') or None
-        sort_direction = request.args.get('sort_dir') or None
+        sort_column = request.args.get('sort') or 'bayes'
+        sort_direction = request.args.get('sort_dir') or 'desc'
 
         # Get actual time range from database for slider defaults
         db_min_time, db_max_time = get_time_range()
@@ -48,6 +48,9 @@ def register_routes(app):
         # Ensure min <= max
         if min_time > max_time:
             min_time, max_time = max_time, min_time
+
+        # Recalculate all ratings (Elo, BayesElo, Ordo) on every refresh
+        recalculate_all_and_store(min_time, max_time, hostname, engine_type)
 
         engines, grid, column_headers, last_played = get_dashboard_data(
             active_only=active_only,
@@ -81,48 +84,6 @@ def register_routes(app):
             sort_column=sort_column,
             sort_direction=sort_direction
         )
-
-    @app.route('/force-recalculate', methods=['POST'])
-    def force_recalculate():
-        """Clear cache and recalculate all rating systems (Elo, BayesElo, Ordo)."""
-        # Get filter parameters from form
-        min_time = request.form.get('min_time', type=int)
-        max_time = request.form.get('max_time', type=int)
-        hostname = request.form.get('hostname') or None
-        engine_type = request.form.get('engine_type') or None
-        show_all = request.form.get('all') == '1'
-        sort_column = request.form.get('sort') or None
-        sort_direction = request.form.get('sort_dir') or None
-
-        # Get defaults from database
-        db_min_time, db_max_time = get_time_range()
-        if min_time is None:
-            min_time = db_min_time
-        if max_time is None:
-            max_time = db_max_time
-
-        # Recalculate all ratings for this filter
-        recalculate_all_and_store(min_time, max_time, hostname, engine_type)
-
-        # Build redirect URL with filter params
-        params = []
-        if show_all:
-            params.append('all=1')
-        if min_time != db_min_time:
-            params.append(f'min_time={min_time}')
-        if max_time != db_max_time:
-            params.append(f'max_time={max_time}')
-        if hostname:
-            params.append(f'hostname={hostname}')
-        if engine_type:
-            params.append(f'engine_type={engine_type}')
-        if sort_column:
-            params.append(f'sort={sort_column}')
-        if sort_direction:
-            params.append(f'sort_dir={sort_direction}')
-
-        redirect_url = '/?' + '&'.join(params) if params else '/'
-        return redirect(redirect_url)
 
     @app.route('/clear-cache', methods=['POST'])
     def clear_cache():
