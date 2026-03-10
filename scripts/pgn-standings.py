@@ -97,7 +97,10 @@ def show_standings(pgn_files):
     bayeselo = get_bayeselo_ratings(pgn_files)
 
     # Calculate Elo for each engine relative to the weakest
-    sorted_engines = sorted(results, key=lambda e: results[e]['pts'] / results[e]['games'], reverse=True)
+    if bayeselo:
+        sorted_engines = sorted(results, key=lambda e: bayeselo.get(e, 0), reverse=True)
+    else:
+        sorted_engines = sorted(results, key=lambda e: results[e]['pts'] / results[e]['games'], reverse=True)
     weakest = sorted_engines[-1]
     weakest_score = results[weakest]['pts'] / results[weakest]['games']
     base_elo = score_to_elo(weakest_score)
