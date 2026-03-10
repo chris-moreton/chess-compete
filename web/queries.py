@@ -488,8 +488,10 @@ def score_to_color(row_points: float, col_points: float) -> str:
     if abs(margin) < 0.001:
         return '#ffffff'  # Dead even = white
 
-    # Intensity from 0 (even) to 1 (100% win or loss)
-    intensity = min(1.0, abs(margin) / 0.5)
+    # Intensity from 0 (even) to 1 (full color at 20% margin i.e. 60-40)
+    # sqrt boosts visibility of small margins
+    intensity = min(1.0, abs(margin) / 0.2)
+    intensity = math.sqrt(intensity)
 
     if margin > 0:
         # Green: row engine winning
