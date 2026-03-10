@@ -460,59 +460,49 @@ def calculate_excess_deviation(deviation: float, num_games: int) -> float:
     return excess / tolerance
 
 
-def deviation_to_color(deviation: float, num_games: int) -> str:
+def score_to_color(row_points: float, col_points: float) -> str:
     """
-    Convert deviation from expected to a background color.
+    Convert head-to-head score to a background color.
 
-    - White/neutral if within tolerance of expected (normal variance)
-    - Green if overperforming (positive deviation beyond tolerance)
-    - Red if underperforming (negative deviation beyond tolerance)
+    - Green if row engine is winning (shaded by margin)
+    - Red if row engine is losing (shaded by margin)
+    - White if scores are equal (draw)
 
     Args:
-        deviation: Points above (positive) or below (negative) expected
-        num_games: Number of games played
+        row_points: Points scored by the row engine
+        col_points: Points scored by the column engine
 
     Returns:
         CSS color string
     """
-    if num_games == 0:
-        return '#f5f5f5'  # No games - neutral gray
+    total = row_points + col_points
+    if total == 0:
+        return '#f5f5f5'
 
-    # Tolerance based on statistical variance
-    # Standard deviation of game outcomes ≈ 0.5 * sqrt(n)
-    # Use ~1 standard deviation as tolerance (generous)
-    tolerance = 0.5 * math.sqrt(num_games)
-    # Minimum tolerance of 1.0 points for very small sample sizes
-    tolerance = max(1.0, tolerance)
+    # Win percentage for row engine: 0.0 (all losses) to 1.0 (all wins)
+    win_pct = row_points / total
 
-    # If within tolerance, return neutral white
-    if abs(deviation) <= tolerance:
-        return '#ffffff'
+    # Margin from 50%: 0.0 = even, 0.5 = maximum
+    margin = win_pct - 0.5
 
-    # Calculate excess deviation beyond tolerance
-    excess = abs(deviation) - tolerance
+    if abs(margin) < 0.001:
+        return '#ffffff'  # Dead even = white
 
-    # Scale intensity: how much beyond tolerance relative to expected variance
-    # Use 2 more standard deviations as the range for full intensity
-    # So total range is 1 SD (tolerance) to 3 SD (full color)
-    full_intensity_threshold = tolerance * 2  # 2 more SDs
-    intensity = min(1.0, excess / full_intensity_threshold)
+    # Intensity from 0 (even) to 1 (100% win or loss)
+    intensity = min(1.0, abs(margin) / 0.5)
 
-    # Apply sqrt to make gradients more visible at lower intensities
-    intensity = math.sqrt(intensity)
-
-    if deviation > 0:
-        # Green: overperforming
+    if margin > 0:
+        # Green: row engine winning
         # From white (#ffffff) to green (#4caf50)
-        r = int(255 - (255 - 76) * intensity)   # 255 -> 76
-        g = int(255 - (255 - 175) * intensity)  # 255 -> 175
-        b = int(255 - (255 - 80) * intensity)   # 255 -> 80
+        r = int(255 - (255 - 76) * intensity)
+        g = int(255 - (255 - 175) * intensity)
+        b = int(255 - (255 - 80) * intensity)
     else:
-        # Red: underperforming
+        # Red: row engine losing
         # From white (#ffffff) to red (#e57373)
-        r = int(255 - (255 - 229) * intensity)  # 255 -> 229
-        g = int(255 - (255 - 115) * intensity)  # 255 -> 115
-        b = int(255 - (255 - 115) * intensity)  # 255 -> 115
+        r = int(255 - (255 - 229) * intensity)
+        g = int(255 - (255 - 115) * intensity)
+        b = int(255 - (255 - 115) * intensity)
 
     return f'rgb({r}, {g}, {b})'
 
@@ -591,11 +581,8 @@ def build_h2h_grid(engines, h2h_raw):
             total_excess_deviation += excess * total_games
             total_opponent_games += total_games
 
-            # Color based purely on deviation from expected:
-            # - Within tolerance -> white
-            # - Overperforming (positive) -> green
-            # - Underperforming (negative) -> red
-            bg_color = deviation_to_color(deviation, total_games)
+            # Color based on whether row engine is winning or losing
+            bg_color = score_to_color(row_points, col_points)
 
             # Build tooltip with more detail
             expected_str = f"{expected_row:.1f}"
