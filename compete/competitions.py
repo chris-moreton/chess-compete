@@ -422,7 +422,7 @@ def run_epd(engine_names: list[str], engine_dir: Path, epd_file: Path,
 
             # Game 1: engine1 as white
             game_num += 1
-            result, game = play_game(
+            result, game, _ = play_game(
                 engine1["path"], engine2["path"],
                 engine1_name, engine2_name,
                 time_per_move, fen, pos_id,
@@ -451,7 +451,7 @@ def run_epd(engine_names: list[str], engine_dir: Path, epd_file: Path,
 
             # Game 2: engine2 as white (swap colors)
             game_num += 1
-            result, game = play_game(
+            result, game, _ = play_game(
                 engine2["path"], engine1["path"],
                 engine2_name, engine1_name,
                 time_per_move, fen, pos_id,
@@ -703,7 +703,7 @@ def run_league(engine_names: list[str], engine_dir: Path,
                     white_path, white_uci = engine_info[white]
                     black_path, black_uci = engine_info[black]
 
-                    result, game = play_game(white_path, black_path, white, black,
+                    result, game, _ = play_game(white_path, black_path, white, black,
                                              round_time, opening_fen, opening_name,
                                              white_uci, black_uci, threads=threads)
 
@@ -1223,7 +1223,7 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
 
             # Game 1: engine1 as white
             opening_fen, opening_name = random.choice(OPENING_BOOK)
-            result, game = play_game(engine1_path, engine2_path,
+            result, game, _ = play_game(engine1_path, engine2_path,
                                       engine1, engine2,
                                       match_time, opening_fen, opening_name,
                                       engine1_uci, engine2_uci, threads=threads)
@@ -1264,7 +1264,7 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
 
             # Game 2: engine2 as white
             opening_fen, opening_name = random.choice(OPENING_BOOK)
-            result, game = play_game(engine2_path, engine1_path,
+            result, game, _ = play_game(engine2_path, engine1_path,
                                       engine2, engine1,
                                       match_time, opening_fen, opening_name,
                                       engine2_uci, engine1_uci, threads=threads)

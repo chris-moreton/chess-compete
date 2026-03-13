@@ -28,6 +28,7 @@ class GameStatus:
     move_count: int = 0
     nps: Optional[int] = None
     result: Optional[str] = None
+    adjudicated: Optional[str] = None  # "resign", "draw", "maxmoves"
     finished: bool = False
 
 
@@ -104,13 +105,14 @@ class ProgressDisplay:
             if game_index in self.games:
                 self.games[game_index].move_count = move_count
 
-    def finish_game(self, game_index: int, result: str, nps: Optional[int] = None, is_engine1_white: Optional[bool] = None):
+    def finish_game(self, game_index: int, result: str, nps: Optional[int] = None, is_engine1_white: Optional[bool] = None, adjudicated: Optional[str] = None):
         """Record that a game has finished."""
         with self.lock:
             if game_index in self.games:
                 game = self.games[game_index]
                 game.finished = True
                 game.result = result
+                game.adjudicated = adjudicated
                 if nps:
                     game.nps = nps
                 self.completed_count += 1
@@ -154,7 +156,11 @@ class ProgressDisplay:
         """Format a single game's status line."""
         if status.finished:
             progress = 1.0
-            result_str = f" ({status.result})" if status.result else " (done)"
+            if status.result:
+                adj_tag = f" adj:{status.adjudicated}" if status.adjudicated else ""
+                result_str = f" ({status.result}{adj_tag})"
+            else:
+                result_str = " (done)"
         else:
             progress = min(1.0, status.move_count / EXPECTED_MOVES)
             result_str = ""
@@ -357,7 +363,7 @@ def run_games_parallel(
                     elif result.black_nps:
                         nps = result.black_nps
 
-                    progress.finish_game(game_idx, result.result, nps, result.is_engine1_white)
+                    progress.finish_game(game_idx, result.result, nps, result.is_engine1_white, result.adjudicated)
                     on_game_complete(config, result)
                     completed += 1
                     if result.result in results:

@@ -168,7 +168,7 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
         # Random opening for each game
         opening_fen, opening_name = random.choice(OPENING_BOOK)
 
-        result, game = play_game(white_path, black_path, white_name, black_name,
+        result, game, _ = play_game(white_path, black_path, white_name, black_name,
                                  game_time, opening_fen, opening_name,
                                  white_uci, black_uci, threads=threads)
 

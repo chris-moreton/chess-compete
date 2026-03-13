@@ -541,7 +541,7 @@ def run_spsa_games(
                         else:
                             outcome = "plus_win" if result.result == "0-1" else "minus_win" if result.result == "1-0" else "draw"
 
-                        progress.finish_game(config.game_index, result.result, nps, outcome)
+                        progress.finish_game(config.game_index, result.result, nps, outcome, result.adjudicated)
                         game_result = process_result(config, result)
 
                         # Report this single game to server, get remaining count
@@ -590,7 +590,7 @@ def run_spsa_games(
         while keep_going:
             try:
                 config = make_config(game_index, game_index)
-                result, _ = play_game(
+                result, _, _ = play_game(
                     config.white_path, config.black_path,
                     config.white_name, config.black_name,
                     config.time_per_move, config.opening_fen, config.opening_name,
@@ -798,7 +798,7 @@ def run_ref_games(
                         else:
                             outcome = "win" if result.result == "0-1" else "loss" if result.result == "1-0" else "draw"
 
-                        progress.finish_game(config.game_index, result.result, nps, outcome)
+                        progress.finish_game(config.game_index, result.result, nps, outcome, result.adjudicated)
                         game_result = process_result(config, result)
 
                         # Report this single game to server, get remaining count
@@ -847,7 +847,7 @@ def run_ref_games(
         while keep_going:
             try:
                 config = make_config(game_index, game_index)
-                result, _ = play_game(
+                result, _, _ = play_game(
                     config.white_path, config.black_path,
                     config.white_name, config.black_name,
                     config.time_per_move, config.opening_fen, config.opening_name,

@@ -25,6 +25,7 @@ class GameStatus:
     move_count: int = 0  # Current move count (plies)
     nps: Optional[int] = None
     result: Optional[str] = None  # "1-0", "0-1", "1/2-1/2"
+    adjudicated: Optional[str] = None  # "resign", "draw", "maxmoves"
     finished: bool = False
 
 
@@ -97,7 +98,7 @@ class ProgressDisplay:
                 self.games[game_index].move_count = move_count
 
     def finish_game(self, game_index: int, result: str, nps: Optional[int] = None,
-                    outcome: Optional[str] = None):
+                    outcome: Optional[str] = None, adjudicated: Optional[str] = None):
         """Record that a game has finished.
 
         Args:
@@ -107,12 +108,14 @@ class ProgressDisplay:
             outcome: Interpreted outcome for stats tracking:
                      SPSA: "plus_win", "minus_win", "draw"
                      Ref: "win", "loss", "draw"
+            adjudicated: Adjudication type if game was adjudicated
         """
         with self.lock:
             if game_index in self.games:
                 game = self.games[game_index]
                 game.finished = True
                 game.result = result
+                game.adjudicated = adjudicated
                 if nps:
                     game.nps = nps
                 self.completed_count += 1
@@ -145,7 +148,11 @@ class ProgressDisplay:
         if status.finished:
             # Show full bar with result
             progress = 1.0
-            result_str = f" ({status.result})" if status.result else " (done)"
+            if status.result:
+                adj_tag = f" adj:{status.adjudicated}" if status.adjudicated else ""
+                result_str = f" ({status.result}{adj_tag})"
+            else:
+                result_str = " (done)"
         else:
             # Show progress based on move count (typical game ~80 plies)
             progress = min(1.0, status.move_count / EXPECTED_MOVES)
