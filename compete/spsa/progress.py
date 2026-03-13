@@ -56,6 +56,7 @@ class ProgressDisplay:
         self.running = False
         self.lines_printed = 0
         self.completed_count = 0
+        self.timemult: Optional[float] = None
         # Track results separately for SPSA and reference games
         # SPSA: plus_win, minus_win, draw (from plus engine's perspective)
         # Ref: win, loss, draw (from base engine's perspective)
@@ -221,7 +222,8 @@ class ProgressDisplay:
                 ref_str = f" | Ref: {ref_w}W-{ref_l}L-{ref_d}D"
             else:
                 ref_str = ""
-            lines.append(f"  [{self.completed_count} done: {spsa_str}{ref_str} | {active_count} active]")
+            tm_str = f" | tm={self.timemult:.3f}" if self.timemult is not None else ""
+            lines.append(f"  [{self.completed_count} done: {spsa_str}{ref_str} | {active_count} active{tm_str}]")
 
         return lines
 

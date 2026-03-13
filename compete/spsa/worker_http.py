@@ -486,12 +486,9 @@ def run_spsa_games(
             else:
                 nps_val = result.black_nps or result.white_nps
             if nps_val:
-                old_timemult = batch_timemult
                 recent_nps.append(nps_val)
                 avg_nps = sum(recent_nps) / len(recent_nps)
                 batch_timemult = CALIBRATION_TARGET_NPS / avg_nps
-                if old_timemult is None or abs(batch_timemult - old_timemult) / max(old_timemult, 0.001) > 0.05:
-                    print(f"  Timemult updated: {batch_timemult:.3f} (avg NPS: {avg_nps:,.0f}, window: {len(recent_nps)})")
 
         # Include timemult from batch calibration or per-game calibration
         if batch_timemult is not None:
@@ -553,6 +550,8 @@ def run_spsa_games(
 
                         progress.finish_game(config.game_index, result.result, nps, outcome, result.adjudicated)
                         game_result = process_result(config, result)
+                        if batch_timemult is not None:
+                            progress.timemult = batch_timemult
 
                         # Report this single game to server, get remaining count
                         remaining = on_game_complete(game_result)
@@ -753,12 +752,9 @@ def run_ref_games(
             else:
                 nps_val = result.black_nps
             if nps_val:
-                old_timemult = batch_timemult
                 recent_nps.append(nps_val)
                 avg_nps = sum(recent_nps) / len(recent_nps)
                 batch_timemult = CALIBRATION_TARGET_NPS / avg_nps
-                if old_timemult is None or abs(batch_timemult - old_timemult) / max(old_timemult, 0.001) > 0.05:
-                    print(f"  Timemult updated: {batch_timemult:.3f} (avg NPS: {avg_nps:,.0f}, window: {len(recent_nps)})")
 
         # Include timemult from batch calibration or per-game calibration
         if batch_timemult is not None:
@@ -820,6 +816,8 @@ def run_ref_games(
 
                         progress.finish_game(config.game_index, result.result, nps, outcome, result.adjudicated)
                         game_result = process_result(config, result)
+                        if batch_timemult is not None:
+                            progress.timemult = batch_timemult
 
                         # Report this single game to server, get remaining count
                         remaining = on_game_complete(game_result)
