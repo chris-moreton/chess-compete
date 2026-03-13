@@ -36,7 +36,7 @@ try:
 except ImportError:
     import tomli as tomllib
 
-from compete.game import play_game, GameConfig, play_game_from_config, calibrate_nps, CALIBRATION_TARGET_NPS
+from compete.game import play_game, GameConfig, play_game_from_config, calibrate_nps, CALIBRATION_TARGET_NPS, CALIBRATION_MIN_TIME_PER_MOVE
 from compete.openings import OPENING_BOOK
 from compete.spsa.build import build_spsa_engines, build_engine, get_rusty_rival_path
 from compete.spsa.progress import ProgressDisplay
@@ -389,11 +389,23 @@ def run_spsa_games(
     plus_nps_count = 0
     minus_nps_count = 0
 
+    # Calibrate once upfront if auto_timemult is enabled
+    batch_timemult = None
+    if auto_timemult:
+        nps, batch_timemult = calibrate_nps(plus_path)
+        if nps > 0:
+            print(f"  Calibrated: {nps:,} NPS, timemult={batch_timemult}")
+        else:
+            print(f"  Calibration failed, using timemult=1.0")
+            batch_timemult = 1.0
+
     def make_config(game_index: int, game_num: int) -> GameConfig:
         """Create a SPSA game config (plus vs minus)."""
         opening_fen, opening_name = random.choice(OPENING_BOOK)
         time_ms = random.uniform(timelow_ms, timehigh_ms)
         time_per_move = time_ms / 1000.0
+        if batch_timemult is not None:
+            time_per_move = max(time_per_move * batch_timemult, CALIBRATION_MIN_TIME_PER_MOVE)
 
         # Alternate colors based on game number
         if game_num % 2 == 0:
@@ -471,8 +483,10 @@ def run_spsa_games(
                 plus_nps_count += 1
                 game_result['avg_nps'] = result.black_nps
 
-        # Include timemult if calibration was used
-        if hasattr(result, 'timemult') and result.timemult is not None:
+        # Include timemult from batch calibration or per-game calibration
+        if batch_timemult is not None:
+            game_result['timemult'] = batch_timemult
+        elif hasattr(result, 'timemult') and result.timemult is not None:
             game_result['timemult'] = result.timemult
 
         return game_result
@@ -494,15 +508,12 @@ def run_spsa_games(
             pending_futures = {}  # future -> config
             next_game_index = 0
 
-            # Determine calibration engine path for this run
-            cal_path = plus_path if auto_timemult else None
-
             # Submit initial games up to concurrency limit (capped by max_games)
             initial_limit = concurrency if max_games <= 0 else min(concurrency, max_games)
             while next_game_index < initial_limit:
                 config = make_config(next_game_index, next_game_index)
                 callback = make_move_callback(next_game_index)
-                future = executor.submit(play_game_from_config, config, callback, cal_path)
+                future = executor.submit(play_game_from_config, config, callback)
                 pending_futures[future] = config
                 progress.start_game(next_game_index, 'spsa')
                 next_game_index += 1
@@ -556,7 +567,7 @@ def run_spsa_games(
                         elif keep_adding and (max_games <= 0 or next_game_index < max_games):
                             new_config = make_config(next_game_index, next_game_index)
                             callback = make_move_callback(next_game_index)
-                            new_future = executor.submit(play_game_from_config, new_config, callback, cal_path)
+                            new_future = executor.submit(play_game_from_config, new_config, callback)
                             pending_futures[new_future] = new_config
                             progress.start_game(next_game_index, 'spsa')
                             next_game_index += 1
@@ -582,7 +593,8 @@ def run_spsa_games(
                 result, _ = play_game(
                     config.white_path, config.black_path,
                     config.white_name, config.black_name,
-                    config.time_per_move, config.opening_fen, config.opening_name
+                    config.time_per_move, config.opening_fen, config.opening_name,
+                    config.white_uci_options, config.black_uci_options
                 )
                 # Create a minimal result object for processing
                 class MinResult:
@@ -646,11 +658,23 @@ def run_ref_games(
     # Totals
     total = {'wins': 0, 'losses': 0, 'draws': 0, 'errors': 0}
 
+    # Calibrate once upfront if auto_timemult is enabled
+    batch_timemult = None
+    if auto_timemult:
+        nps, batch_timemult = calibrate_nps(base_path)
+        if nps > 0:
+            print(f"  Calibrated: {nps:,} NPS, timemult={batch_timemult}")
+        else:
+            print(f"  Calibration failed, using timemult=1.0")
+            batch_timemult = 1.0
+
     def make_config(game_index: int, game_num: int) -> GameConfig:
         """Create a reference game config (base vs stockfish)."""
         opening_fen, opening_name = random.choice(OPENING_BOOK)
         time_ms = random.uniform(timelow_ms, timehigh_ms)
         time_per_move = time_ms / 1000.0
+        if batch_timemult is not None:
+            time_per_move = max(time_per_move * batch_timemult, CALIBRATION_MIN_TIME_PER_MOVE)
 
         # Alternate colors based on game number
         if game_num % 2 == 0:
@@ -716,8 +740,10 @@ def run_ref_games(
             if result.black_nps:
                 game_result['avg_nps'] = result.black_nps
 
-        # Include timemult if calibration was used
-        if hasattr(result, 'timemult') and result.timemult is not None:
+        # Include timemult from batch calibration or per-game calibration
+        if batch_timemult is not None:
+            game_result['timemult'] = batch_timemult
+        elif hasattr(result, 'timemult') and result.timemult is not None:
             game_result['timemult'] = result.timemult
 
         return game_result
@@ -739,15 +765,12 @@ def run_ref_games(
             pending_futures = {}  # future -> config
             next_game_index = 0
 
-            # Determine calibration engine path for this run (base engine, not Stockfish)
-            cal_path = base_path if auto_timemult else None
-
             # Submit initial games up to concurrency limit (capped by max_games)
             initial_limit = concurrency if max_games <= 0 else min(concurrency, max_games)
             while next_game_index < initial_limit:
                 config = make_config(next_game_index, next_game_index)
                 callback = make_move_callback(next_game_index)
-                future = executor.submit(play_game_from_config, config, callback, cal_path)
+                future = executor.submit(play_game_from_config, config, callback)
                 pending_futures[future] = config
                 progress.start_game(next_game_index, 'ref')
                 next_game_index += 1
@@ -801,7 +824,7 @@ def run_ref_games(
                         elif keep_adding and (max_games <= 0 or next_game_index < max_games):
                             new_config = make_config(next_game_index, next_game_index)
                             callback = make_move_callback(next_game_index)
-                            new_future = executor.submit(play_game_from_config, new_config, callback, cal_path)
+                            new_future = executor.submit(play_game_from_config, new_config, callback)
                             pending_futures[new_future] = new_config
                             progress.start_game(next_game_index, 'ref')
                             next_game_index += 1
@@ -924,7 +947,7 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
     print(f"API URL: {api_url}")
     print(f"Concurrency: {concurrency} games in parallel")
     if auto_timemult:
-        print(f"Time multiplier: AUTO (calibrate before each game, target {CALIBRATION_TARGET_NPS:,} NPS)")
+        print(f"Time multiplier: AUTO (calibrate once per batch, target {CALIBRATION_TARGET_NPS:,} NPS)")
     elif time_mult != 1.0:
         print(f"Time multiplier: {time_mult}x")
     print(f"Poll interval: {poll_interval}s when idle")

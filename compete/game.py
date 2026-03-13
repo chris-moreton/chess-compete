@@ -69,7 +69,7 @@ def calibrate_nps(engine_path: str) -> tuple[int, float]:
         cmd = engine_path if isinstance(engine_path, list) else str(engine_path)
         engine = chess.engine.SimpleEngine.popen_uci(cmd, stderr=subprocess.DEVNULL)
         board = chess.Board()
-        info = engine.analyse(board, chess.engine.Limit(depth=CALIBRATION_DEPTH))
+        info = engine.analyse(board, chess.engine.Limit(depth=CALIBRATION_DEPTH, time=10))
         engine.quit()
 
         nodes = info.get("nodes", 0)
