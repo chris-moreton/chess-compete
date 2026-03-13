@@ -14,6 +14,7 @@ Environment variables (can be set in .env file):
     COMPUTER_NAME: Optional hostname identifier for logging
 """
 
+import collections
 import os
 import random
 import socket
@@ -36,7 +37,7 @@ try:
 except ImportError:
     import tomli as tomllib
 
-from compete.game import play_game, GameConfig, play_game_from_config, calibrate_nps, CALIBRATION_TARGET_NPS, CALIBRATION_MIN_TIME_PER_MOVE
+from compete.game import play_game, GameConfig, play_game_from_config, CALIBRATION_TARGET_NPS, CALIBRATION_MIN_TIME_PER_MOVE
 from compete.openings import OPENING_BOOK
 from compete.spsa.build import build_spsa_engines, build_engine, get_rusty_rival_path
 from compete.spsa.progress import ProgressDisplay
@@ -389,15 +390,9 @@ def run_spsa_games(
     plus_nps_count = 0
     minus_nps_count = 0
 
-    # Calibrate once upfront if auto_timemult is enabled
+    # Rolling NPS-based timemult (replaces upfront calibration)
     batch_timemult = None
-    if auto_timemult:
-        nps, batch_timemult = calibrate_nps(plus_path)
-        if nps > 0:
-            print(f"  Calibrated: {nps:,} NPS, timemult={batch_timemult}")
-        else:
-            print(f"  Calibration failed, using timemult=1.0")
-            batch_timemult = 1.0
+    recent_nps = collections.deque(maxlen=10) if auto_timemult else None
 
     def make_config(game_index: int, game_num: int) -> GameConfig:
         """Create a SPSA game config (plus vs minus)."""
@@ -439,7 +434,7 @@ def run_spsa_games(
 
     def process_result(config: GameConfig, result) -> dict:
         """Process a completed SPSA game result. Returns single-game result dict."""
-        nonlocal plus_nps_total, minus_nps_total, plus_nps_count, minus_nps_count
+        nonlocal plus_nps_total, minus_nps_total, plus_nps_count, minus_nps_count, batch_timemult
 
         game_result = {'plus_wins': 0, 'minus_wins': 0, 'draws': 0}
 
@@ -482,6 +477,21 @@ def run_spsa_games(
                 plus_nps_total += result.black_nps
                 plus_nps_count += 1
                 game_result['avg_nps'] = result.black_nps
+
+        # Update rolling NPS and recompute timemult
+        if recent_nps is not None:
+            # Collect NPS from both engines (same engine code)
+            if config.is_engine1_white:
+                nps_val = result.white_nps or result.black_nps
+            else:
+                nps_val = result.black_nps or result.white_nps
+            if nps_val:
+                old_timemult = batch_timemult
+                recent_nps.append(nps_val)
+                avg_nps = sum(recent_nps) / len(recent_nps)
+                batch_timemult = CALIBRATION_TARGET_NPS / avg_nps
+                if old_timemult is None or abs(batch_timemult - old_timemult) / max(old_timemult, 0.001) > 0.05:
+                    print(f"  Timemult updated: {batch_timemult:.3f} (avg NPS: {avg_nps:,.0f}, window: {len(recent_nps)})")
 
         # Include timemult from batch calibration or per-game calibration
         if batch_timemult is not None:
@@ -658,15 +668,9 @@ def run_ref_games(
     # Totals
     total = {'wins': 0, 'losses': 0, 'draws': 0, 'errors': 0}
 
-    # Calibrate once upfront if auto_timemult is enabled
+    # Rolling NPS-based timemult (replaces upfront calibration)
     batch_timemult = None
-    if auto_timemult:
-        nps, batch_timemult = calibrate_nps(base_path)
-        if nps > 0:
-            print(f"  Calibrated: {nps:,} NPS, timemult={batch_timemult}")
-        else:
-            print(f"  Calibration failed, using timemult=1.0")
-            batch_timemult = 1.0
+    recent_nps = collections.deque(maxlen=10) if auto_timemult else None
 
     def make_config(game_index: int, game_num: int) -> GameConfig:
         """Create a reference game config (base vs stockfish)."""
@@ -708,6 +712,7 @@ def run_ref_games(
 
     def process_result(config: GameConfig, result) -> dict:
         """Process a completed reference game result. Returns single-game result dict."""
+        nonlocal batch_timemult
         game_result = {'wins': 0, 'losses': 0, 'draws': 0}
 
         # Determine result from base engine's perspective
@@ -739,6 +744,21 @@ def run_ref_games(
             # Track base engine NPS (black)
             if result.black_nps:
                 game_result['avg_nps'] = result.black_nps
+
+        # Update rolling NPS and recompute timemult
+        if recent_nps is not None:
+            # Use base engine NPS (not stockfish)
+            if config.is_engine1_white:
+                nps_val = result.white_nps
+            else:
+                nps_val = result.black_nps
+            if nps_val:
+                old_timemult = batch_timemult
+                recent_nps.append(nps_val)
+                avg_nps = sum(recent_nps) / len(recent_nps)
+                batch_timemult = CALIBRATION_TARGET_NPS / avg_nps
+                if old_timemult is None or abs(batch_timemult - old_timemult) / max(old_timemult, 0.001) > 0.05:
+                    print(f"  Timemult updated: {batch_timemult:.3f} (avg NPS: {avg_nps:,.0f}, window: {len(recent_nps)})")
 
         # Include timemult from batch calibration or per-game calibration
         if batch_timemult is not None:
@@ -947,7 +967,7 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
     print(f"API URL: {api_url}")
     print(f"Concurrency: {concurrency} games in parallel")
     if auto_timemult:
-        print(f"Time multiplier: AUTO (calibrate once per batch, target {CALIBRATION_TARGET_NPS:,} NPS)")
+        print(f"Time multiplier: AUTO (rolling NPS window, target {CALIBRATION_TARGET_NPS:,} NPS)")
     elif time_mult != 1.0:
         print(f"Time multiplier: {time_mult}x")
     print(f"Poll interval: {poll_interval}s when idle")
