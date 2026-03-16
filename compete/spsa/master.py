@@ -156,6 +156,12 @@ DEFAULT_PARAMS = {
 }
 
 
+DEFAULT_GROUP_ORDER = [
+    'search-pruning', 'reductions-extensions', 'move-ordering',
+    'evaluation', 'piece-values', 'king-play', 'passed-pawns', 'piece-activity',
+]
+
+
 def with_db_retry(func, max_retries=5, retry_delay=10):
     """Execute a database operation with retry logic."""
     last_error = None
@@ -330,7 +336,9 @@ def create_iteration(run_id: int, iteration_number: int, effective_iteration: in
                      ref_path: str | None, ref_target_games: int,
                      timelow: float, timehigh: float, games_per_iteration: int,
                      base_params: dict, plus_params: dict,
-                     minus_params: dict, signs: dict) -> int:
+                     minus_params: dict, signs: dict,
+                     tc_moves: int = None, tc_base_seconds: float = None,
+                     tc_increment: float = None) -> int:
     """
     Create a new SPSA iteration record in the database.
 
@@ -371,6 +379,9 @@ def create_iteration(run_id: int, iteration_number: int, effective_iteration: in
                 plus_parameters=plus_params,
                 minus_parameters=minus_params,
                 perturbation_signs=signs,
+                tc_moves=tc_moves,
+                tc_base_seconds=tc_base_seconds,
+                tc_increment=tc_increment,
             )
             db.session.add(iteration)
             db.session.commit()
@@ -871,6 +882,62 @@ def migrate_database():
             except Exception:
                 db.session.rollback()
 
+        # Add auto-cycle columns to spsa_runs
+        try:
+            db.session.execute(db.text("SELECT auto_cycle FROM spsa_runs LIMIT 1"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            print("  Adding auto-cycle columns to spsa_runs...")
+            for col_name, col_type in [
+                ("auto_cycle", "BOOLEAN NOT NULL DEFAULT FALSE"),
+                ("iterations_per_group", "INTEGER NOT NULL DEFAULT 50"),
+                ("cycle_group_order", "JSON"),
+                ("parent_run_id", "INTEGER REFERENCES spsa_runs(id)"),
+                ("cycle_sequence", "INTEGER"),
+            ]:
+                db.session.execute(db.text(
+                    f"ALTER TABLE spsa_runs ADD COLUMN {col_name} {col_type}"
+                ))
+            db.session.commit()
+            print("  Auto-cycle columns added.")
+
+        # Add incremental TC columns to spsa_runs
+        try:
+            db.session.execute(db.text("SELECT tc_moves FROM spsa_runs LIMIT 1"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            print("  Adding incremental TC columns to spsa_runs...")
+            for col_name, col_type in [
+                ("tc_moves", "INTEGER"),
+                ("tc_base_seconds", "DOUBLE PRECISION"),
+                ("tc_increment", "DOUBLE PRECISION"),
+            ]:
+                db.session.execute(db.text(
+                    f"ALTER TABLE spsa_runs ADD COLUMN {col_name} {col_type}"
+                ))
+            db.session.commit()
+            print("  Incremental TC columns added to spsa_runs.")
+
+        # Add incremental TC columns to spsa_iterations
+        try:
+            db.session.execute(db.text("SELECT tc_moves FROM spsa_iterations LIMIT 1"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            print("  Adding incremental TC columns to spsa_iterations...")
+            for col_name, col_type in [
+                ("tc_moves", "INTEGER"),
+                ("tc_base_seconds", "DOUBLE PRECISION"),
+                ("tc_increment", "DOUBLE PRECISION"),
+            ]:
+                db.session.execute(db.text(
+                    f"ALTER TABLE spsa_iterations ADD COLUMN {col_name} {col_type}"
+                ))
+            db.session.commit()
+            print("  Incremental TC columns added to spsa_iterations.")
+
         # Ensure a "Default" template run exists
         default_exists = db.session.execute(
             db.text("SELECT 1 FROM spsa_runs WHERE name = 'Default' LIMIT 1")
@@ -1094,6 +1161,28 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
     else:
         print(f"  All groups active ({sum(available_groups.values())} params)")
 
+    # Auto-cycle mode
+    auto_cycle = False
+    iterations_per_group = 50
+    cycle_choice = input("\nEnable auto-cycling through parameter groups? (y/N): ").strip().lower()
+    if cycle_choice == 'y':
+        auto_cycle = True
+        iterations_per_group = _prompt_int("Iterations per group", 50)
+        max_iterations = iterations_per_group  # Override: first group gets this many
+        print(f"  Auto-cycle enabled: {iterations_per_group} iterations per group")
+        print(f"  Group order: {', '.join(DEFAULT_GROUP_ORDER)}")
+
+    # Incremental time control
+    tc_moves = None
+    tc_base_seconds = None
+    tc_increment = None
+    tc_choice = input("\nUse incremental time control? (y/N): ").strip().lower()
+    if tc_choice == 'y':
+        tc_moves = _prompt_int("Moves per TC period", 40)
+        tc_base_seconds = _prompt_float("Base time (seconds)", 60.0)
+        tc_increment = _prompt_float("Increment per move (seconds)", 1.0)
+        print(f"  Incremental TC: {tc_moves} moves in {tc_base_seconds}s + {tc_increment}s/move")
+
     # Mark any incomplete iterations on existing runs as complete
     from web.models import SpsaIteration
     incomplete_iters = SpsaIteration.query.filter(
@@ -1119,6 +1208,11 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
         max_gradient_factor=settings_source.max_gradient_factor,
         ref_enabled=settings_source.ref_enabled, ref_ratio=settings_source.ref_ratio,
         active_groups=selected_groups,
+        auto_cycle=auto_cycle,
+        iterations_per_group=iterations_per_group,
+        tc_moves=tc_moves,
+        tc_base_seconds=tc_base_seconds,
+        tc_increment=tc_increment,
     )
     db.session.add(new_run)
     db.session.flush()  # get ID
@@ -1161,6 +1255,108 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
     param_count = SpsaParam.query.filter_by(run_id=new_run.id).count()
     print(f"  Created run '{run_name}' (id={new_run.id}) with {param_count} params")
     return new_run.id, new_run.name
+
+
+def _get_next_cycle_group(run_settings: dict) -> tuple[str, int]:
+    """
+    Determine the next group to tune in the auto-cycle sequence.
+
+    Returns (next_group_name, next_cycle_sequence).
+    """
+    group_order = run_settings.get('cycle_group_order') or DEFAULT_GROUP_ORDER
+    current_seq = run_settings.get('cycle_sequence')
+    if current_seq is None:
+        current_seq = -1
+    next_seq = (current_seq + 1) % len(group_order)
+    return group_order[next_seq], next_seq
+
+
+def _create_cycle_run(previous_run_id: int, next_group: str, cycle_sequence: int) -> tuple[int, str]:
+    """
+    Non-interactively create a new run for the next auto-cycle group.
+
+    Copies all settings and tuned parameter values from the previous run,
+    sets active_groups to [next_group], deactivates the old run, and activates the new one.
+
+    Returns (new_run_id, new_run_name).
+    """
+    from web.app import create_app
+    from web.database import db
+    from web.models import SpsaRun, SpsaParam, SpsaIteration
+
+    def _create():
+        app = create_app()
+        with app.app_context():
+            prev_run = db.session.get(SpsaRun, previous_run_id)
+            if not prev_run:
+                raise RuntimeError(f"Previous run {previous_run_id} not found!")
+
+            # Determine the root parent for lineage tracking
+            parent_id = prev_run.parent_run_id or prev_run.id
+
+            run_name = f"Auto-cycle: {next_group} (from run {previous_run_id})"
+
+            # Mark any incomplete iterations as complete
+            incomplete_iters = SpsaIteration.query.filter(
+                SpsaIteration.run_id == previous_run_id,
+                SpsaIteration.status.in_(['pending', 'in_progress', 'building', 'ref_pending'])
+            ).all()
+            for it in incomplete_iters:
+                it.status = 'complete'
+                it.completed_at = datetime.utcnow()
+
+            # Deactivate all runs
+            SpsaRun.query.update({SpsaRun.is_active: False})
+
+            new_run = SpsaRun(
+                name=run_name,
+                is_active=True,
+                timelow=prev_run.timelow,
+                timehigh=prev_run.timehigh,
+                games_per_iteration=prev_run.games_per_iteration,
+                max_iterations=prev_run.iterations_per_group,
+                spsa_a=prev_run.spsa_a,
+                spsa_c=prev_run.spsa_c,
+                spsa_big_a=prev_run.spsa_big_a,
+                spsa_alpha=prev_run.spsa_alpha,
+                spsa_gamma=prev_run.spsa_gamma,
+                max_elo_diff=prev_run.max_elo_diff,
+                max_gradient_factor=prev_run.max_gradient_factor,
+                ref_enabled=prev_run.ref_enabled,
+                ref_ratio=prev_run.ref_ratio,
+                active_groups=[next_group],
+                auto_cycle=True,
+                iterations_per_group=prev_run.iterations_per_group,
+                cycle_group_order=prev_run.cycle_group_order,
+                parent_run_id=parent_id,
+                cycle_sequence=cycle_sequence,
+                tc_moves=prev_run.tc_moves,
+                tc_base_seconds=prev_run.tc_base_seconds,
+                tc_increment=prev_run.tc_increment,
+            )
+            db.session.add(new_run)
+            db.session.flush()
+
+            # Copy tuned parameter values from previous run
+            prev_params = SpsaParam.query.filter_by(run_id=previous_run_id).all()
+            for p in prev_params:
+                db.session.add(SpsaParam(
+                    run_id=new_run.id,
+                    name=p.name,
+                    value=p.value,
+                    min_value=p.min_value,
+                    max_value=p.max_value,
+                    step=p.step,
+                    group=p.group,
+                ))
+
+            db.session.commit()
+            param_count = SpsaParam.query.filter_by(run_id=new_run.id).count()
+            print(f"\n  Auto-cycle: created run '{run_name}' (id={new_run.id}) with {param_count} params")
+            print(f"  Active group: {next_group}, cycle_sequence: {cycle_sequence}")
+            return new_run.id, new_run.name
+
+    return with_db_retry(_create)
 
 
 def select_run() -> tuple[int, str]:
@@ -1303,6 +1499,13 @@ def get_run_settings(run_id: int) -> dict:
                 'ref_enabled': run.ref_enabled,
                 'ref_ratio': run.ref_ratio,
                 'active_groups': set(run.active_groups) if run.active_groups else None,
+                'auto_cycle': run.auto_cycle,
+                'iterations_per_group': run.iterations_per_group,
+                'cycle_group_order': run.cycle_group_order,
+                'cycle_sequence': run.cycle_sequence,
+                'tc_moves': run.tc_moves,
+                'tc_base_seconds': run.tc_base_seconds,
+                'tc_increment': run.tc_increment,
             }
 
     return with_db_retry(_get)
@@ -1352,8 +1555,13 @@ def run_master():
     else:
         print(f"Active groups: ALL ({len(params)} params)")
     print(f"SPSA games per iteration: {run_settings['games_per_iteration']}")
-    print(f"Time control: {run_settings['timelow']}-{run_settings['timehigh']}s/move")
+    if run_settings.get('tc_moves'):
+        print(f"Time control: {run_settings['tc_moves']} moves in {run_settings['tc_base_seconds']}s + {run_settings['tc_increment']}s/move (incremental)")
+    else:
+        print(f"Time control: {run_settings['timelow']}-{run_settings['timehigh']}s/move")
     print(f"Max iterations: {run_settings['max_iterations']}")
+    if run_settings.get('auto_cycle'):
+        print(f"Auto-cycle: {run_settings['iterations_per_group']} iterations per group")
 
     if run_settings['ref_enabled']:
         ref_target = int(run_settings['games_per_iteration'] * run_settings['ref_ratio'])
@@ -1389,6 +1597,15 @@ def run_master():
         max_iterations = run_settings['max_iterations']
 
         if k > max_iterations:
+            if run_settings.get('auto_cycle'):
+                next_group, next_seq = _get_next_cycle_group(run_settings)
+                print(f"\n{'='*60}")
+                print(f"AUTO-CYCLE: switching to group '{next_group}' (sequence {next_seq})")
+                print(f"{'='*60}")
+                run_id, run_name = _create_cycle_run(run_id, next_group, next_seq)
+                k = 1
+                resume_info = None
+                continue
             break
 
         effective_iteration_offset = run_settings['effective_iteration_offset']
@@ -1484,7 +1701,10 @@ def run_master():
             iteration_id = create_iteration(
                 run_id, k, effective_k, ref_path, ref_target_games,
                 timelow, timehigh, games_per_iteration,
-                params, plus_params, minus_params, signs
+                params, plus_params, minus_params, signs,
+                tc_moves=run_settings.get('tc_moves'),
+                tc_base_seconds=run_settings.get('tc_base_seconds'),
+                tc_increment=run_settings.get('tc_increment'),
             )
             print(f"  Iteration ID: {iteration_id}")
             status = 'pending'

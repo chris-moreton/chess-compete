@@ -362,7 +362,10 @@ def run_spsa_games(
     concurrency: int,
     on_game_complete: callable,
     max_games: int = 0,
-    auto_timemult: bool = False
+    auto_timemult: bool = False,
+    tc_moves: int = None,
+    tc_base_seconds: float = None,
+    tc_increment: float = None,
 ) -> tuple[dict, float, float]:
     """
     Run SPSA games (plus vs minus), calling on_game_complete after every game.
@@ -402,6 +405,13 @@ def run_spsa_games(
         if batch_timemult is not None:
             time_per_move = max(time_per_move * batch_timemult, CALIBRATION_MIN_TIME_PER_MOVE)
 
+        # Scale incremental TC by timemult if applicable
+        eff_tc_base = tc_base_seconds
+        eff_tc_inc = tc_increment
+        if tc_moves and batch_timemult is not None:
+            eff_tc_base = tc_base_seconds * batch_timemult if tc_base_seconds else None
+            eff_tc_inc = tc_increment * batch_timemult if tc_increment else None
+
         # Alternate colors based on game number
         if game_num % 2 == 0:
             return GameConfig(
@@ -415,7 +425,10 @@ def run_spsa_games(
                 time_per_move=time_per_move,
                 opening_fen=opening_fen,
                 opening_name=opening_name,
-                is_engine1_white=True  # plus is white
+                is_engine1_white=True,  # plus is white
+                tc_moves=tc_moves,
+                tc_base_seconds=eff_tc_base,
+                tc_increment=eff_tc_inc,
             )
         else:
             return GameConfig(
@@ -429,7 +442,10 @@ def run_spsa_games(
                 time_per_move=time_per_move,
                 opening_fen=opening_fen,
                 opening_name=opening_name,
-                is_engine1_white=False  # plus is black
+                is_engine1_white=False,  # plus is black
+                tc_moves=tc_moves,
+                tc_base_seconds=eff_tc_base,
+                tc_increment=eff_tc_inc,
             )
 
     def process_result(config: GameConfig, result) -> dict:
@@ -638,7 +654,10 @@ def run_ref_games(
     concurrency: int,
     on_game_complete: callable,
     max_games: int = 0,
-    auto_timemult: bool = False
+    auto_timemult: bool = False,
+    tc_moves: int = None,
+    tc_base_seconds: float = None,
+    tc_increment: float = None,
 ) -> dict:
     """
     Run reference games (base vs Stockfish), calling on_game_complete after every game.
@@ -679,6 +698,13 @@ def run_ref_games(
         if batch_timemult is not None:
             time_per_move = max(time_per_move * batch_timemult, CALIBRATION_MIN_TIME_PER_MOVE)
 
+        # Scale incremental TC by timemult if applicable
+        eff_tc_base = tc_base_seconds
+        eff_tc_inc = tc_increment
+        if tc_moves and batch_timemult is not None:
+            eff_tc_base = tc_base_seconds * batch_timemult if tc_base_seconds else None
+            eff_tc_inc = tc_increment * batch_timemult if tc_increment else None
+
         # Alternate colors based on game number
         if game_num % 2 == 0:
             return GameConfig(
@@ -692,7 +718,10 @@ def run_ref_games(
                 time_per_move=time_per_move,
                 opening_fen=opening_fen,
                 opening_name=opening_name,
-                is_engine1_white=True  # base is white
+                is_engine1_white=True,  # base is white
+                tc_moves=tc_moves,
+                tc_base_seconds=eff_tc_base,
+                tc_increment=eff_tc_inc,
             )
         else:
             return GameConfig(
@@ -706,7 +735,10 @@ def run_ref_games(
                 time_per_move=time_per_move,
                 opening_fen=opening_fen,
                 opening_name=opening_name,
-                is_engine1_white=False  # base is black
+                is_engine1_white=False,  # base is black
+                tc_moves=tc_moves,
+                tc_base_seconds=eff_tc_base,
+                tc_increment=eff_tc_inc,
             )
 
     def process_result(config: GameConfig, result) -> dict:
@@ -1014,11 +1046,14 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                 phase_name = "SPSA (plus vs minus)" if phase == 'spsa' else "Reference (base vs Stockfish)"
                 print(f"\n\nIteration {iteration_num} - Phase: {phase_name}")
                 print(f"  Progress: {iteration['games_played']}/{iteration['target_games']} games")
-                effective_timelow = int(iteration['timelow_ms'] * time_mult)
-                effective_timehigh = int(iteration['timehigh_ms'] * time_mult)
-                time_str = f"  Time: {effective_timelow}-{effective_timehigh}ms/move"
-                if time_mult != 1.0:
-                    time_str += f" ({time_mult}x of {iteration['timelow_ms']}-{iteration['timehigh_ms']})"
+                if iteration.get('tc_moves'):
+                    time_str = f"  Time: {iteration['tc_moves']} moves in {iteration['tc_base_seconds']}s + {iteration.get('tc_increment', 0)}s/move"
+                else:
+                    effective_timelow = int(iteration['timelow_ms'] * time_mult)
+                    effective_timehigh = int(iteration['timehigh_ms'] * time_mult)
+                    time_str = f"  Time: {effective_timelow}-{effective_timehigh}ms/move"
+                    if time_mult != 1.0:
+                        time_str += f" ({time_mult}x of {iteration['timelow_ms']}-{iteration['timehigh_ms']})"
                 print(time_str)
 
             # Check if phase is complete
@@ -1069,7 +1104,10 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                     int(iteration['timelow_ms'] * time_mult), int(iteration['timehigh_ms'] * time_mult),
                     concurrency, on_spsa_game,
                     max_games=remaining,
-                    auto_timemult=auto_timemult
+                    auto_timemult=auto_timemult,
+                    tc_moves=iteration.get('tc_moves'),
+                    tc_base_seconds=iteration.get('tc_base_seconds'),
+                    tc_increment=iteration.get('tc_increment'),
                 )
                 elapsed = time.time() - start_time
 
@@ -1125,7 +1163,10 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                     int(iteration['timelow_ms'] * time_mult), int(iteration['timehigh_ms'] * time_mult),
                     concurrency, on_ref_game,
                     max_games=remaining,
-                    auto_timemult=auto_timemult
+                    auto_timemult=auto_timemult,
+                    tc_moves=iteration.get('tc_moves'),
+                    tc_base_seconds=iteration.get('tc_base_seconds'),
+                    tc_increment=iteration.get('tc_increment'),
                 )
                 elapsed = time.time() - start_time
 

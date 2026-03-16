@@ -1071,6 +1071,9 @@ def register_routes(app):
                 'timehigh_ms': iteration.timehigh_ms,
                 'target_games': iteration.ref_target_games,
                 'games_played': iteration.ref_games_played,
+                'tc_moves': iteration.tc_moves,
+                'tc_base_seconds': iteration.tc_base_seconds,
+                'tc_increment': iteration.tc_increment,
             })
 
         # Check for SPSA phase iterations (pending or in_progress)
@@ -1100,6 +1103,9 @@ def register_routes(app):
             'timehigh_ms': iteration.timehigh_ms,
             'target_games': iteration.target_games,
             'games_played': iteration.games_played,
+            'tc_moves': iteration.tc_moves,
+            'tc_base_seconds': iteration.tc_base_seconds,
+            'tc_increment': iteration.tc_increment,
         })
 
     def record_worker_activity(worker_name: str, iteration_id: int, phase: str,

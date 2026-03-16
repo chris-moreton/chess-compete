@@ -6,6 +6,7 @@ import math
 import os
 import socket
 import subprocess
+import time
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +48,10 @@ class GameConfig:
     opening_name: Optional[str]
     is_engine1_white: bool  # Track which engine is white for result attribution
     threads: Optional[int] = None  # Number of threads (if engine supports it)
+    # Incremental time control (all None = use time_per_move mode)
+    tc_moves: Optional[int] = None        # e.g. 40 moves per period
+    tc_base_seconds: Optional[float] = None  # e.g. 60.0 seconds base time
+    tc_increment: Optional[float] = None  # e.g. 1.0 seconds per move
 
 
 @dataclass
@@ -119,6 +124,9 @@ def play_game_from_config(config: GameConfig, on_move: callable = None,
             opening_fen=config.opening_fen,
             opening_name=config.opening_name,
             is_engine1_white=config.is_engine1_white,
+            tc_moves=config.tc_moves,
+            tc_base_seconds=config.tc_base_seconds * tm if config.tc_base_seconds else None,
+            tc_increment=config.tc_increment * tm if config.tc_increment else None,
         )
 
     result, game, adjudication_type = play_game(
@@ -132,7 +140,10 @@ def play_game_from_config(config: GameConfig, on_move: callable = None,
         engine1_uci_options=effective_config.white_uci_options,
         engine2_uci_options=effective_config.black_uci_options,
         on_move=on_move,
-        threads=effective_config.threads
+        threads=effective_config.threads,
+        tc_moves=effective_config.tc_moves,
+        tc_base_seconds=effective_config.tc_base_seconds,
+        tc_increment=effective_config.tc_increment,
     )
 
     # Extract NPS from game headers
@@ -199,7 +210,10 @@ def play_game(engine1_cmd: Path | list, engine2_cmd: Path | list,
               engine1_uci_options: dict = None,
               engine2_uci_options: dict = None,
               on_move: callable = None,
-              threads: int = None) -> tuple[str, chess.pgn.Game, Optional[str]]:
+              threads: int = None,
+              tc_moves: int = None,
+              tc_base_seconds: float = None,
+              tc_increment: float = None) -> tuple[str, chess.pgn.Game, Optional[str]]:
     """Play a single game and return (result, pgn_game).
 
     engine1_cmd/engine2_cmd can be:
@@ -238,7 +252,12 @@ def play_game(engine1_cmd: Path | list, engine2_cmd: Path | list,
     game.headers["Date"] = datetime.now().strftime("%Y.%m.%d")
     game.headers["White"] = engine1_name
     game.headers["Black"] = engine2_name
-    game.headers["TimeControl"] = f"{time_per_move:.2f}s/move"
+    # Determine time control mode
+    use_incremental_tc = tc_moves is not None and tc_base_seconds is not None
+    if use_incremental_tc:
+        game.headers["TimeControl"] = f"{tc_moves}/{tc_base_seconds}+{tc_increment or 0}"
+    else:
+        game.headers["TimeControl"] = f"{time_per_move:.2f}s/move"
     if start_fen:
         game.headers["FEN"] = start_fen
         game.headers["SetUp"] = "1"
@@ -261,6 +280,14 @@ def play_game(engine1_cmd: Path | list, engine2_cmd: Path | list,
     adjudicated_result = None
     adjudication_type = None  # "resign", "draw", "maxmoves"
 
+    # Incremental TC clock state
+    if use_incremental_tc:
+        white_clock = tc_base_seconds
+        black_clock = tc_base_seconds
+        white_moves_in_period = 0
+        black_moves_in_period = 0
+        tc_inc = tc_increment or 0.0
+
     # Adjudication tracking
     white_resign_count = 0
     black_resign_count = 0
@@ -272,7 +299,24 @@ def play_game(engine1_cmd: Path | list, engine2_cmd: Path | list,
         while not board.is_game_over():
             is_white = board.turn == chess.WHITE
             engine = engines[0] if is_white else engines[1]
-            result = engine.play(board, chess.engine.Limit(time=time_per_move), info=chess.engine.INFO_ALL)
+
+            if use_incremental_tc:
+                # Build incremental time limit
+                clock = white_clock if is_white else black_clock
+                moves_in_period = white_moves_in_period if is_white else black_moves_in_period
+                remaining_moves = tc_moves - moves_in_period if tc_moves > moves_in_period else tc_moves
+                limit = chess.engine.Limit(
+                    white_clock=white_clock,
+                    black_clock=black_clock,
+                    white_inc=tc_inc,
+                    black_inc=tc_inc,
+                )
+            else:
+                limit = chess.engine.Limit(time=time_per_move)
+
+            wall_start = time.monotonic()
+            result = engine.play(board, limit, info=chess.engine.INFO_ALL)
+            wall_elapsed = time.monotonic() - wall_start
 
             # Extract score for adjudication (centipawns from white's POV)
             white_cp = None
@@ -299,6 +343,25 @@ def play_game(engine1_cmd: Path | list, engine2_cmd: Path | list,
                 else:
                     engine2_nodes += nodes
                     engine2_time += time_spent
+
+            # Update clocks for incremental TC
+            if use_incremental_tc:
+                # Use engine-reported time if available, otherwise wall clock
+                elapsed = result.info.get("time", wall_elapsed) if result.info else wall_elapsed
+                if is_white:
+                    white_clock -= elapsed
+                    white_clock += tc_inc
+                    white_moves_in_period += 1
+                    if white_moves_in_period >= tc_moves:
+                        white_clock += tc_base_seconds
+                        white_moves_in_period = 0
+                else:
+                    black_clock -= elapsed
+                    black_clock += tc_inc
+                    black_moves_in_period += 1
+                    if black_moves_in_period >= tc_moves:
+                        black_clock += tc_base_seconds
+                        black_moves_in_period = 0
 
             # --- Adjudication checks ---
             if white_cp is not None:

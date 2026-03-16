@@ -260,6 +260,18 @@ class SpsaRun(db.Model):
     ref_ratio = db.Column(db.Float, nullable=False, default=0.25)
     active_groups = db.Column(db.JSON)  # JSON array of group names, null = all groups active
 
+    # Auto-cycling
+    auto_cycle = db.Column(db.Boolean, nullable=False, default=False)
+    iterations_per_group = db.Column(db.Integer, nullable=False, default=50)
+    cycle_group_order = db.Column(db.JSON)       # JSON array, null = default alphabetical order
+    parent_run_id = db.Column(db.Integer, db.ForeignKey('spsa_runs.id'))
+    cycle_sequence = db.Column(db.Integer)       # 0-based position in cycle
+
+    # Incremental TC (null = legacy time-per-move mode)
+    tc_moves = db.Column(db.Integer)             # e.g. 40
+    tc_base_seconds = db.Column(db.Float)        # e.g. 60.0
+    tc_increment = db.Column(db.Float)           # e.g. 1.0
+
     # Relationships
     iterations = db.relationship('SpsaIteration', backref='run', lazy='dynamic')
 
@@ -311,6 +323,11 @@ class SpsaIteration(db.Model):
     gradient_estimate = db.Column(db.JSON)     # Calculated gradient per parameter
     elo_diff = db.Column(db.Numeric(7, 2))     # Plus vs minus Elo difference
     ref_elo_estimate = db.Column(db.Numeric(7, 2))  # Estimated Elo vs reference engine
+
+    # Incremental TC snapshot (null = legacy time-per-move mode)
+    tc_moves = db.Column(db.Integer)
+    tc_base_seconds = db.Column(db.Float)
+    tc_increment = db.Column(db.Float)
 
     # Timestamps
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
