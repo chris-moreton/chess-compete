@@ -1106,10 +1106,6 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
             return default
 
     print(f"\nRun settings (press Enter for defaults from '{settings_source.name}'):")
-    timelow = _prompt_float("Time low (s/move)", settings_source.timelow)
-    timehigh = _prompt_float("Time high (s/move)", settings_source.timehigh)
-    games_per_iteration = _prompt_int("Games per iteration", settings_source.games_per_iteration)
-    max_iterations = _prompt_int("Max iterations", settings_source.max_iterations)
 
     # Auto-cycle mode
     auto_cycle = False
@@ -1118,9 +1114,11 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
     if cycle_choice == 'y':
         auto_cycle = True
         iterations_per_group = _prompt_int("Iterations per group", 50)
-        max_iterations = iterations_per_group  # Override: first group gets this many
+        max_iterations = iterations_per_group
         print(f"  Auto-cycle enabled: {iterations_per_group} iterations per group")
         print(f"  Group order: {', '.join(DEFAULT_GROUP_ORDER)}")
+    else:
+        max_iterations = _prompt_int("Max iterations", settings_source.max_iterations)
 
     # Incremental time control
     tc_moves = None
@@ -1132,6 +1130,13 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
         tc_base_seconds = _prompt_float("Base time (seconds)", 60.0)
         tc_increment = _prompt_float("Increment per move (seconds)", 1.0)
         print(f"  Incremental TC: {tc_moves} moves in {tc_base_seconds}s + {tc_increment}s/move")
+        timelow = 0.0
+        timehigh = 0.0
+    else:
+        timelow = _prompt_float("Time low (s/move)", settings_source.timelow)
+        timehigh = _prompt_float("Time high (s/move)", settings_source.timehigh)
+
+    games_per_iteration = _prompt_int("Games per iteration", settings_source.games_per_iteration)
 
     # Determine available groups from source params
     if seed_mode == 'copy':
