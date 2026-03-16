@@ -1051,7 +1051,7 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
         )
 
     print("\nHow should parameters be initialized?")
-    print("  0. defaults — use midpoint of min/max bounds")
+    print("  0. defaults — use current engine_constants.rs values")
     for r in runs_with_params:
         print(f"  {r.id}. copy from {r.name}")
     print()
