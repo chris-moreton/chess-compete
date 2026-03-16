@@ -1399,6 +1399,23 @@ def select_run() -> tuple[int, str]:
             selected = db.session.get(SpsaRun, run_id)
             if not selected:
                 raise RuntimeError(f"Run with ID {run_id} not found in database.")
+
+            # For auto-cycle runs, find the latest run in the cycle lineage.
+            # All cycle runs share the same parent_run_id (the root), so find
+            # the newest run with parent_run_id pointing to this run (or its root).
+            if selected.auto_cycle:
+                root_id = selected.parent_run_id or selected.id
+                latest = SpsaRun.query.filter(
+                    SpsaRun.auto_cycle == True,
+                    db.or_(
+                        SpsaRun.parent_run_id == root_id,
+                        SpsaRun.id == root_id,
+                    )
+                ).order_by(SpsaRun.id.desc()).first()
+                if latest and latest.id != selected.id:
+                    print(f"Non-interactive mode: RUN_ID={run_id} -> followed cycle chain to run {latest.id}")
+                    selected = latest
+
             _activate_run(db, SpsaRun, selected)
             print(f"Non-interactive mode: activated run '{selected.name}' (id={selected.id})")
             return selected.id, selected.name
