@@ -1111,6 +1111,28 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
     games_per_iteration = _prompt_int("Games per iteration", settings_source.games_per_iteration)
     max_iterations = _prompt_int("Max iterations", settings_source.max_iterations)
 
+    # Auto-cycle mode
+    auto_cycle = False
+    iterations_per_group = 50
+    cycle_choice = input("\nEnable auto-cycling through parameter groups? (y/N): ").strip().lower()
+    if cycle_choice == 'y':
+        auto_cycle = True
+        iterations_per_group = _prompt_int("Iterations per group", 50)
+        max_iterations = iterations_per_group  # Override: first group gets this many
+        print(f"  Auto-cycle enabled: {iterations_per_group} iterations per group")
+        print(f"  Group order: {', '.join(DEFAULT_GROUP_ORDER)}")
+
+    # Incremental time control
+    tc_moves = None
+    tc_base_seconds = None
+    tc_increment = None
+    tc_choice = input("\nUse incremental time control? (y/N): ").strip().lower()
+    if tc_choice == 'y':
+        tc_moves = _prompt_int("Moves per TC period", 40)
+        tc_base_seconds = _prompt_float("Base time (seconds)", 60.0)
+        tc_increment = _prompt_float("Increment per move (seconds)", 1.0)
+        print(f"  Incremental TC: {tc_moves} moves in {tc_base_seconds}s + {tc_increment}s/move")
+
     # Determine available groups from source params
     if seed_mode == 'copy':
         source_params = SpsaParam.query.filter_by(run_id=source_run_id).all()
@@ -1135,53 +1157,36 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
                 grp = cfg['group']
                 available_groups[grp] = available_groups.get(grp, 0) + 1
 
-    print("\nAvailable parameter groups:")
-    sorted_groups = sorted(available_groups.items())
-    for i, (grp, count) in enumerate(sorted_groups, 1):
-        print(f"  {i}. {grp} ({count} params)")
-    print(f"  A. All groups (tune everything)")
-
-    while True:
-        choice = input("\nSelect groups to activate (comma-separated numbers, or A for all): ").strip()
-        if choice.upper() == 'A':
-            selected_groups = None  # None = all groups active
-            break
-        try:
-            indices = [int(x.strip()) for x in choice.split(',')]
-            if all(1 <= i <= len(sorted_groups) for i in indices):
-                selected_groups = [sorted_groups[i - 1][0] for i in indices]
-                break
-        except ValueError:
-            pass
-        print(f"Invalid choice. Enter comma-separated numbers (1-{len(sorted_groups)}) or 'A'.")
-
-    if selected_groups:
-        active_count = sum(available_groups[g] for g in selected_groups)
-        print(f"  Active groups: {', '.join(selected_groups)} ({active_count} params)")
+    if auto_cycle:
+        # Auto-cycle starts with the first group in the order; no need to select
+        selected_groups = [DEFAULT_GROUP_ORDER[0]]
+        print(f"\n  Starting with group: {selected_groups[0]}")
     else:
-        print(f"  All groups active ({sum(available_groups.values())} params)")
+        print("\nAvailable parameter groups:")
+        sorted_groups = sorted(available_groups.items())
+        for i, (grp, count) in enumerate(sorted_groups, 1):
+            print(f"  {i}. {grp} ({count} params)")
+        print(f"  A. All groups (tune everything)")
 
-    # Auto-cycle mode
-    auto_cycle = False
-    iterations_per_group = 50
-    cycle_choice = input("\nEnable auto-cycling through parameter groups? (y/N): ").strip().lower()
-    if cycle_choice == 'y':
-        auto_cycle = True
-        iterations_per_group = _prompt_int("Iterations per group", 50)
-        max_iterations = iterations_per_group  # Override: first group gets this many
-        print(f"  Auto-cycle enabled: {iterations_per_group} iterations per group")
-        print(f"  Group order: {', '.join(DEFAULT_GROUP_ORDER)}")
+        while True:
+            choice = input("\nSelect groups to activate (comma-separated numbers, or A for all): ").strip()
+            if choice.upper() == 'A':
+                selected_groups = None  # None = all groups active
+                break
+            try:
+                indices = [int(x.strip()) for x in choice.split(',')]
+                if all(1 <= i <= len(sorted_groups) for i in indices):
+                    selected_groups = [sorted_groups[i - 1][0] for i in indices]
+                    break
+            except ValueError:
+                pass
+            print(f"Invalid choice. Enter comma-separated numbers (1-{len(sorted_groups)}) or 'A'.")
 
-    # Incremental time control
-    tc_moves = None
-    tc_base_seconds = None
-    tc_increment = None
-    tc_choice = input("\nUse incremental time control? (y/N): ").strip().lower()
-    if tc_choice == 'y':
-        tc_moves = _prompt_int("Moves per TC period", 40)
-        tc_base_seconds = _prompt_float("Base time (seconds)", 60.0)
-        tc_increment = _prompt_float("Increment per move (seconds)", 1.0)
-        print(f"  Incremental TC: {tc_moves} moves in {tc_base_seconds}s + {tc_increment}s/move")
+        if selected_groups:
+            active_count = sum(available_groups[g] for g in selected_groups)
+            print(f"  Active groups: {', '.join(selected_groups)} ({active_count} params)")
+        else:
+            print(f"  All groups active ({sum(available_groups.values())} params)")
 
     # Mark any incomplete iterations on existing runs as complete
     from web.models import SpsaIteration
