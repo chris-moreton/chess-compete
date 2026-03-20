@@ -106,7 +106,7 @@ echo ""
 
 cutechess-cli \
     "${ENGINE_FLAGS[@]}" \
-    "${TOURNAMENT_FLAGS[@]}" \
+    ${TOURNAMENT_FLAGS[@]+"${TOURNAMENT_FLAGS[@]}"} \
     -each proto=uci tc="$TC" \
     -openings file="$BOOK_PATH" format="$BOOK_FORMAT" order=random plies=24 \
     -repeat \
