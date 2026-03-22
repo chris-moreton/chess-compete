@@ -241,7 +241,8 @@ def run_match(args, match_id, tc, effective_tc):
 
         print(f"\nMatch complete. {total_reported} games reported.")
 
-        # Upload PGN
+        # Upload PGN (best-effort - match is marked complete regardless)
+        pgn_uploaded = False
         if os.path.isfile(args.pgn_out):
             pgn_size = os.path.getsize(args.pgn_out)
             print(f"Uploading PGN ({pgn_size / 1024 / 1024:.1f} MB)...")
@@ -252,13 +253,19 @@ def run_match(args, match_id, tc, effective_tc):
                 'pgn': pgn_content,
             })
             if result and result.get('ok'):
-                print("PGN uploaded successfully.")
+                print("PGN uploaded and match marked complete.")
+                pgn_uploaded = True
             else:
                 print("PGN upload failed.", file=sys.stderr)
         else:
             print(f"Warning: PGN file not found at {args.pgn_out}", file=sys.stderr)
-            api_request(args.api_url, args.api_key, '/api/h2h/fail', {
+
+        # If PGN upload didn't mark it complete, do it explicitly
+        if not pgn_uploaded:
+            print("Marking match as completed (without PGN).")
+            api_request(args.api_url, args.api_key, '/api/h2h/pgn', {
                 'match_id': match_id,
+                'pgn': '',
             })
 
     except KeyboardInterrupt:
