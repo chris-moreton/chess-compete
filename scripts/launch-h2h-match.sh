@@ -140,25 +140,17 @@ shutdown -h +__SHUTDOWN_MINUTES__
 ) &
 disown
 
-# Install system packages
-yum install -y python3.11 python3.11-pip git gcc gcc-c++ cmake make
+# Install system packages (Ubuntu)
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y python3 python3-pip python3-venv git cutechess awscli
 
-# Install cutechess-cli from source (fast on many cores, no pre-built Linux CLI available)
-cd /tmp
-git clone --depth 1 https://github.com/cutechess/cutechess.git
-cd cutechess
-cmake .
-make -j$(nproc) cutechess-cli
-cp cutechess-cli /usr/local/bin/
-cd /
-rm -rf /tmp/cutechess
-
-# Download engine binaries from GitHub releases (much faster than compiling)
-su - ec2-user -c '
+# Download engine binaries from GitHub releases
+su - ubuntu -c '
     cd ~
     git clone https://github.com/chris-moreton/chess-compete.git
     cd chess-compete
-    python3.11 -m pip install -r requirements.txt
+    python3 -m pip install --break-system-packages -r requirements.txt
 
     REPO="chris-moreton/rusty-rival"
 
@@ -180,9 +172,9 @@ su - ec2-user -c '
 echo "=== $(date) Engines ready, starting match ==="
 
 # Run the match with API reporting
-su - ec2-user -c '
+su - ubuntu -c '
     cd ~/chess-compete
-    python3.11 scripts/h2h-reporter.py \
+    python3 scripts/h2h-reporter.py \
         --engine1 ~/engine1 --tag1 "__ENGINE1__" \
         --engine2 ~/engine2 --tag2 "__ENGINE2__" \
         --games __GAMES__ \
@@ -221,10 +213,10 @@ USER_DATA_B64=$(echo "$USER_DATA" | base64)
 # ---------- Launch instance ----------
 REGION_ARGS=(--region "$REGION")
 
-# Auto-detect AMI
+# Auto-detect Ubuntu AMI
 AMI_ID=$(aws ec2 describe-images "${REGION_ARGS[@]}" \
-    --owners amazon \
-    --filters "Name=name,Values=al2023-ami-2023*-x86_64" "Name=state,Values=available" \
+    --owners 099720109477 \
+    --filters "Name=name,Values=ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*" "Name=state,Values=available" \
     --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
     --output text)
 
