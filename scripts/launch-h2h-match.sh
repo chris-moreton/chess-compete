@@ -141,7 +141,7 @@ shutdown -h +__SHUTDOWN_MINUTES__
 disown
 
 # Install system packages
-yum install -y python3.11 python3.11-pip git gcc cmake make
+yum install -y python3.11 python3.11-pip git gcc gcc-c++ cmake make
 
 # Install Rust
 su - ec2-user -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y'
