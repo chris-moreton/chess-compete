@@ -151,8 +151,8 @@ cd /tmp
 git clone --depth 1 --branch v1.3.1 https://github.com/cutechess/cutechess.git
 cd cutechess
 cmake -DCMAKE_BUILD_TYPE=Release -DWITH_TESTS=OFF .
-make -j$(nproc) cutechess-cli
-cp projects/cli/cutechess-cli /usr/local/bin/
+make -j$(nproc) cli
+cp cutechess-cli /usr/local/bin/
 chmod +x /usr/local/bin/cutechess-cli
 cd /
 rm -rf /tmp/cutechess
