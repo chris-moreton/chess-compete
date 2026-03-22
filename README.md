@@ -924,6 +924,7 @@ Access at `http://localhost:5000`
 | `/epd-tests` | EPD test results overview with engine percentages |
 | `/epd-tests/<file>` | Detailed position-by-position results grid |
 | `/spsa` | SPSA parameter tuning progress and charts |
+| `/h2h` | Head-to-head cloud matches with BayesElo leaderboard |
 
 ### Dashboard Features
 
@@ -932,6 +933,68 @@ Access at `http://localhost:5000`
 - Color-coded performance vs expected results
 - Force recalculate ratings button
 - Auto-refresh every 30 seconds
+
+---
+
+## Cloud Head-to-Head Matches
+
+Run large-scale H2H matches on AWS EC2 spot instances with live dashboard reporting and BayesElo leaderboard.
+
+### Quick Start
+
+```bash
+# Launch a 5000-game match (default: c6a.24xlarge, 96 vCPUs, ~$5)
+./scripts/launch-h2h-match.sh v1.0.36 v1.0.37-rc1
+
+# Custom options
+./scripts/launch-h2h-match.sh v1.0.36 v1.0.37-rc1 --games 5000 --tc "0/1:00+0.5"
+./scripts/launch-h2h-match.sh v1.0.36 v1.0.37-rc1 --type c6a.48xlarge  # 192 vCPUs, ~2h
+./scripts/launch-h2h-match.sh v1.0.36 v1.0.37-rc1 --target-nps 3000000  # Custom NPS target
+```
+
+### How It Works
+
+1. Launches a spot instance in the cheapest region
+2. Builds both engines from git tags on the instance
+3. Runs a **pilot phase** (50 games at full concurrency) to measure NPS
+4. If NPS < target (default 2M), scales time control up (`timemult = max(1.0, target/measured)`)
+5. Runs the main match via cutechess-cli with opening book and adjudication
+6. Reports results every 10 games to the dashboard API
+7. Uploads full PGN on completion
+8. Self-terminates (with watchdog failsafe)
+
+### Dashboard
+
+View results at `/h2h`:
+- **BayesElo leaderboard**: Unified ratings across all completed matches
+- **Match list**: Live progress with W/L/D, Elo diff, NPS, effective TC
+- Auto-refreshes every 10s for running matches
+
+### Local Matches (cutechess-cli)
+
+```bash
+# 2-engine match
+./scripts/cutechess-match.sh v1.0.36 v1.0.37-rc1 -r 100 -c 8
+
+# Multi-engine round-robin
+./scripts/cutechess-match.sh v1.0.34 v1.0.35 v1.0.36 -r 200 -c 8
+
+# View standings from PGN files
+python3 scripts/pgn-standings.py results/*.pgn
+```
+
+### Launch Script Options
+
+| Option | Description |
+|--------|-------------|
+| `--games N` | Total games (default: 5000) |
+| `--tc TC` | Time control (default: `0/1:00+0.5`) |
+| `--type TYPE` | Instance type (default: `c6a.24xlarge`, 96 vCPUs) |
+| `--region REGION` | AWS region (default: `us-west-2`) |
+| `--target-nps N` | NPS target for timemult (default: 2000000) |
+| `--no-pilot` | Skip NPS calibration |
+| `--hash N` | Hash size MB (default: 128) |
+| `--threads N` | UCI threads per engine (default: 1) |
 
 ---
 
