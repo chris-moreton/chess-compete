@@ -36,6 +36,7 @@ HASH=128
 THREADS=1
 REGION="us-west-2"  # Default to cheapest region
 MAX_SPOT_PRICE="4.00"
+TARGET_NPS=2000000  # 2M NPS reference for timemult
 
 # ---------- Parse arguments ----------
 ENGINE1=""
@@ -50,6 +51,8 @@ while [[ $# -gt 0 ]]; do
         --hash)      HASH="$2"; shift 2 ;;
         --threads)   THREADS="$2"; shift 2 ;;
         --region|-r) REGION="$2"; shift 2 ;;
+        --target-nps) TARGET_NPS="$2"; shift 2 ;;
+        --no-pilot) NO_PILOT=true; shift ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
             exit 0 ;;
@@ -186,6 +189,7 @@ su - ec2-user -c '
         --concurrency __CONCURRENCY__ \
         --hash __HASH__ \
         --threads __THREADS__ \
+        --target-nps __TARGET_NPS__ \
         --book ~/chess-compete/openings/8moves_v3.pgn \
         --book-format pgn \
         --api-url "__API_URL__" \
@@ -207,6 +211,7 @@ USER_DATA="${USER_DATA//__HASH__/$HASH}"
 USER_DATA="${USER_DATA//__THREADS__/$THREADS}"
 USER_DATA="${USER_DATA//__API_URL__/$SPSA_API_URL}"
 USER_DATA="${USER_DATA//__API_KEY__/$SPSA_API_KEY}"
+USER_DATA="${USER_DATA//__TARGET_NPS__/$TARGET_NPS}"
 USER_DATA="${USER_DATA//__MAX_HOURS__/$MAX_HOURS}"
 USER_DATA="${USER_DATA//__SHUTDOWN_MINUTES__/$SHUTDOWN_MINUTES}"
 

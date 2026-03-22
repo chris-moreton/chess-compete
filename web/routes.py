@@ -1538,6 +1538,28 @@ def register_routes(app):
         db.session.commit()
         return jsonify({'ok': True})
 
+    @app.route('/api/h2h/calibration', methods=['POST'])
+    def h2h_calibration():
+        """Report NPS calibration results for a H2H match."""
+        if not verify_worker_api_key():
+            return jsonify({'error': 'Invalid API key'}), 401
+        data = request.get_json()
+        if not data or 'match_id' not in data:
+            return jsonify({'error': 'Missing match_id'}), 400
+
+        match = H2hMatch.query.get(data['match_id'])
+        if not match:
+            return jsonify({'error': 'Match not found'}), 404
+
+        if 'avg_nps' in data:
+            match.avg_nps = data['avg_nps']
+        if 'timemult' in data:
+            match.timemult = data['timemult']
+        if 'effective_tc' in data:
+            match.effective_tc = data['effective_tc']
+        db.session.commit()
+        return jsonify({'ok': True})
+
     @app.route('/api/h2h/pgn', methods=['POST'])
     def h2h_pgn():
         """Upload the full PGN for a completed H2H match."""
@@ -1591,6 +1613,9 @@ def register_routes(app):
             'engine2_wins': match.engine2_wins,
             'draws': match.draws,
             'status': match.status,
+            'avg_nps': match.avg_nps,
+            'timemult': match.timemult,
+            'effective_tc': match.effective_tc,
         })
 
     @app.route('/h2h')
@@ -1682,6 +1707,9 @@ def register_routes(app):
                 'draws': m.draws,
                 'status': m.status,
                 'elo_diff': elo_diff,
+                'avg_nps': m.avg_nps,
+                'timemult': m.timemult,
+                'effective_tc': m.effective_tc,
                 'created_at': m.created_at,
                 'completed_at': m.completed_at,
             })

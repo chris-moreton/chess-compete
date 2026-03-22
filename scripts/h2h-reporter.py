@@ -12,9 +12,11 @@ Usage:
 
 The script:
 1. Creates a match via the API
-2. Runs cutechess-cli, parsing output line by line
-3. Reports results in batches every 10 games
-4. Uploads the full PGN on completion
+2. Runs a pilot phase (50 games with -debug) to measure NPS under full concurrency
+3. Computes timemult = max(1.0, target_nps / measured_nps) and adjusts TC
+4. Runs the main match, parsing output line by line
+5. Reports results in batches every 10 games
+6. Uploads the full PGN on completion
 """
 
 import argparse
@@ -25,6 +27,9 @@ import subprocess
 import sys
 import urllib.request
 import urllib.error
+
+TARGET_NPS = 2_000_000  # 2M NPS reference
+PILOT_GAMES = 50
 
 
 def api_request(url, api_key, endpoint, data=None):
@@ -51,71 +56,130 @@ def api_request(url, api_key, endpoint, data=None):
         return None
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Run H2H match with API reporting')
-    parser.add_argument('--engine1', required=True, help='Path to engine 1 binary')
-    parser.add_argument('--tag1', required=True, help='Engine 1 version tag')
-    parser.add_argument('--engine2', required=True, help='Path to engine 2 binary')
-    parser.add_argument('--tag2', required=True, help='Engine 2 version tag')
-    parser.add_argument('--games', type=int, default=5000, help='Total games')
-    parser.add_argument('--tc', default='0/1:00+0.5', help='Time control')
-    parser.add_argument('--concurrency', type=int, default=24, help='Concurrent games')
-    parser.add_argument('--hash', type=int, default=128, help='Hash size MB')
-    parser.add_argument('--threads', type=int, default=1, help='Threads per engine')
-    parser.add_argument('--book', default='', help='Path to opening book')
-    parser.add_argument('--book-format', default='pgn', help='Book format (pgn or epd)')
-    parser.add_argument('--pgn-out', default='/tmp/h2h_match.pgn', help='PGN output file')
-    parser.add_argument('--api-url', required=True, help='Dashboard API URL')
-    parser.add_argument('--api-key', required=True, help='API key')
-    args = parser.parse_args()
-
-    rounds = args.games // 2  # cutechess plays 2 games per round (colour swap)
-
-    # Create match via API
-    print(f"Creating match: {args.tag1} vs {args.tag2} ({args.games} games, TC {args.tc})")
-    result = api_request(args.api_url, args.api_key, '/api/h2h/create', {
-        'engine1_tag': args.tag1,
-        'engine2_tag': args.tag2,
-        'total_games': args.games,
-        'time_control': args.tc,
-    })
-    if not result or 'match_id' not in result:
-        print("Failed to create match", file=sys.stderr)
-        sys.exit(1)
-
-    match_id = result['match_id']
-    print(f"Match created: ID {match_id}")
-
-    # Build cutechess command
+def build_cutechess_cmd(tag1, engine1, tag2, engine2, tc, concurrency, hash_mb,
+                        threads, rounds, pgn_out, book='', book_format='pgn',
+                        debug=False):
+    """Build a cutechess-cli command list."""
     cmd = [
         'cutechess-cli',
-        '-engine', f'name={args.tag1}', f'cmd={args.engine1}',
-            f'option.Hash={args.hash}', f'option.Threads={args.threads}',
-        '-engine', f'name={args.tag2}', f'cmd={args.engine2}',
-            f'option.Hash={args.hash}', f'option.Threads={args.threads}',
-        '-each', 'proto=uci', f'tc={args.tc}',
+        '-engine', f'name={tag1}', f'cmd={engine1}',
+            f'option.Hash={hash_mb}', f'option.Threads={threads}',
+        '-engine', f'name={tag2}', f'cmd={engine2}',
+            f'option.Hash={hash_mb}', f'option.Threads={threads}',
+        '-each', 'proto=uci', f'tc={tc}',
         '-repeat',
         '-games', '2',
         '-rounds', str(rounds),
-        '-concurrency', str(args.concurrency),
+        '-concurrency', str(concurrency),
         '-draw', 'movenumber=40', 'movecount=8', 'score=10',
         '-resign', 'movecount=3', 'score=500',
-        '-pgnout', args.pgn_out,
+        '-pgnout', pgn_out,
         '-recover',
     ]
-
-    if args.book:
-        cmd.extend(['-openings', f'file={args.book}', f'format={args.book_format}',
+    if debug:
+        cmd.append('-debug')
+    if book:
+        cmd.extend(['-openings', f'file={book}', f'format={book_format}',
                      'order=random', 'plies=24'])
+    return cmd
 
-    print(f"Running: {' '.join(cmd)}")
-    print()
 
-    # Run cutechess-cli and parse output
+def run_pilot(args):
+    """Run a short pilot match with -debug to measure NPS under full concurrency.
+    Returns average NPS across both engines, or None if measurement fails."""
+    pilot_rounds = PILOT_GAMES // 2
+    pilot_pgn = '/tmp/h2h_pilot.pgn'
+
+    print(f"=== Pilot phase: {PILOT_GAMES} games at full concurrency with NPS measurement ===")
+    cmd = build_cutechess_cmd(
+        args.tag1, args.engine1, args.tag2, args.engine2,
+        args.tc, args.concurrency, args.hash, args.threads,
+        pilot_rounds, pilot_pgn, args.book, args.book_format,
+        debug=True,
+    )
+
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                text=True, bufsize=1)
 
-    # Track results for batch reporting
+    # Parse NPS from debug output lines like:
+    # <engine1(0)> info depth 12 ... nps 1823456 ...
+    nps_re = re.compile(r'nps (\d+)')
+    nps_samples = []
+
+    for line in process.stdout:
+        m = nps_re.search(line)
+        if m:
+            nps_samples.append(int(m.group(1)))
+
+    process.wait()
+
+    # Clean up pilot PGN
+    if os.path.isfile(pilot_pgn):
+        os.unlink(pilot_pgn)
+
+    if not nps_samples:
+        print("Warning: no NPS data captured during pilot", file=sys.stderr)
+        return None
+
+    avg_nps = sum(nps_samples) // len(nps_samples)
+    print(f"Pilot complete: {len(nps_samples)} NPS samples, average {avg_nps:,} NPS")
+    return avg_nps
+
+
+def adjust_tc(tc_str, timemult):
+    """Scale a time control string by timemult.
+    Handles format like '0/1:00+0.5' -> '0/1:30+0.75' for timemult=1.5"""
+    if timemult <= 1.0:
+        return tc_str
+
+    # Parse TC: "0/M:SS+I" or "0/S+I"
+    m = re.match(r'^(\d+)/(?:(\d+):)?(\d+(?:\.\d+)?)\+(\d+(?:\.\d+)?)$', tc_str)
+    if not m:
+        print(f"Warning: cannot parse TC '{tc_str}' for adjustment", file=sys.stderr)
+        return tc_str
+
+    moves = m.group(1)
+    minutes = int(m.group(2)) if m.group(2) else 0
+    seconds = float(m.group(3))
+    increment = float(m.group(4))
+
+    total_seconds = minutes * 60 + seconds
+    new_total = total_seconds * timemult
+    new_increment = increment * timemult
+
+    new_minutes = int(new_total // 60)
+    new_seconds = new_total - new_minutes * 60
+
+    if new_minutes > 0:
+        if new_seconds == int(new_seconds):
+            time_part = f"{new_minutes}:{int(new_seconds):02d}"
+        else:
+            time_part = f"{new_minutes}:{new_seconds:05.2f}"
+    else:
+        time_part = f"{new_seconds:.2f}".rstrip('0').rstrip('.')
+
+    new_inc = f"{new_increment:.2f}".rstrip('0').rstrip('.')
+
+    return f"{moves}/{time_part}+{new_inc}"
+
+
+def run_match(args, match_id, tc, effective_tc):
+    """Run the main match and report results."""
+    rounds = args.games // 2
+
+    cmd = build_cutechess_cmd(
+        args.tag1, args.engine1, args.tag2, args.engine2,
+        tc, args.concurrency, args.hash, args.threads,
+        rounds, args.pgn_out, args.book, args.book_format,
+    )
+
+    print(f"Running main match: {args.games} games, TC {effective_tc}")
+    print(f"Command: {' '.join(cmd)}")
+    print()
+
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               text=True, bufsize=1)
+
     batch_e1_wins = 0
     batch_e2_wins = 0
     batch_draws = 0
@@ -123,9 +187,6 @@ def main():
     report_interval = 10
     total_reported = 0
 
-    # Parse cutechess output lines like:
-    # Finished game 1 (v1.0.36 vs v1.0.37-rc1): 1-0 {White wins by adjudication}
-    # Score of v1.0.36 vs v1.0.37-rc1: 5 - 3 - 2  [0.600] 10
     game_re = re.compile(
         r'Finished game \d+ \((\S+) vs (\S+)\): (1-0|0-1|1/2-1/2|\*)'
     )
@@ -213,6 +274,72 @@ def main():
             'match_id': match_id,
         })
         sys.exit(1)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Run H2H match with API reporting')
+    parser.add_argument('--engine1', required=True, help='Path to engine 1 binary')
+    parser.add_argument('--tag1', required=True, help='Engine 1 version tag')
+    parser.add_argument('--engine2', required=True, help='Path to engine 2 binary')
+    parser.add_argument('--tag2', required=True, help='Engine 2 version tag')
+    parser.add_argument('--games', type=int, default=5000, help='Total games')
+    parser.add_argument('--tc', default='0/1:00+0.5', help='Time control')
+    parser.add_argument('--concurrency', type=int, default=24, help='Concurrent games')
+    parser.add_argument('--hash', type=int, default=128, help='Hash size MB')
+    parser.add_argument('--threads', type=int, default=1, help='Threads per engine')
+    parser.add_argument('--book', default='', help='Path to opening book')
+    parser.add_argument('--book-format', default='pgn', help='Book format (pgn or epd)')
+    parser.add_argument('--pgn-out', default='/tmp/h2h_match.pgn', help='PGN output file')
+    parser.add_argument('--api-url', required=True, help='Dashboard API URL')
+    parser.add_argument('--api-key', required=True, help='API key')
+    parser.add_argument('--target-nps', type=int, default=TARGET_NPS,
+                        help=f'Target NPS for timemult (default: {TARGET_NPS:,})')
+    parser.add_argument('--no-pilot', action='store_true',
+                        help='Skip pilot phase (no NPS calibration)')
+    args = parser.parse_args()
+
+    # Create match via API
+    print(f"Creating match: {args.tag1} vs {args.tag2} ({args.games} games, TC {args.tc})")
+    result = api_request(args.api_url, args.api_key, '/api/h2h/create', {
+        'engine1_tag': args.tag1,
+        'engine2_tag': args.tag2,
+        'total_games': args.games,
+        'time_control': args.tc,
+    })
+    if not result or 'match_id' not in result:
+        print("Failed to create match", file=sys.stderr)
+        sys.exit(1)
+
+    match_id = result['match_id']
+    print(f"Match created: ID {match_id}")
+
+    # Pilot phase: measure NPS under full concurrency
+    timemult = 1.0
+    effective_tc = args.tc
+    avg_nps = None
+
+    if not args.no_pilot:
+        avg_nps = run_pilot(args)
+        if avg_nps:
+            timemult = max(1.0, args.target_nps / avg_nps)
+            if timemult > 1.0:
+                effective_tc = adjust_tc(args.tc, timemult)
+                print(f"NPS below target ({avg_nps:,} < {args.target_nps:,})")
+                print(f"Applying timemult {timemult:.2f}: TC {args.tc} -> {effective_tc}")
+            else:
+                print(f"NPS OK ({avg_nps:,} >= {args.target_nps:,}), no TC adjustment needed")
+
+            # Report calibration to API
+            api_request(args.api_url, args.api_key, '/api/h2h/calibration', {
+                'match_id': match_id,
+                'avg_nps': avg_nps,
+                'timemult': round(timemult, 2),
+                'effective_tc': effective_tc,
+            })
+        print()
+
+    # Run the main match
+    run_match(args, match_id, effective_tc, effective_tc)
 
 
 if __name__ == '__main__':

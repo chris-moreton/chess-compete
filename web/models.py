@@ -249,6 +249,9 @@ class H2hMatch(db.Model):
     engine2_wins = db.Column(db.Integer, nullable=False, default=0)
     draws = db.Column(db.Integer, nullable=False, default=0)
     status = db.Column(db.String(20), nullable=False, default='running')  # running, completed, failed
+    avg_nps = db.Column(db.Integer)  # Average NPS measured during pilot phase under full concurrency
+    timemult = db.Column(db.Float)  # Time multiplier applied (1.0 = no adjustment)
+    effective_tc = db.Column(db.String(50))  # Actual TC used after timemult adjustment
     pgn = db.Column(db.Text)  # Full PGN on completion
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     completed_at = db.Column(db.DateTime)
