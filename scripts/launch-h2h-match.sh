@@ -83,13 +83,14 @@ VCPUS=$(aws ec2 describe-instance-types --instance-types "$INSTANCE_TYPE" \
     --query 'InstanceTypes[0].VCpuInfo.DefaultVCpus' --output text)
 CONCURRENCY=$((VCPUS / 2))
 
-# Estimate time
+# Estimate time (use python3 for float math - bc is unreliable on macOS)
 AVG_SECS_PER_GAME=135
-BATCHES=$(( (GAMES + CONCURRENCY - 1) / CONCURRENCY ))
-EST_HOURS=$(echo "scale=1; $BATCHES * $AVG_SECS_PER_GAME / 3600" | bc)
-# Add 30 min for setup/build time
-MAX_HOURS=$(echo "scale=0; $EST_HOURS + 1" | bc | sed 's/\..*//')
-MAX_HOURS=$((MAX_HOURS < 2 ? 2 : MAX_HOURS))
+read -r EST_HOURS MAX_HOURS <<< $(python3 -c "
+batches = ($GAMES + $CONCURRENCY - 1) // $CONCURRENCY
+est = batches * $AVG_SECS_PER_GAME / 3600
+max_h = max(2, int(est + 1.5))
+print(f'{est:.1f} {max_h}')
+")
 SHUTDOWN_MINUTES=$((MAX_HOURS * 60))
 
 echo "H2H Match: $ENGINE1 vs $ENGINE2"
@@ -106,7 +107,7 @@ SPOT_PRICE=$(aws ec2 describe-spot-price-history --region "$REGION" \
     --instance-types "$INSTANCE_TYPE" --product-descriptions "Linux/UNIX" \
     --max-items 1 --query 'SpotPriceHistory[0].SpotPrice' --output text 2>/dev/null || echo "unknown")
 if [ "$SPOT_PRICE" != "unknown" ] && [ "$SPOT_PRICE" != "None" ]; then
-    EST_COST=$(echo "scale=2; $SPOT_PRICE * $EST_HOURS" | bc)
+    EST_COST=$(python3 -c "print(f'{$SPOT_PRICE * $EST_HOURS:.2f}')")
     echo "  Spot price:  \$$SPOT_PRICE/hr (est. cost: ~\$$EST_COST)"
 else
     echo "  Spot price:  unknown"
