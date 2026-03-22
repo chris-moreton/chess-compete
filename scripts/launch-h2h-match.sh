@@ -105,9 +105,9 @@ echo ""
 # Get spot price estimate
 SPOT_PRICE=$(aws ec2 describe-spot-price-history --region "$REGION" \
     --instance-types "$INSTANCE_TYPE" --product-descriptions "Linux/UNIX" \
-    --max-items 1 --query 'SpotPriceHistory[0].SpotPrice' --output text 2>/dev/null || echo "unknown")
-if [ "$SPOT_PRICE" != "unknown" ] && [ "$SPOT_PRICE" != "None" ]; then
-    EST_COST=$(python3 -c "print(f'{$SPOT_PRICE * $EST_HOURS:.2f}')")
+    --max-items 1 --query 'SpotPriceHistory[0].SpotPrice' --output text 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+if [ -n "$SPOT_PRICE" ] && [ "$SPOT_PRICE" != "unknown" ] && [ "$SPOT_PRICE" != "None" ]; then
+    EST_COST=$(python3 -c "print(f'{float(\"$SPOT_PRICE\") * $EST_HOURS:.2f}')")
     echo "  Spot price:  \$$SPOT_PRICE/hr (est. cost: ~\$$EST_COST)"
 else
     echo "  Spot price:  unknown"
