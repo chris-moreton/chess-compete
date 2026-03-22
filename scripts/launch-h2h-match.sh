@@ -143,10 +143,7 @@ disown
 # Install system packages
 yum install -y python3.11 python3.11-pip git gcc gcc-c++ cmake make
 
-# Install Rust
-su - ec2-user -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y'
-
-# Install cutechess-cli from source
+# Install cutechess-cli from source (fast on many cores, no pre-built Linux CLI available)
 cd /tmp
 git clone --depth 1 https://github.com/cutechess/cutechess.git
 cd cutechess
@@ -156,29 +153,31 @@ cp cutechess-cli /usr/local/bin/
 cd /
 rm -rf /tmp/cutechess
 
-# Clone repos and build engines
+# Download engine binaries from GitHub releases (much faster than compiling)
 su - ec2-user -c '
-    source ~/.cargo/env
-    export RUSTFLAGS="-C target-cpu=native"
-    export RUST_MIN_STACK=4097152
-
     cd ~
-    git clone https://github.com/chris-moreton/rusty-rival.git
     git clone https://github.com/chris-moreton/chess-compete.git
+    cd chess-compete
+    python3.11 -m pip install -r requirements.txt
 
-    # Build engine 1
-    cd ~/rusty-rival
-    git checkout __ENGINE1__
-    cargo build --release
-    cp target/release/rusty-rival ~/engine1
+    REPO="chris-moreton/rusty-rival"
 
-    # Build engine 2
-    git checkout __ENGINE2__
-    cargo build --release
-    cp target/release/rusty-rival ~/engine2
+    # Download engine 1
+    echo "=== Downloading __ENGINE1__ ==="
+    curl -sL "https://github.com/${REPO}/releases/download/__ENGINE1__/rusty-rival-__ENGINE1__-linux-x86_64" -o ~/engine1
+    chmod +x ~/engine1
+
+    # Download engine 2
+    echo "=== Downloading __ENGINE2__ ==="
+    curl -sL "https://github.com/${REPO}/releases/download/__ENGINE2__/rusty-rival-__ENGINE2__-linux-x86_64" -o ~/engine2
+    chmod +x ~/engine2
+
+    # Verify downloads
+    ~/engine1 <<< "uci" | head -1
+    ~/engine2 <<< "uci" | head -1
 '
 
-echo "=== $(date) Engines built, starting match ==="
+echo "=== $(date) Engines ready, starting match ==="
 
 # Run the match with API reporting
 su - ec2-user -c '
