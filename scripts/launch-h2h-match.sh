@@ -140,7 +140,7 @@ shutdown -h +__SHUTDOWN_MINUTES__
 ) &
 disown
 
-# Install system packages (Ubuntu)
+# Install system packages (Ubuntu 22.04)
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y python3 python3-pip python3-venv git cutechess awscli
@@ -150,7 +150,7 @@ su - ubuntu -c '
     cd ~
     git clone https://github.com/chris-moreton/chess-compete.git
     cd chess-compete
-    python3 -m pip install --break-system-packages -r requirements.txt
+    python3 -m pip install -r requirements.txt
 
     REPO="chris-moreton/rusty-rival"
 
@@ -213,10 +213,10 @@ USER_DATA_B64=$(echo "$USER_DATA" | base64)
 # ---------- Launch instance ----------
 REGION_ARGS=(--region "$REGION")
 
-# Auto-detect Ubuntu AMI
+# Auto-detect Ubuntu 22.04 AMI (has cutechess in apt)
 AMI_ID=$(aws ec2 describe-images "${REGION_ARGS[@]}" \
     --owners 099720109477 \
-    --filters "Name=name,Values=ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*" "Name=state,Values=available" \
+    --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" "Name=state,Values=available" \
     --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
     --output text)
 
