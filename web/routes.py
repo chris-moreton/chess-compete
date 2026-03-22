@@ -11,6 +11,7 @@ from web.queries import (
 from datetime import datetime, timedelta
 from web.models import (
     Cup, CupRound, CupMatch, Engine, Game, EpdTestRun, EpdTestResult,
+    H2hMatch,
     SpsaIteration, SpsaParam, SpsaRun, SpsaWorker, SpsaWorkerHeartbeat
 )
 from web.database import db
@@ -1476,4 +1477,217 @@ def register_routes(app):
             total_games=total_games,
             avg_nps=avg_nps_all,
             effective_concurrency=round(effective_concurrency, 1),
+        )
+
+    # =========================================================================
+    # Head-to-Head Match Endpoints
+    # =========================================================================
+
+    @app.route('/api/h2h/create', methods=['POST'])
+    def h2h_create():
+        """Create a new H2H match. Returns the match ID."""
+        if not verify_worker_api_key():
+            return jsonify({'error': 'Invalid API key'}), 401
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Missing JSON body'}), 400
+        required = ['engine1_tag', 'engine2_tag', 'total_games', 'time_control']
+        for field in required:
+            if field not in data:
+                return jsonify({'error': f'Missing field: {field}'}), 400
+        match = H2hMatch(
+            engine1_tag=data['engine1_tag'],
+            engine2_tag=data['engine2_tag'],
+            total_games=data['total_games'],
+            time_control=data['time_control'],
+        )
+        db.session.add(match)
+        db.session.commit()
+        return jsonify({'match_id': match.id})
+
+    @app.route('/api/h2h/result', methods=['POST'])
+    def h2h_result():
+        """Report a batch of game results for a H2H match."""
+        if not verify_worker_api_key():
+            return jsonify({'error': 'Invalid API key'}), 401
+        data = request.get_json()
+        if not data or 'match_id' not in data:
+            return jsonify({'error': 'Missing match_id'}), 400
+
+        match_id = data['match_id']
+        e1_wins = data.get('engine1_wins', 0)
+        e2_wins = data.get('engine2_wins', 0)
+        draws = data.get('draws', 0)
+        games = e1_wins + e2_wins + draws
+
+        if games == 0:
+            return jsonify({'ok': True})
+
+        # Atomic increment
+        db.session.execute(
+            db.text('''
+                UPDATE h2h_matches SET
+                    games_played = games_played + :games,
+                    engine1_wins = engine1_wins + :e1w,
+                    engine2_wins = engine2_wins + :e2w,
+                    draws = draws + :d
+                WHERE id = :mid
+            '''),
+            {'games': games, 'e1w': e1_wins, 'e2w': e2_wins, 'd': draws, 'mid': match_id}
+        )
+        db.session.commit()
+        return jsonify({'ok': True})
+
+    @app.route('/api/h2h/pgn', methods=['POST'])
+    def h2h_pgn():
+        """Upload the full PGN for a completed H2H match."""
+        if not verify_worker_api_key():
+            return jsonify({'error': 'Invalid API key'}), 401
+        data = request.get_json()
+        if not data or 'match_id' not in data or 'pgn' not in data:
+            return jsonify({'error': 'Missing match_id or pgn'}), 400
+
+        match = H2hMatch.query.get(data['match_id'])
+        if not match:
+            return jsonify({'error': 'Match not found'}), 404
+
+        match.pgn = data['pgn']
+        match.status = 'completed'
+        match.completed_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({'ok': True})
+
+    @app.route('/api/h2h/fail', methods=['POST'])
+    def h2h_fail():
+        """Mark a H2H match as failed."""
+        if not verify_worker_api_key():
+            return jsonify({'error': 'Invalid API key'}), 401
+        data = request.get_json()
+        if not data or 'match_id' not in data:
+            return jsonify({'error': 'Missing match_id'}), 400
+
+        match = H2hMatch.query.get(data['match_id'])
+        if not match:
+            return jsonify({'error': 'Match not found'}), 404
+
+        match.status = 'failed'
+        match.completed_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({'ok': True})
+
+    @app.route('/api/h2h/status/<int:match_id>')
+    def h2h_status(match_id):
+        """Poll for H2H match status (live updates)."""
+        match = H2hMatch.query.get(match_id)
+        if not match:
+            return jsonify({'error': 'Match not found'}), 404
+        return jsonify({
+            'match_id': match.id,
+            'engine1_tag': match.engine1_tag,
+            'engine2_tag': match.engine2_tag,
+            'total_games': match.total_games,
+            'games_played': match.games_played,
+            'engine1_wins': match.engine1_wins,
+            'engine2_wins': match.engine2_wins,
+            'draws': match.draws,
+            'status': match.status,
+        })
+
+    @app.route('/h2h')
+    def h2h_dashboard():
+        """Head-to-head matches dashboard with BayesElo leaderboard."""
+        import math
+        import re
+        import subprocess
+        import tempfile
+
+        matches = H2hMatch.query.order_by(H2hMatch.created_at.desc()).all()
+
+        # Build BayesElo leaderboard from all completed match PGNs
+        leaderboard = []
+        completed_matches = [m for m in matches if m.status == 'completed' and m.pgn]
+        if completed_matches:
+            bayeselo_bin = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'bin', 'bayeselo')
+            if os.path.isfile(bayeselo_bin):
+                # Concatenate all PGNs
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.pgn', delete=False) as tmp:
+                    for m in completed_matches:
+                        tmp.write(m.pgn)
+                        tmp.write('\n')
+                    tmp_path = tmp.name
+
+                try:
+                    commands = f"readpgn {tmp_path}\nelo\nmm\nratings\nx\nx\n"
+                    result = subprocess.run(
+                        [bayeselo_bin], input=commands, capture_output=True, text=True, timeout=30
+                    )
+                    for line in result.stdout.splitlines():
+                        m = re.match(r'\s*(\d+)\s+(\S+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)', line)
+                        if m:
+                            leaderboard.append({
+                                'rank': int(m.group(1)),
+                                'engine': m.group(2),
+                                'elo': int(m.group(3)),
+                                'plus': int(m.group(4)),
+                                'minus': int(m.group(5)),
+                            })
+                except (subprocess.TimeoutExpired, FileNotFoundError):
+                    pass
+                finally:
+                    os.unlink(tmp_path)
+
+            # Also compute per-engine game counts from PGN headers
+            engine_games = {}
+            for cm in completed_matches:
+                import re as _re
+                games = _re.findall(
+                    r'\[White "(.*?)"\].*?\[Black "(.*?)"\].*?\[Result "(.*?)"\]',
+                    cm.pgn, _re.DOTALL
+                )
+                for white, black, result in games:
+                    if result in ('1-0', '0-1', '1/2-1/2'):
+                        engine_games[white] = engine_games.get(white, 0) + 1
+                        engine_games[black] = engine_games.get(black, 0) + 1
+            for entry in leaderboard:
+                entry['games'] = engine_games.get(entry['engine'], 0)
+
+        # Normalize leaderboard so lowest = 0
+        if leaderboard:
+            min_elo = min(e['elo'] for e in leaderboard)
+            for entry in leaderboard:
+                entry['elo_diff'] = entry['elo'] - min_elo
+
+        # Compute Elo diff for each match
+        matches_data = []
+        for m in matches:
+            total = m.engine1_wins + m.engine2_wins + m.draws
+            elo_diff = None
+            if total > 0:
+                score = (m.engine1_wins + m.draws * 0.5) / total
+                if 0 < score < 1:
+                    elo_diff = round(-400 * math.log10(1 / score - 1), 1)
+                elif score >= 1:
+                    elo_diff = 999
+                elif score <= 0:
+                    elo_diff = -999
+            matches_data.append({
+                'id': m.id,
+                'engine1_tag': m.engine1_tag,
+                'engine2_tag': m.engine2_tag,
+                'time_control': m.time_control,
+                'total_games': m.total_games,
+                'games_played': m.games_played,
+                'engine1_wins': m.engine1_wins,
+                'engine2_wins': m.engine2_wins,
+                'draws': m.draws,
+                'status': m.status,
+                'elo_diff': elo_diff,
+                'created_at': m.created_at,
+                'completed_at': m.completed_at,
+            })
+
+        return render_template(
+            'h2h.html',
+            matches=matches_data,
+            leaderboard=leaderboard,
         )

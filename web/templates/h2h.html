@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Head-to-Head Matches</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 20px; background: #f5f5f5; }
+        h1, h2 { color: #333; }
+        a { color: #2563eb; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .nav { margin-bottom: 20px; font-size: 14px; }
+        .nav a { margin-right: 15px; }
+        table { border-collapse: collapse; width: 100%; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 30px; }
+        th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; font-size: 13px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
+        td { font-size: 14px; }
+        tr:hover { background: #f8f9fa; }
+        .elo-positive { color: #16a34a; font-weight: 600; }
+        .elo-negative { color: #dc2626; font-weight: 600; }
+        .elo-neutral { color: #666; }
+        .status-running { color: #d97706; font-weight: 600; }
+        .status-completed { color: #16a34a; }
+        .status-failed { color: #dc2626; }
+        .progress-bar { background: #e5e7eb; border-radius: 4px; height: 6px; width: 120px; display: inline-block; vertical-align: middle; }
+        .progress-fill { background: #2563eb; border-radius: 4px; height: 100%; }
+        .section { margin-bottom: 40px; }
+        .empty { color: #999; font-style: italic; padding: 20px; text-align: center; }
+        td.right, th.right { text-align: right; }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <a href="/">Dashboard</a>
+        <a href="/spsa">SPSA</a>
+        <a href="/spsa/workers">Workers</a>
+        <a href="/h2h"><strong>H2H Matches</strong></a>
+    </div>
+
+    <h1>Head-to-Head Matches</h1>
+
+    <div class="section">
+        <h2>BayesElo Leaderboard</h2>
+        {% if leaderboard %}
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Engine</th>
+                    <th class="right">BayesElo</th>
+                    <th class="right">+/-</th>
+                    <th class="right">Elo+</th>
+                    <th class="right">Games</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for e in leaderboard %}
+                <tr>
+                    <td>{{ e.rank }}</td>
+                    <td><strong>{{ e.engine }}</strong></td>
+                    <td class="right">{{ e.elo }}</td>
+                    <td class="right" style="color: #999;">+{{ e.plus }}/-{{ e.minus }}</td>
+                    <td class="right {% if e.elo_diff > 0 %}elo-positive{% elif e.elo_diff == 0 %}elo-neutral{% endif %}">{{ "+%d"|format(e.elo_diff) if e.elo_diff is not none else '-' }}</td>
+                    <td class="right">{{ e.games }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty">No completed matches yet. BayesElo leaderboard will appear after the first match completes.</div>
+        {% endif %}
+    </div>
+
+    <div class="section">
+        <h2>Matches</h2>
+        {% if matches %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Engine 1</th>
+                    <th>Engine 2</th>
+                    <th>TC</th>
+                    <th class="right">Progress</th>
+                    <th class="right">E1 W</th>
+                    <th class="right">E2 W</th>
+                    <th class="right">Draws</th>
+                    <th class="right">Elo Diff</th>
+                    <th>Status</th>
+                    <th>Started</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in matches %}
+                <tr>
+                    <td><strong>{{ m.engine1_tag }}</strong></td>
+                    <td><strong>{{ m.engine2_tag }}</strong></td>
+                    <td>{{ m.time_control }}</td>
+                    <td class="right">
+                        {{ m.games_played }}/{{ m.total_games }}
+                        <div class="progress-bar"><div class="progress-fill" style="width: {{ (m.games_played / m.total_games * 100) if m.total_games > 0 else 0 }}%"></div></div>
+                    </td>
+                    <td class="right">{{ m.engine1_wins }}</td>
+                    <td class="right">{{ m.engine2_wins }}</td>
+                    <td class="right">{{ m.draws }}</td>
+                    <td class="right {% if m.elo_diff is not none %}{% if m.elo_diff > 5 %}elo-positive{% elif m.elo_diff < -5 %}elo-negative{% else %}elo-neutral{% endif %}{% endif %}">
+                        {{ "%+.1f"|format(m.elo_diff) if m.elo_diff is not none else '-' }}
+                    </td>
+                    <td class="status-{{ m.status }}">{{ m.status }}</td>
+                    <td>{{ m.created_at.strftime('%Y-%m-%d %H:%M') if m.created_at else '-' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty">No matches yet.</div>
+        {% endif %}
+    </div>
+
+    {% if matches and matches|selectattr('status', 'equalto', 'running')|list %}
+    <script>
+        // Auto-refresh every 10 seconds if there are running matches
+        setTimeout(() => location.reload(), 10000);
+    </script>
+    {% endif %}
+</body>
+</html>

@@ -28,6 +28,7 @@ def create_app():
     app.config['SQLALCHEMY_DATABASE_URI'] = db_url
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-key-change-in-production')
+    app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB for PGN uploads
 
     # Initialize extensions
     db.init_app(app)

@@ -235,6 +235,28 @@ class EpdTestResult(db.Model):
         return f'<EpdTestResult {self.position_id}: {status}>'
 
 
+class H2hMatch(db.Model):
+    """A head-to-head match between two engine versions."""
+    __tablename__ = 'h2h_matches'
+
+    id = db.Column(db.Integer, primary_key=True)
+    engine1_tag = db.Column(db.String(100), nullable=False)
+    engine2_tag = db.Column(db.String(100), nullable=False)
+    time_control = db.Column(db.String(50), nullable=False)
+    total_games = db.Column(db.Integer, nullable=False)
+    games_played = db.Column(db.Integer, nullable=False, default=0)
+    engine1_wins = db.Column(db.Integer, nullable=False, default=0)
+    engine2_wins = db.Column(db.Integer, nullable=False, default=0)
+    draws = db.Column(db.Integer, nullable=False, default=0)
+    status = db.Column(db.String(20), nullable=False, default='running')  # running, completed, failed
+    pgn = db.Column(db.Text)  # Full PGN on completion
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    completed_at = db.Column(db.DateTime)
+
+    def __repr__(self):
+        return f'<H2hMatch {self.engine1_tag} vs {self.engine2_tag}: {self.status}>'
+
+
 class SpsaRun(db.Model):
     """A logical SPSA tuning run, grouping iterations together."""
     __tablename__ = 'spsa_runs'
