@@ -23,6 +23,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import urllib.request
@@ -163,6 +164,35 @@ def adjust_tc(tc_str, timemult):
     return f"{moves}/{time_part}+{new_inc}"
 
 
+def upload_pgn_and_complete(api_url, api_key, match_id, pgn_out, label=""):
+    """Upload PGN (if it exists) and ensure match is marked complete."""
+    prefix = f"[{label}] " if label else ""
+    pgn_uploaded = False
+    if os.path.isfile(pgn_out):
+        pgn_size = os.path.getsize(pgn_out)
+        print(f"{prefix}Uploading PGN ({pgn_size / 1024 / 1024:.1f} MB)...")
+        with open(pgn_out) as f:
+            pgn_content = f.read()
+        result = api_request(api_url, api_key, '/api/h2h/pgn', {
+            'match_id': match_id,
+            'pgn': pgn_content,
+        })
+        if result and result.get('ok'):
+            print(f"{prefix}PGN uploaded and match marked complete.")
+            pgn_uploaded = True
+        else:
+            print(f"{prefix}PGN upload failed.", file=sys.stderr)
+    else:
+        print(f"{prefix}No PGN file found at {pgn_out}", file=sys.stderr)
+
+    if not pgn_uploaded:
+        print(f"{prefix}Marking match as completed (without PGN).")
+        api_request(api_url, api_key, '/api/h2h/pgn', {
+            'match_id': match_id,
+            'pgn': '',
+        })
+
+
 def run_match(args, match_id, tc, effective_tc):
     """Run the main match and report results."""
     rounds = args.games // 2
@@ -179,6 +209,17 @@ def run_match(args, match_id, tc, effective_tc):
 
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                text=True, bufsize=1)
+
+    # SIGTERM handler for spot instance reclamation (2-min warning)
+    sigterm_received = False
+
+    def handle_sigterm(signum, frame):
+        nonlocal sigterm_received
+        sigterm_received = True
+        print("\n=== SIGTERM received (spot reclamation) - gracefully shutting down ===")
+        process.terminate()
+
+    signal.signal(signal.SIGTERM, handle_sigterm)
 
     batch_e1_wins = 0
     batch_e2_wins = 0
@@ -239,41 +280,27 @@ def run_match(args, match_id, tc, effective_tc):
             })
             total_reported += batch_size
 
+        if sigterm_received:
+            print(f"\nSpot reclamation: {total_reported} games saved. Uploading partial PGN...")
+            upload_pgn_and_complete(args.api_url, args.api_key, match_id, args.pgn_out,
+                                   label="SIGTERM")
+            sys.exit(0)
+
         print(f"\nMatch complete. {total_reported} games reported.")
-
-        # Upload PGN (best-effort - match is marked complete regardless)
-        pgn_uploaded = False
-        if os.path.isfile(args.pgn_out):
-            pgn_size = os.path.getsize(args.pgn_out)
-            print(f"Uploading PGN ({pgn_size / 1024 / 1024:.1f} MB)...")
-            with open(args.pgn_out) as f:
-                pgn_content = f.read()
-            result = api_request(args.api_url, args.api_key, '/api/h2h/pgn', {
-                'match_id': match_id,
-                'pgn': pgn_content,
-            })
-            if result and result.get('ok'):
-                print("PGN uploaded and match marked complete.")
-                pgn_uploaded = True
-            else:
-                print("PGN upload failed.", file=sys.stderr)
-        else:
-            print(f"Warning: PGN file not found at {args.pgn_out}", file=sys.stderr)
-
-        # If PGN upload didn't mark it complete, do it explicitly
-        if not pgn_uploaded:
-            print("Marking match as completed (without PGN).")
-            api_request(args.api_url, args.api_key, '/api/h2h/pgn', {
-                'match_id': match_id,
-                'pgn': '',
-            })
+        upload_pgn_and_complete(args.api_url, args.api_key, match_id, args.pgn_out)
 
     except KeyboardInterrupt:
-        print("\nInterrupted. Marking match as failed.")
+        print("\nInterrupted. Reporting remaining results and uploading partial PGN...")
         process.kill()
-        api_request(args.api_url, args.api_key, '/api/h2h/fail', {
-            'match_id': match_id,
-        })
+        if batch_size > 0:
+            api_request(args.api_url, args.api_key, '/api/h2h/result', {
+                'match_id': match_id,
+                'engine1_wins': batch_e1_wins,
+                'engine2_wins': batch_e2_wins,
+                'draws': batch_draws,
+            })
+        upload_pgn_and_complete(args.api_url, args.api_key, match_id, args.pgn_out,
+                               label="interrupted")
         sys.exit(1)
     except Exception as e:
         print(f"\nError: {e}", file=sys.stderr)
