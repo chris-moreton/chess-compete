@@ -143,7 +143,19 @@ disown
 # Install system packages (Ubuntu 22.04)
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y python3 python3-pip python3-venv git cutechess awscli
+apt-get install -y python3 python3-pip python3-venv git g++ cmake make awscli \
+    qt5-qmake qtbase5-dev libqt5svg5-dev
+
+# Build cutechess-cli
+cd /tmp
+git clone --depth 1 --branch v1.3.1 https://github.com/cutechess/cutechess.git
+cd cutechess
+cmake -DCMAKE_BUILD_TYPE=Release -DWITH_TESTS=OFF .
+make -j$(nproc) cutechess-cli
+cp projects/cli/cutechess-cli /usr/local/bin/
+chmod +x /usr/local/bin/cutechess-cli
+cd /
+rm -rf /tmp/cutechess
 
 # Download engine binaries from GitHub releases
 su - ubuntu -c '
