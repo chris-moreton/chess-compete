@@ -1630,51 +1630,48 @@ def register_routes(app):
 
         # Build BayesElo leaderboard from all completed match PGNs
         leaderboard = []
-        completed_matches = [m for m in matches if m.status == 'completed' and m.pgn]
-        if completed_matches:
-            bayeselo_bin = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'bin', 'bayeselo')
-            if os.path.isfile(bayeselo_bin):
-                # Concatenate all PGNs
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.pgn', delete=False) as tmp:
-                    for m in completed_matches:
-                        tmp.write(m.pgn)
-                        tmp.write('\n')
-                    tmp_path = tmp.name
+        completed_matches = [cm for cm in matches if cm.status == 'completed' and cm.pgn and len(cm.pgn) > 100]
+        try:
+            if completed_matches:
+                bayeselo_bin = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'bin', 'bayeselo')
+                if os.path.isfile(bayeselo_bin):
+                    # Concatenate all PGNs
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.pgn', delete=False) as tmp:
+                        for cm in completed_matches:
+                            tmp.write(cm.pgn)
+                            tmp.write('\n')
+                        tmp_path = tmp.name
 
-                try:
-                    commands = f"readpgn {tmp_path}\nelo\nmm\nratings\nx\nx\n"
-                    result = subprocess.run(
-                        [bayeselo_bin], input=commands, capture_output=True, text=True, timeout=30
-                    )
-                    for line in result.stdout.splitlines():
-                        m = re.match(r'\s*(\d+)\s+(\S+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)', line)
-                        if m:
-                            leaderboard.append({
-                                'rank': int(m.group(1)),
-                                'engine': m.group(2),
-                                'elo': int(m.group(3)),
-                                'plus': int(m.group(4)),
-                                'minus': int(m.group(5)),
-                            })
-                except (subprocess.TimeoutExpired, FileNotFoundError):
-                    pass
-                finally:
-                    os.unlink(tmp_path)
+                    try:
+                        commands = f"readpgn {tmp_path}\nelo\nmm\nratings\nx\nx\n"
+                        result = subprocess.run(
+                            [bayeselo_bin], input=commands, capture_output=True, text=True, timeout=30
+                        )
+                        for line in result.stdout.splitlines():
+                            rm = re.match(r'\s*(\d+)\s+(\S+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)', line)
+                            if rm:
+                                leaderboard.append({
+                                    'rank': int(rm.group(1)),
+                                    'engine': rm.group(2),
+                                    'elo': int(rm.group(3)),
+                                    'plus': int(rm.group(4)),
+                                    'minus': int(rm.group(5)),
+                                })
+                    except (subprocess.TimeoutExpired, FileNotFoundError):
+                        pass
+                    finally:
+                        os.unlink(tmp_path)
 
-            # Also compute per-engine game counts from PGN headers
-            engine_games = {}
-            for cm in completed_matches:
-                import re as _re
-                games = _re.findall(
-                    r'\[White "(.*?)"\].*?\[Black "(.*?)"\].*?\[Result "(.*?)"\]',
-                    cm.pgn, _re.DOTALL
-                )
-                for white, black, result in games:
-                    if result in ('1-0', '0-1', '1/2-1/2'):
-                        engine_games[white] = engine_games.get(white, 0) + 1
-                        engine_games[black] = engine_games.get(black, 0) + 1
-            for entry in leaderboard:
-                entry['games'] = engine_games.get(entry['engine'], 0)
+                # Compute per-engine game counts from match stats
+                engine_games = {}
+                for cm in completed_matches:
+                    g = cm.games_played or 0
+                    engine_games[cm.engine1_tag] = engine_games.get(cm.engine1_tag, 0) + g
+                    engine_games[cm.engine2_tag] = engine_games.get(cm.engine2_tag, 0) + g
+                for entry in leaderboard:
+                    entry['games'] = engine_games.get(entry['engine'], 0)
+        except Exception:
+            leaderboard = []
 
         # Normalize leaderboard so lowest = 0
         if leaderboard:
