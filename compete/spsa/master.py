@@ -45,22 +45,22 @@ load_dotenv(CHESS_COMPETE_DIR / '.env')
 # engine_constants.rs values, min/max bounds, step sizes, and group assignments.
 # Used when creating new runs or backfilling missing params on existing runs.
 DEFAULT_PARAMS = {
-    # ==================== search-pruning (SPSA tuned, Run 18) ====================
-    'beta_prune_margin_per_depth': {'value': 151, 'min': 50, 'max': 300, 'step': 15, 'group': 'search-pruning'},
-    'beta_prune_max_depth': {'value': 10, 'min': 4, 'max': 16, 'step': 1, 'group': 'search-pruning'},
+    # ==================== search-pruning (SPSA tuned, Run 19) ====================
+    'beta_prune_margin_per_depth': {'value': 125, 'min': 50, 'max': 300, 'step': 15, 'group': 'search-pruning'},
+    'beta_prune_max_depth': {'value': 11, 'min': 4, 'max': 16, 'step': 1, 'group': 'search-pruning'},
     'null_move_reduce_depth_base': {'value': 2, 'min': 2, 'max': 8, 'step': 1, 'group': 'search-pruning'},
-    'null_move_min_depth': {'value': 6, 'min': 4, 'max': 14, 'step': 1, 'group': 'search-pruning'},
-    'see_prune_margin': {'value': 33, 'min': 5, 'max': 80, 'step': 5, 'group': 'search-pruning'},
-    'see_prune_max_depth': {'value': 8, 'min': 4, 'max': 16, 'step': 1, 'group': 'search-pruning'},
-    'alpha_prune_margin_base': {'value': 69, 'min': 20, 'max': 120, 'step': 8, 'group': 'search-pruning'},
-    'alpha_prune_margin_per_depth': {'value': 55, 'min': 30, 'max': 120, 'step': 8, 'group': 'search-pruning'},
-    'lmp_threshold_depth1': {'value': 6, 'min': 3, 'max': 15, 'step': 1, 'group': 'search-pruning'},
-    'lmp_threshold_depth2': {'value': 6, 'min': 3, 'max': 20, 'step': 1, 'group': 'search-pruning'},
-    'lmp_threshold_depth3': {'value': 7, 'min': 3, 'max': 25, 'step': 1, 'group': 'search-pruning'},
+    'null_move_min_depth': {'value': 4, 'min': 4, 'max': 14, 'step': 1, 'group': 'search-pruning'},
+    'see_prune_margin': {'value': 22, 'min': 5, 'max': 80, 'step': 5, 'group': 'search-pruning'},
+    'see_prune_max_depth': {'value': 6, 'min': 4, 'max': 16, 'step': 1, 'group': 'search-pruning'},
+    'alpha_prune_margin_base': {'value': 68, 'min': 20, 'max': 120, 'step': 8, 'group': 'search-pruning'},
+    'alpha_prune_margin_per_depth': {'value': 53, 'min': 30, 'max': 120, 'step': 8, 'group': 'search-pruning'},
+    'lmp_threshold_depth1': {'value': 8, 'min': 3, 'max': 15, 'step': 1, 'group': 'search-pruning'},
+    'lmp_threshold_depth2': {'value': 4, 'min': 3, 'max': 20, 'step': 1, 'group': 'search-pruning'},
+    'lmp_threshold_depth3': {'value': 8, 'min': 3, 'max': 25, 'step': 1, 'group': 'search-pruning'},
     'lmr_legal_moves_before_attempt': {'value': 3, 'min': 2, 'max': 8, 'step': 1, 'group': 'search-pruning'},
-    'lmr_min_depth': {'value': 4, 'min': 2, 'max': 6, 'step': 1, 'group': 'search-pruning'},
-    'iid_min_depth': {'value': 3, 'min': 2, 'max': 8, 'step': 1, 'group': 'search-pruning'},
-    'iid_reduce_depth': {'value': 1, 'min': 1, 'max': 6, 'step': 1, 'group': 'search-pruning'},
+    'lmr_min_depth': {'value': 5, 'min': 2, 'max': 6, 'step': 1, 'group': 'search-pruning'},
+    'iid_min_depth': {'value': 5, 'min': 2, 'max': 8, 'step': 1, 'group': 'search-pruning'},
+    'iid_reduce_depth': {'value': 3, 'min': 1, 'max': 6, 'step': 1, 'group': 'search-pruning'},
     # ==================== reductions-extensions (SPSA tuned, Run 13) ====================
     'lmr_history_good_divisor': {'value': 23, 'min': 4, 'max': 60, 'step': 4, 'group': 'reductions-extensions'},
     'lmr_history_bad_divisor': {'value': 26, 'min': 4, 'max': 60, 'step': 4, 'group': 'reductions-extensions'},
