@@ -198,7 +198,8 @@ su - ubuntu -c '
         --book ~/chess-compete/openings/8moves_v3.pgn \
         --book-format pgn \
         --api-url "__API_URL__" \
-        --api-key "__API_KEY__"
+        --api-key "__API_KEY__" \
+        __PILOT_FLAG__
 '
 
 echo "=== $(date) Match complete, shutting down ==="
@@ -217,6 +218,9 @@ USER_DATA="${USER_DATA//__THREADS__/$THREADS}"
 USER_DATA="${USER_DATA//__API_URL__/$SPSA_API_URL}"
 USER_DATA="${USER_DATA//__API_KEY__/$SPSA_API_KEY}"
 USER_DATA="${USER_DATA//__TARGET_NPS__/$TARGET_NPS}"
+PILOT_FLAG=""
+if [ "${NO_PILOT:-}" = "true" ]; then PILOT_FLAG="--no-pilot"; fi
+USER_DATA="${USER_DATA//__PILOT_FLAG__/$PILOT_FLAG}"
 USER_DATA="${USER_DATA//__MAX_HOURS__/$MAX_HOURS}"
 USER_DATA="${USER_DATA//__SHUTDOWN_MINUTES__/$SHUTDOWN_MINUTES}"
 
