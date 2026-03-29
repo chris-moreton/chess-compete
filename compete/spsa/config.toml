@@ -24,6 +24,11 @@ base_engine_name = "spsa-base"
 # S3 bucket for sharing built binaries between workers (empty = disabled)
 s3_build_cache = "chess-compete-builds"
 
+# Hash table size (MB) for rusty-rival during SPSA games.
+# Smaller values reduce cache pressure when running many concurrent games.
+# 0 = use engine default (256MB).
+hash_mb = 64
+
 # =============================================================================
 # REFERENCE ENGINE (infrastructure — path and assumed Elo)
 # =============================================================================

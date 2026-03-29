@@ -368,6 +368,7 @@ def run_spsa_games(
     tc_moves: int = None,
     tc_base_seconds: float = None,
     tc_increment: float = None,
+    engine_uci_options: dict = None,
 ) -> tuple[dict, float, float]:
     """
     Run SPSA games (plus vs minus), calling on_game_complete after every game.
@@ -422,8 +423,8 @@ def run_spsa_games(
                 black_name="spsa-minus",
                 white_path=plus_path,
                 black_path=minus_path,
-                white_uci_options=None,
-                black_uci_options=None,
+                white_uci_options=engine_uci_options,
+                black_uci_options=engine_uci_options,
                 time_per_move=time_per_move,
                 opening_fen=opening_fen,
                 opening_name=opening_name,
@@ -439,8 +440,8 @@ def run_spsa_games(
                 black_name="spsa-plus",
                 white_path=minus_path,
                 black_path=plus_path,
-                white_uci_options=None,
-                black_uci_options=None,
+                white_uci_options=engine_uci_options,
+                black_uci_options=engine_uci_options,
                 time_per_move=time_per_move,
                 opening_fen=opening_fen,
                 opening_name=opening_name,
@@ -660,6 +661,7 @@ def run_ref_games(
     tc_moves: int = None,
     tc_base_seconds: float = None,
     tc_increment: float = None,
+    engine_uci_options: dict = None,
 ) -> dict:
     """
     Run reference games (base vs Stockfish), calling on_game_complete after every game.
@@ -715,7 +717,7 @@ def run_ref_games(
                 black_name=f"sf-{ref_elo}",
                 white_path=base_path,
                 black_path=ref_path,
-                white_uci_options=None,
+                white_uci_options=engine_uci_options,
                 black_uci_options=stockfish_options,
                 time_per_move=time_per_move,
                 opening_fen=opening_fen,
@@ -733,7 +735,7 @@ def run_ref_games(
                 white_path=ref_path,
                 black_path=base_path,
                 white_uci_options=stockfish_options,
-                black_uci_options=None,
+                black_uci_options=engine_uci_options,
                 time_per_move=time_per_move,
                 opening_fen=opening_fen,
                 opening_name=opening_name,
@@ -992,6 +994,10 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
     ref_elo = config.get('reference', {}).get('engine_elo', 2600)
     ref_enabled = ref_engine_path is not None
 
+    # UCI options for rusty-rival engines (e.g. hash size)
+    hash_mb = config.get('build', {}).get('hash_mb', 0)
+    engine_uci_options = {"Hash": hash_mb} if hash_mb else None
+
     print(f"\n{'='*60}")
     print("SPSA HTTP WORKER MODE")
     print(f"{'='*60}")
@@ -1005,6 +1011,8 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
     print(f"Poll interval: {poll_interval}s when idle")
     print(f"Opening book: {len(OPENING_BOOK)} positions")
     print(f"Rusty-rival source: {get_rusty_rival_path(config)}")
+    if hash_mb:
+        print(f"Engine hash: {hash_mb} MB")
     if ref_enabled:
         print(f"Reference engine: {ref_engine_path} (ELO {ref_elo})")
     else:
@@ -1110,6 +1118,7 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                     tc_moves=iteration.get('tc_moves'),
                     tc_base_seconds=iteration.get('tc_base_seconds'),
                     tc_increment=iteration.get('tc_increment'),
+                    engine_uci_options=engine_uci_options,
                 )
                 elapsed = time.time() - start_time
 
@@ -1169,6 +1178,7 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                     tc_moves=iteration.get('tc_moves'),
                     tc_base_seconds=iteration.get('tc_base_seconds'),
                     tc_increment=iteration.get('tc_increment'),
+                    engine_uci_options=engine_uci_options,
                 )
                 elapsed = time.time() - start_time
 
