@@ -1058,6 +1058,8 @@ def run_http_worker(api_url: str, api_key: str, concurrency: int = 1,
                 print(f"  Progress: {iteration['games_played']}/{iteration['target_games']} games")
                 if iteration.get('tc_moves'):
                     time_str = f"  Time: {iteration['tc_moves']} moves in {iteration['tc_base_seconds']}s + {iteration.get('tc_increment', 0)}s/move"
+                    if auto_timemult:
+                        time_str += " (auto-timemult)"
                 else:
                     effective_timelow = int(iteration['timelow_ms'] * time_mult)
                     effective_timehigh = int(iteration['timehigh_ms'] * time_mult)
