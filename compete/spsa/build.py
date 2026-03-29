@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 # Default path to rusty-rival source (relative to chess-compete root)
@@ -598,8 +599,15 @@ def _build_in_work_tree(work_path: Path, output_dir: Path, params: dict, label: 
 
     # Build
     env = os.environ.copy()
-    if 'RUSTFLAGS' in env:
-        del env['RUSTFLAGS']
+    if sys.platform == 'linux':
+        # Linux cloud workers share binaries via S3, so strip RUSTFLAGS
+        # to keep builds portable across different CPU types
+        if 'RUSTFLAGS' in env:
+            del env['RUSTFLAGS']
+    else:
+        # Local machines always run what they build, so use native CPU
+        # optimizations (AVX2, etc.)
+        env['RUSTFLAGS'] = '-C target-cpu=native'
 
     result = subprocess.run(
         ['cargo', 'build', '--release'],

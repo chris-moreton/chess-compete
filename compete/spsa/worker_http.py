@@ -241,8 +241,9 @@ def ensure_spsa_engines_built(iteration: dict, config: dict, force_rebuild: bool
             print(f"  Using cached plus/minus engines for iteration {iteration_number}")
             return str(plus_path), str(minus_path)
 
-    # Check S3 build cache (platform-specific to avoid cross-platform binary issues)
-    s3_bucket = config.get('build', {}).get('s3_build_cache', '')
+    # Check S3 build cache (Linux only — cloud workers share binaries via S3,
+    # local machines build with target-cpu=native so binaries aren't portable)
+    s3_bucket = config.get('build', {}).get('s3_build_cache', '') if sys.platform == 'linux' else ''
     run_id = iteration.get('run_id', 0)
     plat = _s3_platform_prefix()
     s3_prefix = f"spsa/{run_id}/{iteration_number}/{plat}" if s3_bucket else ''
@@ -322,8 +323,9 @@ def ensure_base_engine_ready(iteration: dict, config: dict) -> str:
         print(f"  Using cached base engine for iteration {iteration_number}")
         return str(base_path)
 
-    # Check S3 build cache (platform-specific to avoid cross-platform binary issues)
-    s3_bucket = config.get('build', {}).get('s3_build_cache', '')
+    # Check S3 build cache (Linux only — cloud workers share binaries via S3,
+    # local machines build with target-cpu=native so binaries aren't portable)
+    s3_bucket = config.get('build', {}).get('s3_build_cache', '') if sys.platform == 'linux' else ''
     run_id = iteration.get('run_id', 0)
     plat = _s3_platform_prefix()
     s3_key = f"spsa/{run_id}/{iteration_number}/{plat}/base" if s3_bucket else ''
