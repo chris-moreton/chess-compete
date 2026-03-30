@@ -33,6 +33,7 @@ DEPTH=8
 HASH=16  # Per engine instance (many running concurrently)
 REGION="us-west-2"
 MAX_SPOT_PRICE="2.00"
+USE_SPOT=true
 S3_BUCKET="chess-compete-builds"
 
 # ---------- Parse arguments ----------
@@ -46,6 +47,7 @@ while [[ $# -gt 0 ]]; do
         --type)      INSTANCE_TYPE="$2"; shift 2 ;;
         --hash)      HASH="$2"; shift 2 ;;
         --region|-r) REGION="$2"; shift 2 ;;
+        --on-demand) USE_SPOT=false; shift ;;
         --bucket)    S3_BUCKET="$2"; shift 2 ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
@@ -197,12 +199,18 @@ AMI_ID=$(aws ec2 describe-images "${REGION_ARGS[@]}" \
     --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
     --output text)
 
-echo "Launching spot instance in $REGION (AMI: $AMI_ID)..."
+SPOT_ARGS=()
+if [ "$USE_SPOT" = true ]; then
+    echo "Launching spot instance in $REGION (AMI: $AMI_ID)..."
+    SPOT_ARGS=(--instance-market-options '{"MarketType":"spot","SpotOptions":{"MaxPrice":"'"$MAX_SPOT_PRICE"'","SpotInstanceType":"one-time"}}')
+else
+    echo "Launching on-demand instance in $REGION (AMI: $AMI_ID)..."
+fi
 
 INSTANCE_ID=$(aws ec2 run-instances "${REGION_ARGS[@]}" \
     --image-id "$AMI_ID" \
     --instance-type "$INSTANCE_TYPE" \
-    --instance-market-options '{"MarketType":"spot","SpotOptions":{"MaxPrice":"'"$MAX_SPOT_PRICE"'","SpotInstanceType":"one-time"}}' \
+    ${SPOT_ARGS[@]+"${SPOT_ARGS[@]}"} \
     --iam-instance-profile Name=SSMInstanceProfile \
     --instance-initiated-shutdown-behavior terminate \
     --user-data "$USER_DATA_B64" \

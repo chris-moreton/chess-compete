@@ -257,10 +257,23 @@ def main():
                     rate = games_completed / elapsed if elapsed > 0 else 0
                     pos_rate = total_positions / elapsed if elapsed > 0 else 0
                     if games_completed % 100 == 0 or games_completed == args.games:
+                        eta = (args.games - games_completed) / rate if rate > 0 else 0
+                        eta_str = f"{eta/3600:.1f}h" if eta > 3600 else f"{eta/60:.0f}m"
                         print(f"  Games: {games_completed}/{args.games} | "
                               f"Positions: {total_positions:,} | "
                               f"Rate: {rate:.1f} games/s, {pos_rate:.0f} pos/s | "
+                              f"ETA: {eta_str} | "
                               f"Elapsed: {elapsed:.0f}s")
+
+                    # Periodic S3 checkpoint every 10,000 games
+                    if args.upload and games_completed % 10000 == 0 and games_completed > 0:
+                        f.flush()
+                        s3_path = args.upload.rstrip("/") + "/" + os.path.basename(args.output)
+                        print(f"  [Checkpoint] Uploading {total_positions:,} positions to S3...")
+                        subprocess.run(
+                            ["aws", "s3", "cp", args.output, s3_path],
+                            capture_output=True, text=True,
+                        )
 
                     # Submit next game if more remain
                     if next_game < args.games:
