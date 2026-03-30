@@ -1802,4 +1802,22 @@ def register_routes(app):
                 'last_update_at': j.last_update_at,
             })
 
-        return render_template('datagen.html', jobs=jobs_data)
+        # Aggregate totals across all running jobs
+        running = [j for j in jobs_data if j['status'] == 'running']
+        totals = {
+            'total_games': sum(j['total_games'] for j in running),
+            'games_completed': sum(j['games_completed'] for j in running),
+            'positions_generated': sum(j['positions_generated'] for j in running),
+            'games_per_second': sum(j['games_per_second'] or 0 for j in running),
+            'positions_per_second': sum(j['positions_per_second'] or 0 for j in running),
+            'workers': len(running),
+        }
+        if totals['games_per_second'] > 0 and totals['games_completed'] < totals['total_games']:
+            totals['eta'] = (totals['total_games'] - totals['games_completed']) / totals['games_per_second']
+        else:
+            totals['eta'] = None
+
+        # Also sum positions from completed jobs
+        all_positions = sum(j['positions_generated'] for j in jobs_data)
+
+        return render_template('datagen.html', jobs=jobs_data, totals=totals, all_positions=all_positions)

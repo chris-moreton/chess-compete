@@ -17,16 +17,14 @@
         .status-running { color: #d97706; font-weight: 600; }
         .status-completed { color: #16a34a; }
         .status-failed { color: #dc2626; }
-        .progress-bar { background: #e5e7eb; border-radius: 4px; height: 8px; width: 200px; display: inline-block; vertical-align: middle; margin-left: 8px; }
+        .progress-bar { background: #e5e7eb; border-radius: 4px; height: 8px; width: 150px; display: inline-block; vertical-align: middle; margin-left: 8px; }
         .progress-fill { background: #2563eb; border-radius: 4px; height: 100%; transition: width 0.5s; }
-        .stat { color: #666; font-size: 13px; }
         .empty { color: #999; font-style: italic; padding: 20px; text-align: center; }
         td.right, th.right { text-align: right; }
-        .big-number { font-size: 24px; font-weight: 700; color: #333; }
-        .summary-cards { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
-        .summary-card { background: white; border-radius: 8px; padding: 16px 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); min-width: 150px; }
-        .summary-card .label { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
-        .summary-card .value { font-size: 28px; font-weight: 700; color: #333; }
+        .summary { background: white; border-radius: 8px; padding: 16px 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 24px; display: flex; align-items: center; gap: 32px; flex-wrap: wrap; }
+        .summary .big { font-size: 28px; font-weight: 700; color: #333; }
+        .summary .label { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
+        .summary .sep { color: #ddd; font-size: 24px; }
     </style>
 </head>
 <body>
@@ -40,31 +38,34 @@
 
     <h1>NNUE Data Generation</h1>
 
-    {% set running_jobs = jobs|selectattr('status', 'equalto', 'running')|list %}
-    {% if running_jobs %}
-    <div class="summary-cards">
-        {% for j in running_jobs %}
-        <div class="summary-card">
-            <div class="label">{{ j.engine_tag }} (depth {{ j.depth }})</div>
-            <div class="value">{{ "{:,}".format(j.positions_generated) }}</div>
-            <div class="label">positions</div>
+    {% if totals.workers > 0 %}
+    <div class="summary">
+        <div>
+            <div class="big">{{ "{:,}".format(totals.positions_generated) }}</div>
+            <div class="label">positions ({{ totals.workers }} worker{{ 's' if totals.workers != 1 }})</div>
         </div>
-        <div class="summary-card">
-            <div class="label">Games</div>
-            <div class="value">{{ "{:,}".format(j.games_completed) }} / {{ "{:,}".format(j.total_games) }}</div>
-            <div class="label">{{ "%.1f%%"|format(j.games_completed / j.total_games * 100) if j.total_games > 0 else '0%' }}</div>
+        <div class="sep">|</div>
+        <div>
+            <div class="big">{{ "{:,}".format(totals.games_completed) }} <span style="font-size:16px;color:#888">/ {{ "{:,}".format(totals.total_games) }}</span></div>
+            <div class="label">games ({{ "%.1f%%"|format(totals.games_completed / totals.total_games * 100) if totals.total_games > 0 else '0%' }})</div>
         </div>
-        <div class="summary-card">
-            <div class="label">Rate</div>
-            <div class="value">{{ "%.1f"|format(j.games_per_second) if j.games_per_second else '-' }}</div>
-            <div class="label">games/sec ({{ "{:,.0f}".format(j.positions_per_second) if j.positions_per_second else '-' }} pos/sec)</div>
+        <div class="sep">|</div>
+        <div>
+            <div class="big">{{ "%.1f"|format(totals.games_per_second) }}</div>
+            <div class="label">games/sec ({{ "{:,.0f}".format(totals.positions_per_second) }} pos/sec)</div>
         </div>
-        <div class="summary-card">
+        <div class="sep">|</div>
+        <div>
+            <div class="big">{% if totals.eta %}{{ "%.1f"|format(totals.eta / 3600) }}h{% else %}-{% endif %}</div>
             <div class="label">ETA</div>
-            <div class="value">{% if j.eta %}{{ "%.1f"|format(j.eta / 3600) }}h{% else %}-{% endif %}</div>
-            <div class="label">remaining</div>
         </div>
-        {% endfor %}
+    </div>
+    {% elif all_positions > 0 %}
+    <div class="summary">
+        <div>
+            <div class="big">{{ "{:,}".format(all_positions) }}</div>
+            <div class="label">total positions generated</div>
+        </div>
     </div>
     {% endif %}
 
@@ -106,7 +107,7 @@
     <div class="empty">No data generation jobs yet.</div>
     {% endif %}
 
-    {% if running_jobs %}
+    {% if totals.workers > 0 %}
     <script>
         setTimeout(() => location.reload(), 15000);
     </script>
