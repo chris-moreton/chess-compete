@@ -42,7 +42,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 class UCIEngine:
     """Manages a UCI chess engine process."""
 
-    def __init__(self, path, hash_mb=16):
+    def __init__(self, path, hash_mb=16, eval_noise=15):
         self.process = subprocess.Popen(
             [path],
             stdin=subprocess.PIPE,
@@ -55,6 +55,8 @@ class UCIEngine:
         self._wait_for("uciok")
         self._send(f"setoption name Hash value {hash_mb}")
         self._send(f"setoption name Threads value 1")
+        if eval_noise > 0:
+            self._send(f"setoption name EvalNoise value {eval_noise}")
         self._send("isready")
         self._wait_for("readyok")
 
@@ -121,25 +123,47 @@ def make_move_fen(engine, fen, move):
     return None  # Will use python-chess instead
 
 
-def play_game(engine_path, depth, hash_mb=16):
+def load_openings(book_path):
+    """Load opening positions from a PGN book file. Returns list of FENs."""
+    import chess.pgn
+    import io
+
+    fens = []
+    with open(book_path) as f:
+        while True:
+            game = chess.pgn.read_game(f)
+            if game is None:
+                break
+            board = game.board()
+            for move in game.mainline_moves():
+                board.push(move)
+            fens.append(board.fen())
+    return fens
+
+
+def play_game(engine_path, depth, hash_mb=16, eval_noise=15, opening_fen=None):
     """Play one self-play game and return list of (fen, score_cp, result) tuples.
 
     Returns list of positions from the game, with result filled in after game ends.
-    Scores are white-relative.
+    Scores are white-relative. Depth is randomized ±2 per move for variety.
     """
     import chess
+    import random
 
-    engine = UCIEngine(engine_path, hash_mb=hash_mb)
+    engine = UCIEngine(engine_path, hash_mb=hash_mb, eval_noise=eval_noise)
     engine.new_game()
 
-    board = chess.Board()
+    board = chess.Board(opening_fen) if opening_fen else chess.Board()
     positions = []  # (fen, white_relative_score)
     move_count = 0
     max_moves = 300  # Prevent infinite games
+    min_depth = max(4, depth - 2)
+    max_depth = depth + 2
 
     while not board.is_game_over(claim_draw=True) and move_count < max_moves:
         fen = board.fen()
-        best_move, score_cp, is_mate = engine.search(fen, depth)
+        move_depth = random.randint(min_depth, max_depth)
+        best_move, score_cp, is_mate = engine.search(fen, move_depth)
 
         if best_move is None or best_move == "(none)":
             break
@@ -193,10 +217,10 @@ def play_game(engine_path, depth, hash_mb=16):
     return [(fen, score, result) for fen, score in positions]
 
 
-def worker(game_id, engine_path, depth, hash_mb):
+def worker(game_id, engine_path, depth, hash_mb, eval_noise, opening_fen):
     """Worker function for parallel game generation."""
     try:
-        positions = play_game(engine_path, depth, hash_mb)
+        positions = play_game(engine_path, depth, hash_mb, eval_noise, opening_fen)
         return game_id, positions
     except Exception as e:
         print(f"Game {game_id} failed: {e}", file=sys.stderr)
@@ -211,18 +235,29 @@ def main():
     parser.add_argument("--output", default="data/training.txt", help="Output file path")
     parser.add_argument("--concurrency", type=int, default=1, help="Parallel games")
     parser.add_argument("--hash", type=int, default=16, help="Hash per engine instance in MB (default: 16)")
+    parser.add_argument("--eval-noise", type=int, default=15, help="Eval noise in cp (default: 15, 0=disabled)")
+    parser.add_argument("--book", default="", help="Path to opening book PGN")
     parser.add_argument("--upload", default="", help="S3 path to upload results (e.g. s3://bucket/path/)")
     args = parser.parse_args()
 
     # Create output directory
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
 
+    import random
+
+    # Load opening book
+    openings = []
+    if args.book and os.path.isfile(args.book):
+        openings = load_openings(args.book)
+
     print(f"NNUE Data Generation")
     print(f"  Engine:      {args.engine}")
-    print(f"  Depth:       {args.depth}")
+    print(f"  Depth:       {args.depth} (±2 randomized per move)")
     print(f"  Games:       {args.games}")
     print(f"  Concurrency: {args.concurrency}")
     print(f"  Hash/engine: {args.hash}MB")
+    print(f"  Eval noise:  ±{args.eval_noise}cp")
+    print(f"  Openings:    {len(openings)} positions" if openings else "  Openings:    none (starting position)")
     print(f"  Output:      {args.output}")
     print()
 
@@ -237,7 +272,9 @@ def main():
 
             # Submit initial batch
             for _ in range(min(args.concurrency, args.games)):
-                future = executor.submit(worker, next_game, args.engine, args.depth, args.hash)
+                opening = random.choice(openings) if openings else None
+                future = executor.submit(worker, next_game, args.engine, args.depth, args.hash,
+                                         args.eval_noise, opening)
                 futures[future] = next_game
                 next_game += 1
 
@@ -277,7 +314,9 @@ def main():
 
                     # Submit next game if more remain
                     if next_game < args.games:
-                        future = executor.submit(worker, next_game, args.engine, args.depth, args.hash)
+                        opening = random.choice(openings) if openings else None
+                        future = executor.submit(worker, next_game, args.engine, args.depth, args.hash,
+                                                 args.eval_noise, opening)
                         futures[future] = next_game
                         next_game += 1
 

@@ -166,6 +166,8 @@ su - ubuntu -c '
         --depth __DEPTH__ \
         --games __GAMES__ \
         --hash __HASH__ \
+        --eval-noise 15 \
+        --book ~/chess-compete/openings/8moves_v3.pgn \
         --concurrency __CONCURRENCY__ \
         --output /tmp/__OUTPUT_FILENAME__ \
         --upload "__S3_PATH__"
