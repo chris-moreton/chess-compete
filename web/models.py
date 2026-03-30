@@ -260,6 +260,28 @@ class H2hMatch(db.Model):
         return f'<H2hMatch {self.engine1_tag} vs {self.engine2_tag}: {self.status}>'
 
 
+class DatagenJob(db.Model):
+    """A NNUE training data generation job."""
+    __tablename__ = 'datagen_jobs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    engine_tag = db.Column(db.String(100), nullable=False)
+    depth = db.Column(db.Integer, nullable=False)
+    total_games = db.Column(db.Integer, nullable=False)
+    games_completed = db.Column(db.Integer, nullable=False, default=0)
+    positions_generated = db.Column(db.Integer, nullable=False, default=0)
+    status = db.Column(db.String(20), nullable=False, default='running')  # running, completed, failed
+    s3_path = db.Column(db.String(500))
+    games_per_second = db.Column(db.Float)
+    positions_per_second = db.Column(db.Float)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    completed_at = db.Column(db.DateTime)
+    last_update_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<DatagenJob {self.engine_tag}: {self.games_completed}/{self.total_games}>'
+
+
 class SpsaRun(db.Model):
     """A logical SPSA tuning run, grouping iterations together."""
     __tablename__ = 'spsa_runs'

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>NNUE Data Generation</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 20px; background: #f5f5f5; }
+        h1 { color: #333; }
+        a { color: #2563eb; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .nav { margin-bottom: 20px; font-size: 14px; }
+        .nav a { margin-right: 15px; }
+        table { border-collapse: collapse; width: 100%; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 30px; }
+        th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; font-size: 13px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
+        td { font-size: 14px; }
+        tr:hover { background: #f8f9fa; }
+        .status-running { color: #d97706; font-weight: 600; }
+        .status-completed { color: #16a34a; }
+        .status-failed { color: #dc2626; }
+        .progress-bar { background: #e5e7eb; border-radius: 4px; height: 8px; width: 200px; display: inline-block; vertical-align: middle; margin-left: 8px; }
+        .progress-fill { background: #2563eb; border-radius: 4px; height: 100%; transition: width 0.5s; }
+        .stat { color: #666; font-size: 13px; }
+        .empty { color: #999; font-style: italic; padding: 20px; text-align: center; }
+        td.right, th.right { text-align: right; }
+        .big-number { font-size: 24px; font-weight: 700; color: #333; }
+        .summary-cards { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+        .summary-card { background: white; border-radius: 8px; padding: 16px 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); min-width: 150px; }
+        .summary-card .label { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
+        .summary-card .value { font-size: 28px; font-weight: 700; color: #333; }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <a href="/">Dashboard</a>
+        <a href="/spsa">SPSA</a>
+        <a href="/spsa/workers">Workers</a>
+        <a href="/h2h">H2H</a>
+        <a href="/datagen"><strong>Data Gen</strong></a>
+    </div>
+
+    <h1>NNUE Data Generation</h1>
+
+    {% set running_jobs = jobs|selectattr('status', 'equalto', 'running')|list %}
+    {% if running_jobs %}
+    <div class="summary-cards">
+        {% for j in running_jobs %}
+        <div class="summary-card">
+            <div class="label">{{ j.engine_tag }} (depth {{ j.depth }})</div>
+            <div class="value">{{ "{:,}".format(j.positions_generated) }}</div>
+            <div class="label">positions</div>
+        </div>
+        <div class="summary-card">
+            <div class="label">Games</div>
+            <div class="value">{{ "{:,}".format(j.games_completed) }} / {{ "{:,}".format(j.total_games) }}</div>
+            <div class="label">{{ "%.1f%%"|format(j.games_completed / j.total_games * 100) if j.total_games > 0 else '0%' }}</div>
+        </div>
+        <div class="summary-card">
+            <div class="label">Rate</div>
+            <div class="value">{{ "%.1f"|format(j.games_per_second) if j.games_per_second else '-' }}</div>
+            <div class="label">games/sec ({{ "{:,.0f}".format(j.positions_per_second) if j.positions_per_second else '-' }} pos/sec)</div>
+        </div>
+        <div class="summary-card">
+            <div class="label">ETA</div>
+            <div class="value">{% if j.eta %}{{ "%.1f"|format(j.eta / 3600) }}h{% else %}-{% endif %}</div>
+            <div class="label">remaining</div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if jobs %}
+    <table>
+        <thead>
+            <tr>
+                <th>Engine</th>
+                <th class="right">Depth</th>
+                <th>Progress</th>
+                <th class="right">Positions</th>
+                <th class="right">Rate</th>
+                <th class="right">Elapsed</th>
+                <th class="right">ETA</th>
+                <th>Status</th>
+                <th>Started</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for j in jobs %}
+            <tr>
+                <td><strong>{{ j.engine_tag }}</strong></td>
+                <td class="right">{{ j.depth }}</td>
+                <td>
+                    {{ "{:,}".format(j.games_completed) }}/{{ "{:,}".format(j.total_games) }}
+                    <div class="progress-bar"><div class="progress-fill" style="width: {{ (j.games_completed / j.total_games * 100) if j.total_games > 0 else 0 }}%"></div></div>
+                </td>
+                <td class="right">{{ "{:,}".format(j.positions_generated) }}</td>
+                <td class="right">{% if j.games_per_second %}{{ "%.1f"|format(j.games_per_second) }} g/s{% else %}-{% endif %}</td>
+                <td class="right">{% if j.elapsed %}{{ "%.1f"|format(j.elapsed / 3600) }}h{% else %}-{% endif %}</td>
+                <td class="right">{% if j.eta %}{{ "%.1f"|format(j.eta / 3600) }}h{% else %}-{% endif %}</td>
+                <td class="status-{{ j.status }}">{{ j.status }}</td>
+                <td>{{ j.created_at.strftime('%Y-%m-%d %H:%M') if j.created_at else '-' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No data generation jobs yet.</div>
+    {% endif %}
+
+    {% if running_jobs %}
+    <script>
+        setTimeout(() => location.reload(), 15000);
+    </script>
+    {% endif %}
+</body>
+</html>

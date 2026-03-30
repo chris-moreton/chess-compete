@@ -11,7 +11,7 @@ from web.queries import (
 from datetime import datetime, timedelta
 from web.models import (
     Cup, CupRound, CupMatch, Engine, Game, EpdTestRun, EpdTestResult,
-    H2hMatch,
+    DatagenJob, H2hMatch,
     SpsaIteration, SpsaParam, SpsaRun, SpsaWorker, SpsaWorkerHeartbeat
 )
 from web.database import db
@@ -1716,3 +1716,90 @@ def register_routes(app):
             matches=matches_data,
             leaderboard=leaderboard,
         )
+
+    # =========================================================================
+    # NNUE Data Generation Endpoints
+    # =========================================================================
+
+    @app.route('/api/datagen/create', methods=['POST'])
+    def datagen_create():
+        """Create a new datagen job."""
+        if not verify_worker_api_key():
+            return jsonify({'error': 'Invalid API key'}), 401
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Missing JSON body'}), 400
+        job = DatagenJob(
+            engine_tag=data['engine_tag'],
+            depth=data['depth'],
+            total_games=data['total_games'],
+            s3_path=data.get('s3_path'),
+        )
+        db.session.add(job)
+        db.session.commit()
+        return jsonify({'job_id': job.id})
+
+    @app.route('/api/datagen/progress', methods=['POST'])
+    def datagen_progress():
+        """Report progress for a datagen job."""
+        if not verify_worker_api_key():
+            return jsonify({'error': 'Invalid API key'}), 401
+        data = request.get_json()
+        if not data or 'job_id' not in data:
+            return jsonify({'error': 'Missing job_id'}), 400
+
+        job = DatagenJob.query.get(data['job_id'])
+        if not job:
+            return jsonify({'error': 'Job not found'}), 404
+
+        if 'games_completed' in data:
+            job.games_completed = data['games_completed']
+        if 'positions_generated' in data:
+            job.positions_generated = data['positions_generated']
+        if 'games_per_second' in data:
+            job.games_per_second = data['games_per_second']
+        if 'positions_per_second' in data:
+            job.positions_per_second = data['positions_per_second']
+        if 'status' in data:
+            job.status = data['status']
+            if data['status'] in ('completed', 'failed'):
+                job.completed_at = datetime.utcnow()
+        job.last_update_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({'ok': True})
+
+    @app.route('/datagen')
+    def datagen_dashboard():
+        """NNUE data generation dashboard."""
+        jobs = DatagenJob.query.order_by(DatagenJob.created_at.desc()).all()
+
+        jobs_data = []
+        for j in jobs:
+            elapsed = None
+            if j.created_at:
+                end = j.completed_at or datetime.utcnow()
+                elapsed = (end - j.created_at).total_seconds()
+
+            eta = None
+            if j.games_per_second and j.games_per_second > 0 and j.games_completed < j.total_games:
+                remaining = j.total_games - j.games_completed
+                eta = remaining / j.games_per_second
+
+            jobs_data.append({
+                'id': j.id,
+                'engine_tag': j.engine_tag,
+                'depth': j.depth,
+                'total_games': j.total_games,
+                'games_completed': j.games_completed,
+                'positions_generated': j.positions_generated,
+                'status': j.status,
+                's3_path': j.s3_path,
+                'games_per_second': j.games_per_second,
+                'positions_per_second': j.positions_per_second,
+                'elapsed': elapsed,
+                'eta': eta,
+                'created_at': j.created_at,
+                'last_update_at': j.last_update_at,
+            })
+
+        return render_template('datagen.html', jobs=jobs_data)

@@ -29,14 +29,35 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import re
 import subprocess
 import sys
 import threading
 import time
+import urllib.request
+import urllib.error
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+def api_request(url, api_key, endpoint, data=None):
+    """Make an API request. Returns parsed JSON or None on error."""
+    if not url:
+        return None
+    full_url = f"{url.rstrip('/')}{endpoint}"
+    body = json.dumps(data).encode() if data else None
+    req = urllib.request.Request(
+        full_url, data=body,
+        headers={'Content-Type': 'application/json', 'X-API-Key': api_key},
+        method='POST' if data else 'GET',
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read())
+    except Exception:
+        return None
 
 
 class UCIEngine:
@@ -238,6 +259,9 @@ def main():
     parser.add_argument("--eval-noise", type=int, default=15, help="Eval noise in cp (default: 15, 0=disabled)")
     parser.add_argument("--book", default="", help="Path to opening book PGN")
     parser.add_argument("--upload", default="", help="S3 path to upload results (e.g. s3://bucket/path/)")
+    parser.add_argument("--engine-tag", default="", help="Engine version tag for dashboard (e.g. v1.0.38)")
+    parser.add_argument("--api-url", default="", help="Dashboard API URL for progress reporting")
+    parser.add_argument("--api-key", default="", help="API key for dashboard")
     args = parser.parse_args()
 
     # Create output directory
@@ -259,11 +283,28 @@ def main():
     print(f"  Eval noise:  ±{args.eval_noise}cp")
     print(f"  Openings:    {len(openings)} positions" if openings else "  Openings:    none (starting position)")
     print(f"  Output:      {args.output}")
+    if args.api_url:
+        print(f"  Dashboard:   {args.api_url}/datagen")
     print()
+
+    # Create job on dashboard
+    job_id = None
+    if args.api_url and args.api_key:
+        result = api_request(args.api_url, args.api_key, '/api/datagen/create', {
+            'engine_tag': args.engine_tag or os.path.basename(args.engine),
+            'depth': args.depth,
+            'total_games': args.games,
+            's3_path': args.upload,
+        })
+        if result and 'job_id' in result:
+            job_id = result['job_id']
+            print(f"  Job ID:      {job_id}")
+            print()
 
     total_positions = 0
     games_completed = 0
     start_time = time.time()
+    last_api_report = 0
 
     with open(args.output, "w") as f:
         with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
@@ -302,6 +343,17 @@ def main():
                               f"ETA: {eta_str} | "
                               f"Elapsed: {elapsed:.0f}s")
 
+                    # Report to dashboard every 1,000 games
+                    if job_id and games_completed - last_api_report >= 1000:
+                        api_request(args.api_url, args.api_key, '/api/datagen/progress', {
+                            'job_id': job_id,
+                            'games_completed': games_completed,
+                            'positions_generated': total_positions,
+                            'games_per_second': round(rate, 2),
+                            'positions_per_second': round(pos_rate, 0),
+                        })
+                        last_api_report = games_completed
+
                     # Periodic S3 checkpoint every 10,000 games
                     if args.upload and games_completed % 10000 == 0 and games_completed > 0:
                         f.flush()
@@ -323,6 +375,8 @@ def main():
                     break  # Process one at a time to maintain ordering
 
     elapsed = time.time() - start_time
+    rate = games_completed / elapsed if elapsed > 0 else 0
+    pos_rate = total_positions / elapsed if elapsed > 0 else 0
     print()
     print(f"Complete: {games_completed} games, {total_positions:,} positions in {elapsed:.0f}s")
     print(f"Output: {args.output} ({os.path.getsize(args.output) / 1024 / 1024:.1f} MB)")
@@ -339,6 +393,17 @@ def main():
             print("Upload complete.")
         else:
             print(f"Upload failed: {result.stderr}", file=sys.stderr)
+
+    # Report completion to dashboard
+    if job_id:
+        api_request(args.api_url, args.api_key, '/api/datagen/progress', {
+            'job_id': job_id,
+            'games_completed': games_completed,
+            'positions_generated': total_positions,
+            'games_per_second': round(rate, 2),
+            'positions_per_second': round(pos_rate, 0),
+            'status': 'completed',
+        })
 
 
 if __name__ == "__main__":

@@ -163,6 +163,7 @@ su - ubuntu -c '
     cd ~/chess-compete
     python3 scripts/generate-nnue-data.py \
         --engine ~/engine \
+        --engine-tag __ENGINE_TAG__ \
         --depth __DEPTH__ \
         --games __GAMES__ \
         --hash __HASH__ \
@@ -170,7 +171,9 @@ su - ubuntu -c '
         --book ~/chess-compete/openings/8moves_v3.pgn \
         --concurrency __CONCURRENCY__ \
         --output /tmp/__OUTPUT_FILENAME__ \
-        --upload "__S3_PATH__"
+        --upload "__S3_PATH__" \
+        --api-url "__API_URL__" \
+        --api-key "__API_KEY__"
 '
 
 echo "=== $(date) Data generation complete, shutting down ==="
@@ -186,6 +189,8 @@ USER_DATA="${USER_DATA//__HASH__/$HASH}"
 USER_DATA="${USER_DATA//__CONCURRENCY__/$CONCURRENCY}"
 USER_DATA="${USER_DATA//__OUTPUT_FILENAME__/$OUTPUT_FILENAME}"
 USER_DATA="${USER_DATA//__S3_PATH__/$S3_PATH}"
+USER_DATA="${USER_DATA//__API_URL__/$SPSA_API_URL}"
+USER_DATA="${USER_DATA//__API_KEY__/$SPSA_API_KEY}"
 USER_DATA="${USER_DATA//__MAX_HOURS__/$MAX_HOURS}"
 USER_DATA="${USER_DATA//__SHUTDOWN_MINUTES__/$SHUTDOWN_MINUTES}"
 
