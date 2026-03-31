@@ -33,7 +33,7 @@ fn main() {
     // Training hyperparameters
     let initial_lr = 0.001;
     let final_lr = 0.001 * 0.3f32.powi(5);
-    let superbatches = 60;
+    let superbatches = 800;
     let wdl_proportion = 0.75;
 
     let mut trainer = ValueTrainerBuilder::default()
@@ -68,7 +68,7 @@ fn main() {
         },
         wdl_scheduler: wdl::ConstantWDL { value: wdl_proportion },
         lr_scheduler: lr::CosineDecayLR { initial_lr, final_lr, final_superbatch: superbatches },
-        save_rate: 10,
+        save_rate: 100,
     };
 
     let settings = LocalSettings {
