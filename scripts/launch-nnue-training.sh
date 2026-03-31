@@ -64,7 +64,6 @@ echo ""
 USER_DATA=$(cat <<'USERDATA'
 #!/bin/bash
 exec > >(tee /var/log/nnue-training.log) 2>&1
-set -e
 
 echo "=== $(date) Starting NNUE training setup ==="
 
@@ -128,29 +127,35 @@ su - ubuntu -c '
     # Build bullet-utils (no CUDA needed for this)
     echo "=== $(date) Building bullet-utils ==="
     cd ~/bullet
-    cargo build --release --package bullet-utils
-    UTILS=~/bullet/target/release/bullet-utils
+    cargo build --release --package bullet_utils
+    UTILS=~/bullet/target/release/bullet_utils
 
     # Convert text files to bullet binary format
     echo "=== $(date) Converting data to bullet format ==="
+    mkdir -p ~/data
     for txt_file in ~/raw-data/*.txt; do
         base=$(basename "$txt_file" .txt)
         echo "  Converting $base..."
-        $UTILS convert-to-chess-board "$txt_file" "data/${base}.data"
+        $UTILS convert --from text --input "$txt_file" --output ~/data/${base}.data
     done
+
+    echo "Converted files:"
+    ls -lh ~/data/*.data
 
     # Shuffle each file
     echo "=== $(date) Shuffling data files ==="
-    for data_file in data/*.data; do
-        echo "  Shuffling $(basename $data_file)..."
-        $UTILS shuffle "$data_file"
+    for data_file in ~/data/*.data; do
+        base=$(basename "$data_file" .data)
+        echo "  Shuffling $base..."
+        $UTILS shuffle --input "$data_file" --output ~/data/${base}_shuffled.data --mem-used-mb 4096
+        mv ~/data/${base}_shuffled.data "$data_file"
     done
 
     # Interleave all files into one
     echo "=== $(date) Interleaving data files ==="
-    data_files=$(ls data/*.data | tr "\n" " ")
-    $UTILS interleave $data_files --output data/training.data
-    rm -f data/v1.0.39_*.data  # Remove individual files to save disk
+    data_files=$(ls ~/data/*.data | tr "\n" " ")
+    $UTILS interleave $data_files --output ~/data/training.data
+    rm -f ~/data/v1.0.39_*.data  # Remove individual files to save disk
 
     echo "Training data ready: $(ls -lh data/training.data)"
 
@@ -158,15 +163,19 @@ su - ubuntu -c '
     cp -r ~/chess-compete/scripts/nnue-train ~/nnue-train
     cd ~/nnue-train
 
-    # Build the trainer with CUDA
-    echo "=== $(date) Building NNUE trainer ==="
-    cargo build --release 2>&1
-
     # Symlink data directory
     ln -sf ~/data data
 
-    # Run training
+    # Build and run the trainer with CUDA
+    echo "=== $(date) Building NNUE trainer ==="
+    cargo build --release 2>&1
+    if [ $? -ne 0 ]; then
+        echo "ERROR: cargo build failed!"
+        exit 1
+    fi
+
     echo "=== $(date) Starting training ==="
+    echo "Training data: $(ls -lh data/training.data)"
     cargo run --release 2>&1
 
     echo "=== $(date) Training complete ==="
