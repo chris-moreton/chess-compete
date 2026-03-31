@@ -183,8 +183,10 @@ su - ubuntu -c '
     echo "Checkpoints uploaded to s3://__S3_BUCKET__/nnue-checkpoints/"
 '
 
-echo "=== $(date) All done, shutting down ==="
-shutdown -h now
+echo "=== $(date) All done ==="
+echo "=== Keeping instance alive for log inspection. Run 'shutdown -h now' manually to terminate. ==="
+# Don't auto-shutdown - let the scheduled shutdown handle it
+# This way we can inspect logs if something went wrong
 USERDATA
 )
 
