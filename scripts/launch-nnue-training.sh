@@ -124,8 +124,8 @@ su - ubuntu -c '
     # Build bullet-utils (no CUDA needed for this)
     echo "=== $(date) Building bullet-utils ==="
     cd ~/bullet
-    cargo build --release --package bullet_utils
-    UTILS=~/bullet/target/release/bullet_utils
+    cargo build --release --package bullet-utils
+    UTILS=~/bullet/target/release/bullet-utils
 
     # Convert text files to bullet binary format
     echo "=== $(date) Converting data to bullet format ==="
