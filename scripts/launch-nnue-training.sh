@@ -82,32 +82,36 @@ shutdown -h +__SHUTDOWN_MINUTES__
 ) &
 disown
 
-# Install system packages (Deep Learning AMI already has NVIDIA drivers + CUDA)
+# Install system packages + NVIDIA drivers + CUDA on bare Ubuntu 22.04
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y git awscli build-essential
+apt-get install -y git awscli build-essential linux-headers-$(uname -r)
 
-# Verify GPU + CUDA
-nvidia-smi
-CUDA_PATH=$(find /usr/local -maxdepth 1 -name 'cuda-*' -type d | sort -V | tail -1)
-echo "CUDA_PATH: $CUDA_PATH"
-export PATH=$CUDA_PATH/bin:$PATH
-export LD_LIBRARY_PATH=$CUDA_PATH/lib64:$LD_LIBRARY_PATH
+# Install NVIDIA driver + CUDA via the official repo
+echo "=== $(date) Installing NVIDIA drivers + CUDA ==="
+wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+dpkg -i cuda-keyring_1.1-1_all.deb
+apt-get update -y
+apt-get install -y cuda-drivers cuda-toolkit-12-4
 
-nvcc --version
+export PATH=/usr/local/cuda-12.4/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda-12.4/lib64:$LD_LIBRARY_PATH
+
+echo "=== $(date) Verifying GPU ==="
+nvidia-smi || echo "WARNING: nvidia-smi failed (may need reboot for driver)"
+nvcc --version || echo "WARNING: nvcc not found"
 
 # Install Rust
 su - ubuntu -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y'
 
-echo "=== $(date) Downloading training data from S3 ==="
-
 # Write CUDA env for ubuntu user
-CUDA_PATH_RESOLVED=$(find /usr/local -maxdepth 1 -name 'cuda-*' -type d | sort -V | tail -1)
-cat > /etc/profile.d/cuda.sh << CUDAEOF
-export CUDA_PATH=$CUDA_PATH_RESOLVED
-export PATH=$CUDA_PATH_RESOLVED/bin:\$PATH
-export LD_LIBRARY_PATH=$CUDA_PATH_RESOLVED/lib64:\$LD_LIBRARY_PATH
+cat > /etc/profile.d/cuda.sh << 'CUDAEOF'
+export CUDA_PATH=/usr/local/cuda-12.4
+export PATH=/usr/local/cuda-12.4/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda-12.4/lib64:$LD_LIBRARY_PATH
 CUDAEOF
+
+echo "=== $(date) Downloading training data from S3 ==="
 
 su - ubuntu -c '
     source ~/.cargo/env
@@ -201,17 +205,12 @@ USER_DATA_B64=$(echo "$USER_DATA" | base64)
 # ---------- Launch instance ----------
 REGION_ARGS=(--region "$REGION")
 
-# Use Deep Learning AMI with NVIDIA drivers + CUDA pre-installed
+# Ubuntu 22.04 AMI - we install NVIDIA drivers + CUDA ourselves
 AMI_ID=$(aws ec2 describe-images "${REGION_ARGS[@]}" \
-    --owners amazon \
-    --filters "Name=name,Values=Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)*" "Name=state,Values=available" \
+    --owners 099720109477 \
+    --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" "Name=state,Values=available" \
     --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
     --output text)
-
-if [ "$AMI_ID" = "None" ] || [ -z "$AMI_ID" ]; then
-    echo "ERROR: Deep Learning AMI not found in $REGION"
-    exit 1
-fi
 
 SPOT_ARGS=()
 if [ "$USE_SPOT" = true ]; then
