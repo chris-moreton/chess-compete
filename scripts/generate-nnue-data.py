@@ -162,11 +162,17 @@ def load_openings(book_path):
     return fens
 
 
-def play_game(engine_path, depth, hash_mb=16, eval_noise=15, opening_fen=None):
+def play_game(engine_path, depth, hash_mb=16, eval_noise=15, opening_fen=None,
+              random_plies=0, fixed_depth=False):
     """Play one self-play game and return list of (fen, score_cp, result) tuples.
 
     Returns list of positions from the game, with result filled in after game ends.
-    Scores are white-relative. Depth is randomized ±2 per move for variety.
+    Scores are white-relative.
+
+    Args:
+        random_plies: number of random moves to play from startpos before starting.
+                      Overrides opening_fen if > 0.
+        fixed_depth: if True, use exact depth (no ±2 randomization)
     """
     import chess
     import random
@@ -175,15 +181,27 @@ def play_game(engine_path, depth, hash_mb=16, eval_noise=15, opening_fen=None):
     engine.new_game()
 
     board = chess.Board(opening_fen) if opening_fen else chess.Board()
+
+    # Play random opening moves for diversity
+    if random_plies > 0:
+        board = chess.Board()
+        for _ in range(random_plies):
+            legal = list(board.legal_moves)
+            if not legal or board.is_game_over():
+                break
+            board.push(random.choice(legal))
+
     positions = []  # (fen, white_relative_score)
     move_count = 0
     max_moves = 300  # Prevent infinite games
-    min_depth = max(4, depth - 2)
-    max_depth = depth + 2
+    skip_plies = random_plies if random_plies > 0 else 8  # Skip book/random moves
 
     while not board.is_game_over(claim_draw=True) and move_count < max_moves:
         fen = board.fen()
-        move_depth = random.randint(min_depth, max_depth)
+        if fixed_depth:
+            move_depth = depth
+        else:
+            move_depth = random.randint(max(4, depth - 2), depth + 2)
         best_move, score_cp, is_mate = engine.search(fen, move_depth)
 
         if best_move is None or best_move == "(none)":
@@ -192,9 +210,8 @@ def play_game(engine_path, depth, hash_mb=16, eval_noise=15, opening_fen=None):
         # Convert score to white-relative
         white_score = score_cp if board.turn == chess.WHITE else -score_cp
 
-        # Skip positions in the first 8 plies (opening book territory)
-        # and positions where the score is a forced mate (not useful for eval training)
-        if move_count >= 8 and not is_mate:
+        # Skip early positions and forced mates (not useful for eval training)
+        if move_count >= skip_plies and not is_mate:
             positions.append((fen, white_score))
 
         # Apply move
@@ -238,10 +255,12 @@ def play_game(engine_path, depth, hash_mb=16, eval_noise=15, opening_fen=None):
     return [(fen, score, result) for fen, score in positions]
 
 
-def worker(game_id, engine_path, depth, hash_mb, eval_noise, opening_fen):
+def worker(game_id, engine_path, depth, hash_mb, eval_noise, opening_fen,
+           random_plies, fixed_depth):
     """Worker function for parallel game generation."""
     try:
-        positions = play_game(engine_path, depth, hash_mb, eval_noise, opening_fen)
+        positions = play_game(engine_path, depth, hash_mb, eval_noise, opening_fen,
+                              random_plies, fixed_depth)
         return game_id, positions
     except Exception as e:
         print(f"Game {game_id} failed: {e}", file=sys.stderr)
@@ -257,6 +276,8 @@ def main():
     parser.add_argument("--concurrency", type=int, default=1, help="Parallel games")
     parser.add_argument("--hash", type=int, default=16, help="Hash per engine instance in MB (default: 16)")
     parser.add_argument("--eval-noise", type=int, default=15, help="Eval noise in cp (default: 15, 0=disabled)")
+    parser.add_argument("--random-plies", type=int, default=0, help="Random opening plies (0=use book instead)")
+    parser.add_argument("--fixed-depth", action="store_true", help="Use exact depth (no ±2 randomization)")
     parser.add_argument("--book", default="", help="Path to opening book PGN")
     parser.add_argument("--upload", default="", help="S3 path to upload results (e.g. s3://bucket/path/)")
     parser.add_argument("--engine-tag", default="", help="Engine version tag for dashboard (e.g. v1.0.38)")
@@ -276,12 +297,18 @@ def main():
 
     print(f"NNUE Data Generation")
     print(f"  Engine:      {args.engine}")
-    print(f"  Depth:       {args.depth} (±2 randomized per move)")
+    depth_str = f"{args.depth} (fixed)" if args.fixed_depth else f"{args.depth} (±2 randomized)"
+    print(f"  Depth:       {depth_str}")
     print(f"  Games:       {args.games}")
     print(f"  Concurrency: {args.concurrency}")
     print(f"  Hash/engine: {args.hash}MB")
     print(f"  Eval noise:  ±{args.eval_noise}cp")
-    print(f"  Openings:    {len(openings)} positions" if openings else "  Openings:    none (starting position)")
+    if args.random_plies > 0:
+        print(f"  Openings:    {args.random_plies} random plies from startpos")
+    elif openings:
+        print(f"  Openings:    {len(openings)} positions from book")
+    else:
+        print(f"  Openings:    none (starting position)")
     print(f"  Output:      {args.output}")
     if args.api_url:
         print(f"  Dashboard:   {args.api_url}/datagen")
@@ -313,9 +340,9 @@ def main():
 
             # Submit initial batch
             for _ in range(min(args.concurrency, args.games)):
-                opening = random.choice(openings) if openings else None
+                opening = random.choice(openings) if openings and args.random_plies == 0 else None
                 future = executor.submit(worker, next_game, args.engine, args.depth, args.hash,
-                                         args.eval_noise, opening)
+                                         args.eval_noise, opening, args.random_plies, args.fixed_depth)
                 futures[future] = next_game
                 next_game += 1
 
