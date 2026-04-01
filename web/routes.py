@@ -1821,3 +1821,27 @@ def register_routes(app):
         all_positions = sum(j['positions_generated'] for j in jobs_data)
 
         return render_template('datagen.html', jobs=jobs_data, totals=totals, all_positions=all_positions)
+
+    @app.route('/status')
+    def status_log_page():
+        """Status log page showing recent operational updates."""
+        result = db.session.execute(
+            db.text('SELECT message, created_at FROM status_log ORDER BY created_at DESC LIMIT 50')
+        )
+        entries = [{'message': row[0], 'created_at': row[1]} for row in result]
+        return render_template('status_log.html', entries=entries)
+
+    @app.route('/api/status-log', methods=['POST'])
+    def status_log_post():
+        """Post a status log entry."""
+        if not verify_worker_api_key():
+            return jsonify({'error': 'Invalid API key'}), 401
+        data = request.get_json()
+        if not data or 'message' not in data:
+            return jsonify({'error': 'Missing message'}), 400
+        db.session.execute(
+            db.text('INSERT INTO status_log (message) VALUES (:msg)'),
+            {'msg': data['message']}
+        )
+        db.session.commit()
+        return jsonify({'ok': True})

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Status Log</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 20px; background: #f5f5f5; }
+        h1 { color: #333; }
+        a { color: #2563eb; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .nav { margin-bottom: 20px; font-size: 14px; }
+        .nav a { margin-right: 15px; }
+        .entry { background: white; border-radius: 8px; padding: 16px 20px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .entry .time { font-size: 12px; color: #888; margin-bottom: 6px; }
+        .entry .message { font-size: 14px; line-height: 1.6; color: #333; white-space: pre-wrap; }
+        .empty { color: #999; font-style: italic; padding: 20px; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <a href="/">Dashboard</a>
+        <a href="/spsa">SPSA</a>
+        <a href="/h2h">H2H</a>
+        <a href="/datagen">Data Gen</a>
+        <a href="/status"><strong>Status Log</strong></a>
+    </div>
+
+    <h1>Status Log</h1>
+
+    {% if entries %}
+    {% for e in entries %}
+    <div class="entry">
+        <div class="time">{{ e.created_at.strftime('%Y-%m-%d %H:%M UTC') if e.created_at else '' }}</div>
+        <div class="message">{{ e.message }}</div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="empty">No status entries yet.</div>
+    {% endif %}
+
+    <script>setTimeout(() => location.reload(), 60000);</script>
+</body>
+</html>
