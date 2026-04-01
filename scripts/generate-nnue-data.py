@@ -395,7 +395,7 @@ def main():
                     if next_game < args.games:
                         opening = random.choice(openings) if openings else None
                         future = executor.submit(worker, next_game, args.engine, args.depth, args.hash,
-                                                 args.eval_noise, opening)
+                                                 args.eval_noise, opening, args.random_plies, args.fixed_depth)
                         futures[future] = next_game
                         next_game += 1
 
