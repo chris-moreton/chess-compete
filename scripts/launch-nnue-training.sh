@@ -11,7 +11,7 @@
 #
 # Prerequisites:
 #   - AWS CLI configured
-#   - Training data in s3://chess-compete-builds/nnue-data/
+#   - Training data in s3://chess-compete-builds/nnue-data-sf/
 
 set -euo pipefail
 
@@ -56,8 +56,8 @@ echo "NNUE Training"
 echo "  Instance:    $INSTANCE_TYPE"
 echo "  Region:      $REGION"
 echo "  Max hours:   $MAX_HOURS"
-echo "  S3 data:     s3://${S3_BUCKET}/nnue-data/"
-echo "  S3 output:   s3://${S3_BUCKET}/nnue-checkpoints/"
+echo "  S3 data:     s3://${S3_BUCKET}/nnue-data-sf/"
+echo "  S3 output:   s3://${S3_BUCKET}/nnue-checkpoints-sf/"
 echo ""
 
 # ---------- Build user-data script ----------
@@ -114,7 +114,7 @@ su - ubuntu -c '
     mkdir -p data
 
     # Download all training data files from S3
-    aws s3 sync s3://__S3_BUCKET__/nnue-data/ ~/raw-data/
+    aws s3 sync s3://__S3_BUCKET__/nnue-data-sf/ ~/raw-data/
     echo "Downloaded $(ls ~/raw-data/*.txt | wc -l) data files"
 
     # Clone bullet and chess-compete
@@ -179,8 +179,8 @@ su - ubuntu -c '
 
     # Upload checkpoints to S3
     echo "=== $(date) Uploading checkpoints to S3 ==="
-    aws s3 sync checkpoints/ s3://__S3_BUCKET__/nnue-checkpoints/
-    echo "Checkpoints uploaded to s3://__S3_BUCKET__/nnue-checkpoints/"
+    aws s3 sync checkpoints/ s3://__S3_BUCKET__/nnue-checkpoints-sf/
+    echo "Checkpoints uploaded to s3://__S3_BUCKET__/nnue-checkpoints-sf/"
 '
 
 echo "=== $(date) All done ==="
@@ -233,7 +233,7 @@ echo "Instance launched: $INSTANCE_ID"
 echo "Region: $REGION"
 echo "Type: $INSTANCE_TYPE"
 echo "Auto-terminate: ${MAX_HOURS}h"
-echo "Checkpoints: s3://${S3_BUCKET}/nnue-checkpoints/"
+echo "Checkpoints: s3://${S3_BUCKET}/nnue-checkpoints-sf/"
 echo "================================================"
 echo ""
 echo "Logs: aws ssm start-session --target $INSTANCE_ID --region $REGION"
