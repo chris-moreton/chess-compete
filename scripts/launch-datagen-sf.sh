@@ -23,7 +23,7 @@ HASH=16
 REGION="us-west-2"
 S3_BUCKET="chess-compete-builds"
 S3_PATH="s3://${S3_BUCKET}/nnue-data-sf/"
-INSTANCE_TYPE="c6a.12xlarge"
+INSTANCE_TYPE="c6a.4xlarge"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
