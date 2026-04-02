@@ -11,7 +11,7 @@ use bullet_lib::{
 
 fn main() {
     // Architecture: (768 -> 256)x2 -> 1
-    let hl_size = 256;
+    let hl_size = 512;
 
     // Data paths - all .data files in the data directory
     let data_files: Vec<String> = std::fs::read_dir("data")
@@ -58,7 +58,7 @@ fn main() {
         });
 
     let schedule = TrainingSchedule {
-        net_id: "rival-256x2".to_string(),
+        net_id: "rival-512x2".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
