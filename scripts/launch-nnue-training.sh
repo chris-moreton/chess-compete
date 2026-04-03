@@ -148,13 +148,9 @@ su - ubuntu -c '
         mv ~/data/${base}_shuffled.data "$data_file"
     done
 
-    # Interleave all files into one
-    echo "=== $(date) Interleaving data files ==="
-    data_files=$(ls ~/data/*.data | tr "\n" " ")
-    $UTILS interleave $data_files --output ~/data/training.data
-    rm -f ~/data/v1.0.39_*.data  # Remove individual files to save disk
-
-    echo "Training data ready: $(ls -lh data/training.data)"
+    # Skip interleave (OOMs on large datasets) - train on shuffled individual files
+    echo "=== $(date) Skipping interleave - training on individual shuffled files ==="
+    echo "Data files: $(ls ~/data/*.data | wc -l) files, $(du -sh ~/data/ | cut -f1) total"
 
     # Copy training code
     cp -r ~/chess-compete/scripts/nnue-train ~/nnue-train
