@@ -100,7 +100,6 @@ DEFAULT_PARAMS = {
 
 DEFAULT_GROUP_ORDER = [
     'search-pruning', 'reductions-extensions', 'move-ordering',
-    'evaluation', 'piece-values', 'king-play', 'passed-pawns', 'piece-activity',
 ]
 
 
