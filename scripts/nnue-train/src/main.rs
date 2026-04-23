@@ -10,6 +10,13 @@ use bullet_lib::{
 };
 
 fn main() {
+    // Parse optional args: [checkpoint_path] [start_superbatch]
+    let args: Vec<String> = std::env::args().collect();
+    let checkpoint_path = args.get(1).filter(|s| !s.is_empty());
+    let start_superbatch: usize = args.get(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+
     // Architecture: (768 -> 256)x2 -> 1
     let hl_size = 256;
 
@@ -57,18 +64,25 @@ fn main() {
             l1.forward(hidden_layer)
         });
 
+    // Resume from checkpoint if provided
+    if let Some(path) = checkpoint_path {
+        println!("Loading checkpoint from: {}", path);
+        println!("Resuming from superbatch: {}", start_superbatch);
+        trainer.load_from_checkpoint(path);
+    }
+
     let schedule = TrainingSchedule {
         net_id: "rival-256x2".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
             batches_per_superbatch: 6104,
-            start_superbatch: 1,
+            start_superbatch,
             end_superbatch: superbatches,
         },
         wdl_scheduler: wdl::ConstantWDL { value: wdl_proportion },
         lr_scheduler: lr::CosineDecayLR { initial_lr, final_lr, final_superbatch: superbatches },
-        save_rate: 100,
+        save_rate: 50,
     };
 
     let settings = LocalSettings {
