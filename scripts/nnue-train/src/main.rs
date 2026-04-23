@@ -11,7 +11,7 @@ use bullet_lib::{
 
 fn main() {
     // Architecture: (768 -> 256)x2 -> 1
-    let hl_size = 512;
+    let hl_size = 256;
 
     // Data paths - all .data files in the data directory
     let data_files: Vec<String> = std::fs::read_dir("data")
@@ -33,7 +33,7 @@ fn main() {
     // Training hyperparameters
     let initial_lr = 0.001;
     let final_lr = 0.001 * 0.3f32.powi(5);
-    let superbatches = 800;
+    let superbatches = 600;
     let wdl_proportion = 0.75;
 
     let mut trainer = ValueTrainerBuilder::default()
@@ -58,7 +58,7 @@ fn main() {
         });
 
     let schedule = TrainingSchedule {
-        net_id: "rival-512x2".to_string(),
+        net_id: "rival-256x2".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
