@@ -641,11 +641,11 @@ def get_recent_engine_activity():
     """
     Recent-activity view of the games table for the dashboard:
     - which engines have played a game in the last hour ("in the current competition")
-    - how many matches (distinct opponents in rated games) each engine has
-      played in the last 24 hours
+    - O24: distinct opponents each engine has faced in rated games in the last 24 hours
+    - G24: rated games each engine has played in the last 24 hours
 
     Returns:
-        (active_engine_ids: set[int], matches_24h: dict[int, int])
+        (active_engine_ids: set[int], opponents_24h: dict[int, int], games_24h: dict[int, int])
     """
     from datetime import datetime, timedelta
 
@@ -664,14 +664,17 @@ def get_recent_engine_activity():
 
     active_ids = set()
     opponents = {}
+    games_24h = {}
     for white_id, black_id, played_at in recent:
         opponents.setdefault(white_id, set()).add(black_id)
         opponents.setdefault(black_id, set()).add(white_id)
+        games_24h[white_id] = games_24h.get(white_id, 0) + 1
+        games_24h[black_id] = games_24h.get(black_id, 0) + 1
         if played_at and played_at >= hour_ago:
             active_ids.add(white_id)
             active_ids.add(black_id)
 
-    return active_ids, {eid: len(opps) for eid, opps in opponents.items()}
+    return active_ids, {eid: len(opps) for eid, opps in opponents.items()}, games_24h
 
 
 def get_last_played_engines():
@@ -810,13 +813,14 @@ def get_dashboard_data(active_only=True, min_time_ms=0, max_time_ms=999999999, h
     column_headers = [(i + 1, e['engine'].name) for i, e in enumerate(engines)]
     last_played = get_last_played_engines()
 
-    # Annotate rows with recent activity (played within the hour, matches in 24h)
-    active_ids, matches_24h = get_recent_engine_activity()
+    # Annotate rows with recent activity (played within the hour, opponents/games in 24h)
+    active_ids, opponents_24h, games_24h = get_recent_engine_activity()
     id_by_name = {e['engine'].name: e['engine'].id for e in engines}
     for row in grid:
         engine_id = id_by_name.get(row['engine_name'])
         row['active_hour'] = engine_id in active_ids
-        row['matches_24h'] = matches_24h.get(engine_id, 0)
+        row['opponents_24h'] = opponents_24h.get(engine_id, 0)
+        row['games_24h'] = games_24h.get(engine_id, 0)
 
     return engines, grid, column_headers, last_played
 

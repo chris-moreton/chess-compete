@@ -100,7 +100,8 @@
                         <th class="elo-col sortable" data-sort="ordo" title="Ordo - maximum likelihood, order-independent">Ordo <span class="sort-arrow"></span></th>
                         <th class="stability-col sortable" data-sort="stability" title="How well actual results match expected results (100 = perfect match)">Stab <span class="sort-arrow"></span></th>
                         <th class="games-col sortable" data-sort="games">Games <span class="sort-arrow"></span></th>
-                        <th class="games-col" title="Matches (distinct opponents in rated games) in the last 24 hours">M24</th>
+                        <th class="games-col" title="Distinct opponents in rated games in the last 24 hours">O24</th>
+                        <th class="games-col" title="Rated games played in the last 24 hours">G24</th>
                         {% for col_num, col_name in column_headers %}
                         <th class="h2h-col" title="{{ col_name }}">{{ col_num }}</th>
                         {% endfor %}
@@ -116,7 +117,8 @@
                         <td class="elo-col">{% if row.ordo is not none %}{{ "%.0f"|format(row.ordo) }}{% else %}-{% endif %}</td>
                         <td class="stability-col{% if row.least_stable %} least-stable{% endif %}" style="background-color: {{ row.stability_color }};" title="Stability: {{ row.stability }}%">{{ row.stability }}</td>
                         <td class="games-col">{{ row.games_played }}</td>
-                        <td class="games-col">{{ row.matches_24h }}</td>
+                        <td class="games-col">{{ row.opponents_24h }}</td>
+                        <td class="games-col">{{ row.games_24h }}</td>
                         {% for cell in row.cells %}
                         <td class="h2h-cell" style="background-color: {{ cell.bg_color }};" title="{{ cell.tooltip }}">{{ cell.score }}</td>
                         {% endfor %}
