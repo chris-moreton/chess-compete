@@ -1167,6 +1167,34 @@ def calculate_sequential_elo(game_results, engine_ids):
     return ratings
 
 
+def _max_game_id_for_filter(min_time_ms: int, max_time_ms: int, hostname: str | None, engine_type: str | None) -> int:
+    """Max rated-game id matching the filter (0 if none) - cheap staleness probe."""
+    from sqlalchemy.orm import aliased
+    db = get_db()
+    Engine, Game, EloFilterCache, EloFilterRating = get_models()
+
+    WhiteEngine = aliased(Engine)
+    BlackEngine = aliased(Engine)
+
+    query = db.session.query(func.max(Game.id)).join(
+        WhiteEngine, Game.white_engine_id == WhiteEngine.id
+    ).join(
+        BlackEngine, Game.black_engine_id == BlackEngine.id
+    ).filter(Game.is_rated == True)
+
+    query = query.filter(
+        (Game.time_per_move_ms >= min_time_ms) | (Game.time_per_move_ms.is_(None))
+    )
+    query = query.filter(
+        (Game.time_per_move_ms <= max_time_ms) | (Game.time_per_move_ms.is_(None))
+    )
+    if hostname is not None:
+        query = query.filter(Game.hostname == hostname)
+    query = apply_engine_type_sql_filter(query, engine_type, WhiteEngine, BlackEngine)
+
+    return query.scalar() or 0
+
+
 def recalculate_all_and_store(min_time_ms: int, max_time_ms: int, hostname: str | None, engine_type: str | None):
     """
     Recalculate all rating systems and store in database.
@@ -1188,35 +1216,19 @@ def recalculate_all_and_store(min_time_ms: int, max_time_ms: int, hostname: str 
     # Get or create filter cache
     cache = get_or_create_filter_cache(min_time_ms, max_time_ms, hostname, engine_type)
 
+    # Skip the full recalculation when no new games match this filter since the
+    # stored ratings were computed - the dashboard reloads every 30s, so during
+    # idle periods this is the common case. A cheap max-id probe decides.
+    if cache.last_game_id:
+        current_max_id = _max_game_id_for_filter(min_time_ms, max_time_ms, hostname, engine_type)
+        if current_max_id == cache.last_game_id and EloFilterRating.query.filter_by(filter_id=cache.id).count() > 0:
+            return None
+
     # Calculate all ratings
     all_ratings = calculate_all_ratings(min_time_ms, max_time_ms, hostname, engine_type)
 
-    # Get the last game ID for this filter
-    from sqlalchemy.orm import aliased
-    WhiteEngine = aliased(Engine)
-    BlackEngine = aliased(Engine)
-
-    query = db.session.query(func.max(Game.id)).join(
-        WhiteEngine, Game.white_engine_id == WhiteEngine.id
-    ).join(
-        BlackEngine, Game.black_engine_id == BlackEngine.id
-    ).filter(Game.is_rated == True)
-
-    # Apply filters
-    query = query.filter(
-        (Game.time_per_move_ms >= min_time_ms) | (Game.time_per_move_ms.is_(None))
-    )
-    query = query.filter(
-        (Game.time_per_move_ms <= max_time_ms) | (Game.time_per_move_ms.is_(None))
-    )
-    if hostname is not None:
-        query = query.filter(Game.hostname == hostname)
-    query = apply_engine_type_sql_filter(query, engine_type, WhiteEngine, BlackEngine)
-
-    last_game_id = query.scalar() or 0
-
-    # Update cache
-    cache.last_game_id = last_game_id
+    # Update cache with the last game ID for this filter
+    cache.last_game_id = _max_game_id_for_filter(min_time_ms, max_time_ms, hostname, engine_type)
 
     # Store ratings
     for engine_id, rating_data in all_ratings.items():
