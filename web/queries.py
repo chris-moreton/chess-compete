@@ -637,6 +637,43 @@ def build_h2h_grid(engines, h2h_raw):
     return grid
 
 
+def get_recent_engine_activity():
+    """
+    Recent-activity view of the games table for the dashboard:
+    - which engines have played a game in the last hour ("in the current competition")
+    - how many matches (distinct opponents in rated games) each engine has
+      played in the last 24 hours
+
+    Returns:
+        (active_engine_ids: set[int], matches_24h: dict[int, int])
+    """
+    from datetime import datetime, timedelta
+
+    db = get_db()
+    Engine, Game, EloFilterCache, EloFilterRating = get_models()
+
+    now = datetime.utcnow()
+    hour_ago = now - timedelta(hours=1)
+    day_ago = now - timedelta(hours=24)
+
+    recent = (
+        db.session.query(Game.white_engine_id, Game.black_engine_id, Game.created_at)
+        .filter(Game.created_at >= day_ago, Game.is_rated == True)
+        .all()
+    )
+
+    active_ids = set()
+    opponents = {}
+    for white_id, black_id, played_at in recent:
+        opponents.setdefault(white_id, set()).add(black_id)
+        opponents.setdefault(black_id, set()).add(white_id)
+        if played_at and played_at >= hour_ago:
+            active_ids.add(white_id)
+            active_ids.add(black_id)
+
+    return active_ids, {eid: len(opps) for eid, opps in opponents.items()}
+
+
 def get_last_played_engines():
     """
     Get the engine names from the most recently played game.
@@ -772,6 +809,14 @@ def get_dashboard_data(active_only=True, min_time_ms=0, max_time_ms=999999999, h
 
     column_headers = [(i + 1, e['engine'].name) for i, e in enumerate(engines)]
     last_played = get_last_played_engines()
+
+    # Annotate rows with recent activity (played within the hour, matches in 24h)
+    active_ids, matches_24h = get_recent_engine_activity()
+    id_by_name = {e['engine'].name: e['engine'].id for e in engines}
+    for row in grid:
+        engine_id = id_by_name.get(row['engine_name'])
+        row['active_hour'] = engine_id in active_ids
+        row['matches_24h'] = matches_24h.get(engine_id, 0)
 
     return engines, grid, column_headers, last_played
 

@@ -86,6 +86,9 @@
         </div>
 
         {% if grid %}
+        <div class="active-filter-bar">
+            <label><input type="checkbox" id="active-hour-toggle"> Show only engines that played in the last hour <span class="active-dot"></span></label>
+        </div>
         <div class="table-wrapper">
             <table class="h2h-table" id="h2h-table">
                 <thead>
@@ -97,6 +100,7 @@
                         <th class="elo-col sortable" data-sort="ordo" title="Ordo - maximum likelihood, order-independent">Ordo <span class="sort-arrow"></span></th>
                         <th class="stability-col sortable" data-sort="stability" title="How well actual results match expected results (100 = perfect match)">Stab <span class="sort-arrow"></span></th>
                         <th class="games-col sortable" data-sort="games">Games <span class="sort-arrow"></span></th>
+                        <th class="games-col" title="Matches (distinct opponents in rated games) in the last 24 hours">M24</th>
                         {% for col_num, col_name in column_headers %}
                         <th class="h2h-col" title="{{ col_name }}">{{ col_num }}</th>
                         {% endfor %}
@@ -104,14 +108,15 @@
                 </thead>
                 <tbody>
                     {% for row in grid %}
-                    <tr data-name="{{ row.engine_name }}" data-elo="{{ row.elo }}" data-bayes="{{ row.bayes_elo if row.bayes_elo is not none else 0 }}" data-ordo="{{ row.ordo if row.ordo is not none else 0 }}" data-stability="{{ row.stability }}" data-games="{{ row.games_played }}">
+                    <tr data-name="{{ row.engine_name }}" data-elo="{{ row.elo }}" data-bayes="{{ row.bayes_elo if row.bayes_elo is not none else 0 }}" data-ordo="{{ row.ordo if row.ordo is not none else 0 }}" data-stability="{{ row.stability }}" data-games="{{ row.games_played }}" data-active="{{ '1' if row.active_hour else '0' }}">
                         <td class="rank-col">{{ row.rank }}</td>
-                        <td class="engine-col engine-{{ row.engine_type }}"><a href="/engine/{{ row.engine_name }}">{{ row.engine_name }}</a></td>
+                        <td class="engine-col engine-{{ row.engine_type }}{% if row.active_hour %} engine-active{% endif %}"><a href="/engine/{{ row.engine_name }}">{{ row.engine_name }}</a>{% if row.active_hour %}<span class="active-dot" title="Played a game in the last hour"></span>{% endif %}</td>
                         <td class="elo-col">{{ "%.0f"|format(row.elo) }}</td>
                         <td class="elo-col">{% if row.bayes_elo is not none %}{{ "%.0f"|format(row.bayes_elo) }}{% else %}-{% endif %}</td>
                         <td class="elo-col">{% if row.ordo is not none %}{{ "%.0f"|format(row.ordo) }}{% else %}-{% endif %}</td>
                         <td class="stability-col{% if row.least_stable %} least-stable{% endif %}" style="background-color: {{ row.stability_color }};" title="Stability: {{ row.stability }}%">{{ row.stability }}</td>
                         <td class="games-col">{{ row.games_played }}</td>
+                        <td class="games-col">{{ row.matches_24h }}</td>
                         {% for cell in row.cells %}
                         <td class="h2h-cell" style="background-color: {{ cell.bg_color }};" title="{{ cell.tooltip }}">{{ cell.score }}</td>
                         {% endfor %}
@@ -199,6 +204,38 @@
             const queryString = params.toString();
             window.location.href = queryString ? '?' + queryString : '/';
         };
+
+        // Active-in-last-hour filter: hide inactive rows AND their H2H grid
+        // columns (row order matches column order). Persisted across the
+        // page's 30s auto-refresh via localStorage.
+        const activeToggle = document.getElementById('active-hour-toggle');
+        if (activeToggle) {
+            const ACTIVE_KEY = 'dashboard-active-hour-only';
+            const applyActiveFilter = () => {
+                const on = activeToggle.checked;
+                const tbl = document.getElementById('h2h-table');
+                if (!tbl) return;
+                const rows = Array.from(tbl.querySelectorAll('tbody tr'));
+                const hideCol = rows.map(tr => on && tr.dataset.active !== '1');
+                rows.forEach((tr, i) => {
+                    tr.style.display = hideCol[i] ? 'none' : '';
+                });
+                tbl.querySelectorAll('thead th.h2h-col').forEach((th, i) => {
+                    th.style.display = hideCol[i] ? 'none' : '';
+                });
+                rows.forEach(tr => {
+                    tr.querySelectorAll('td.h2h-cell').forEach((td, i) => {
+                        td.style.display = hideCol[i] ? 'none' : '';
+                    });
+                });
+                localStorage.setItem(ACTIVE_KEY, on ? '1' : '0');
+            };
+            activeToggle.addEventListener('change', applyActiveFilter);
+            if (localStorage.getItem(ACTIVE_KEY) === '1') {
+                activeToggle.checked = true;
+                applyActiveFilter();
+            }
+        }
 
         // Table sorting
         const table = document.getElementById('h2h-table');

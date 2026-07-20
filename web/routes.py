@@ -1679,6 +1679,41 @@ def register_routes(app):
             for entry in leaderboard:
                 entry['elo_diff'] = entry['elo'] - min_elo
 
+        # Recent activity: engines with a game in the last hour (highlighted as
+        # "in the current competition"), and per-engine match counts over 24h
+        now = datetime.utcnow()
+        hour_ago = now - timedelta(hours=1)
+        day_ago = now - timedelta(hours=24)
+
+        active_engines = set()
+        try:
+            for engine_col in (Game.white_engine_id, Game.black_engine_id):
+                rows = (
+                    db.session.query(Engine.name)
+                    .join(Game, engine_col == Engine.id)
+                    .filter(Game.created_at >= hour_ago)
+                    .distinct()
+                    .all()
+                )
+                active_engines.update(r[0] for r in rows)
+        except Exception:
+            active_engines = set()
+
+        matches_24h = {}
+        for m in matches:
+            has_recent_activity = (
+                m.status == 'running'
+                or (m.created_at and m.created_at >= day_ago)
+                or (m.completed_at and m.completed_at >= day_ago)
+            )
+            if has_recent_activity:
+                for tag in (m.engine1_tag, m.engine2_tag):
+                    matches_24h[tag] = matches_24h.get(tag, 0) + 1
+
+        for entry in leaderboard:
+            entry['active'] = entry['engine'] in active_engines
+            entry['matches_24h'] = matches_24h.get(entry['engine'], 0)
+
         # Compute Elo diff for each match
         matches_data = []
         for m in matches:

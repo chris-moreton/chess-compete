@@ -388,3 +388,9 @@ h1 {
         margin-bottom: 5px;
     }
 }
+
+/* Recent-activity highlight (engine played a game in the last hour) */
+td.engine-col.engine-active { background: #d1fae5; }
+.active-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #10b981; margin-left: 6px; vertical-align: middle; }
+.active-filter-bar { margin: 8px 0; font-size: 13px; color: #555; }
+.active-filter-bar label { cursor: pointer; user-select: none; }
