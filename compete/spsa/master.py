@@ -59,11 +59,15 @@ DEFAULT_PARAMS = {
     'lmp_threshold_depth3': {'value': 8, 'min': 3, 'max': 25, 'step': 1, 'group': 'search-pruning'},
     'lmr_legal_moves_before_attempt': {'value': 4, 'min': 2, 'max': 8, 'step': 1, 'group': 'search-pruning'},
     'lmr_min_depth': {'value': 3, 'min': 2, 'max': 6, 'step': 1, 'group': 'search-pruning'},
-    'iid_min_depth': {'value': 5, 'min': 2, 'max': 8, 'step': 1, 'group': 'search-pruning'},
-    'iid_reduce_depth': {'value': 3, 'min': 1, 'max': 6, 'step': 1, 'group': 'search-pruning'},
+    # Correction history (NET-228): corrects static eval feeding RFP/futility margins
+    'correction_history_grain': {'value': 256, 'min': 64, 'max': 1024, 'step': 32, 'group': 'search-pruning'},
+    'correction_history_max': {'value': 16384, 'min': 4096, 'max': 49152, 'step': 1024, 'group': 'search-pruning'},
+    'correction_history_weight_max': {'value': 16, 'min': 4, 'max': 64, 'step': 3, 'group': 'search-pruning'},
     # ==================== reductions-extensions (SPSA tuned, Run 20) ====================
-    'lmr_history_good_divisor': {'value': 22, 'min': 4, 'max': 60, 'step': 4, 'group': 'reductions-extensions'},
-    'lmr_history_bad_divisor': {'value': 27, 'min': 4, 'max': 60, 'step': 4, 'group': 'reductions-extensions'},
+    # Absolute thresholds on the [-HISTORY_MAX, HISTORY_MAX] gravity scale (NET-226
+    # replaced the old good/bad divisors; hand-picked values, wide open for tuning)
+    'lmr_history_good_threshold': {'value': 8192, 'min': 2000, 'max': 15000, 'step': 500, 'group': 'reductions-extensions'},
+    'lmr_history_bad_threshold': {'value': -2048, 'min': -12000, 'max': -256, 'step': 400, 'group': 'reductions-extensions'},
     'lmr_continuation_good_threshold': {'value': 8659, 'min': 2000, 'max': 15000, 'step': 500, 'group': 'reductions-extensions'},
     'lmr_continuation_bad_threshold': {'value': -8993, 'min': -15000, 'max': -2000, 'step': 500, 'group': 'reductions-extensions'},
     'probcut_min_depth': {'value': 13, 'min': 8, 'max': 20, 'step': 1, 'group': 'reductions-extensions'},
@@ -91,6 +95,8 @@ DEFAULT_PARAMS = {
     'countermove_history_divisor': {'value': 235, 'min': 50, 'max': 600, 'step': 30, 'group': 'move-ordering'},
     'followup_history_divisor': {'value': 538, 'min': 100, 'max': 1200, 'step': 50, 'group': 'move-ordering'},
     'capture_history_divisor': {'value': 1120, 'min': 200, 'max': 2500, 'step': 100, 'group': 'move-ordering'},
+    # Butterfly history -> move-ordering score scale (NET-226 gravity rework)
+    'history_divisor': {'value': 26, 'min': 8, 'max': 80, 'step': 4, 'group': 'move-ordering'},
     # NOTE: evaluation, piece-values, king-play, passed-pawns, and piece-activity
     # groups removed - these are HCE params bypassed by NNUE (v1.0.40+).
     # Only search-related params (search-pruning, reductions-extensions, move-ordering)

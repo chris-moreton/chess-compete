@@ -149,16 +149,35 @@ PARAM_MAPPINGS = {
         r'pub const CAPTURE_HISTORY_DIVISOR: i32 = \d+;',
         'pub const CAPTURE_HISTORY_DIVISOR: i32 = {value};'
     ),
+    'history_divisor': (
+        r'pub const HISTORY_DIVISOR: i32 = \d+;',
+        'pub const HISTORY_DIVISOR: i32 = {value};'
+    ),
+    # ==========================================================================
+    # CORRECTION HISTORY PARAMETERS (NET-228)
+    # ==========================================================================
+    'correction_history_grain': (
+        r'pub const CORRECTION_HISTORY_GRAIN: i32 = \d+;',
+        'pub const CORRECTION_HISTORY_GRAIN: i32 = {value};'
+    ),
+    'correction_history_max': (
+        r'pub const CORRECTION_HISTORY_MAX: i32 = \d+;',
+        'pub const CORRECTION_HISTORY_MAX: i32 = {value};'
+    ),
+    'correction_history_weight_max': (
+        r'pub const CORRECTION_HISTORY_WEIGHT_MAX: i32 = \d+;',
+        'pub const CORRECTION_HISTORY_WEIGHT_MAX: i32 = {value};'
+    ),
     # ==========================================================================
     # LMR HISTORY PARAMETERS
     # ==========================================================================
-    'lmr_history_good_divisor': (
-        r'pub const LMR_HISTORY_GOOD_DIVISOR: i32 = \d+;',
-        'pub const LMR_HISTORY_GOOD_DIVISOR: i32 = {value};'
+    'lmr_history_good_threshold': (
+        r'pub const LMR_HISTORY_GOOD_THRESHOLD: i32 = -?\d+;',
+        'pub const LMR_HISTORY_GOOD_THRESHOLD: i32 = {value};'
     ),
-    'lmr_history_bad_divisor': (
-        r'pub const LMR_HISTORY_BAD_DIVISOR: i32 = \d+;',
-        'pub const LMR_HISTORY_BAD_DIVISOR: i32 = {value};'
+    'lmr_history_bad_threshold': (
+        r'pub const LMR_HISTORY_BAD_THRESHOLD: i32 = -?\d+;',
+        'pub const LMR_HISTORY_BAD_THRESHOLD: i32 = {value};'
     ),
     'lmr_continuation_good_threshold': (
         r'pub const LMR_CONTINUATION_GOOD_THRESHOLD: i32 = \d+;',
@@ -178,14 +197,6 @@ PARAM_MAPPINGS = {
     'lmr_min_depth': (
         r'pub const LMR_MIN_DEPTH: u8 = \d+;',
         'pub const LMR_MIN_DEPTH: u8 = {value};'
-    ),
-    'iid_min_depth': (
-        r'pub const IID_MIN_DEPTH: u8 = \d+;',
-        'pub const IID_MIN_DEPTH: u8 = {value};'
-    ),
-    'iid_reduce_depth': (
-        r'pub const IID_REDUCE_DEPTH: u8 = \d+;',
-        'pub const IID_REDUCE_DEPTH: u8 = {value};'
     ),
     # ==========================================================================
     # EVALUATION PARAMETERS
@@ -462,7 +473,13 @@ def apply_parameters(content: str, params: dict) -> str:
         if param_name in params:
             value = int(round(params[param_name]))
             replacement = template.format(value=value)
-            content = re.sub(pattern, replacement, content)
+            content, n_subs = re.subn(pattern, replacement, content)
+            if n_subs == 0:
+                raise ValueError(
+                    f"SPSA param '{param_name}' did not match engine_constants.rs "
+                    f"(pattern: {pattern}) - the mapping is stale; a build with it "
+                    f"would silently ignore the parameter"
+                )
 
     # Apply ALPHA_PRUNE_MARGINS (computed from base + index * per_depth)
     if 'alpha_prune_margin_base' in params and 'alpha_prune_margin_per_depth' in params:
