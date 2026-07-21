@@ -48,8 +48,8 @@ DEFAULT_PARAMS = {
     # ==================== search-pruning (SPSA tuned, Run 19) ====================
     'beta_prune_margin_per_depth': {'value': 127, 'min': 50, 'max': 300, 'step': 15, 'group': 'search-pruning'},
     'beta_prune_max_depth': {'value': 12, 'min': 4, 'max': 16, 'step': 1, 'group': 'search-pruning'},
-    'null_move_reduce_depth_base': {'value': 2, 'min': 2, 'max': 8, 'step': 1, 'group': 'search-pruning'},
-    'null_move_min_depth': {'value': 4, 'min': 4, 'max': 14, 'step': 1, 'group': 'search-pruning'},
+    'null_move_reduce_depth_base': {'value': 2, 'min': 1, 'max': 8, 'step': 1, 'group': 'search-pruning'},
+    'null_move_min_depth': {'value': 4, 'min': 2, 'max': 14, 'step': 1, 'group': 'search-pruning'},
     'see_prune_margin': {'value': 24, 'min': 5, 'max': 80, 'step': 5, 'group': 'search-pruning'},
     'see_prune_max_depth': {'value': 5, 'min': 4, 'max': 16, 'step': 1, 'group': 'search-pruning'},
     'alpha_prune_margin_base': {'value': 70, 'min': 20, 'max': 120, 'step': 8, 'group': 'search-pruning'},

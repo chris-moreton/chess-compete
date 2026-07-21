@@ -37,7 +37,7 @@ hash_mb = 64
 [reference]
 # Path to reference engine (relative to chess-compete directory or absolute)
 engine_path = "../rusty-rival/engines/stockfish"
-engine_elo = 2600  # Assumed Elo of reference engine
+engine_elo = 3000  # sf-2600 saturates at SPSA TC (95-99% score, no trend signal)
 
 # =============================================================================
 # DATABASE
