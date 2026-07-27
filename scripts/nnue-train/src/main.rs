@@ -1,5 +1,5 @@
 use bullet_lib::{
-    game::inputs::Chess768,
+    game::{inputs::Chess768, outputs::MaterialCount},
     nn::optimiser::AdamW,
     trainer::{
         save::SavedFormat,
@@ -17,8 +17,20 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
 
-    // Architecture: (768 -> 256)x2 -> 1
+    // Architecture: (768 -> 256)x2 -> 8 output buckets (NET-321)
+    //
+    // hl_size is deliberately held at 256 so this run isolates a single
+    // variable. Whether a wider hidden layer pays at 635M positions is a
+    // separate, still-unanswered question: the only prior 512 attempt used the
+    // 204M dataset and stopped at 300 superbatches. Do not change both at once.
     let hl_size = 256;
+
+    // Buckets are selected by material count. bullet's MaterialCount<N> uses:
+    //     divisor = 32usize.div_ceil(N)            // N=8 -> 4
+    //     bucket  = (occ.count_ones() - 2) / divisor
+    // The engine's evaluate() MUST reproduce this exactly, or it will select a
+    // different bucket than training used and evaluate plausibly but wrongly.
+    const NUM_OUTPUT_BUCKETS: usize = 8;
 
     // Data paths - all .data files in the data directory
     let data_files: Vec<String> = std::fs::read_dir("data")
@@ -47,21 +59,26 @@ fn main() {
         .dual_perspective()
         .optimiser(AdamW)
         .inputs(Chess768)
+        .output_buckets(MaterialCount::<NUM_OUTPUT_BUCKETS>)
         .save_format(&[
             SavedFormat::id("l0w").round().quantise::<i16>(255),
             SavedFormat::id("l0b").round().quantise::<i16>(255),
-            SavedFormat::id("l1w").round().quantise::<i16>(64),
+            // NOTE: .transpose() is required with output buckets and was absent
+            // from the single-bucket config. It changes the on-disk layout of
+            // l1w, so the engine loader must be verified against an actual
+            // checkpoint before the net is trusted.
+            SavedFormat::id("l1w").round().quantise::<i16>(64).transpose(),
             SavedFormat::id("l1b").round().quantise::<i16>(255 * 64),
         ])
         .loss_fn(|output, target| output.sigmoid().squared_error(target))
-        .build(|builder, stm_inputs, ntm_inputs| {
+        .build(|builder, stm_inputs, ntm_inputs, output_buckets| {
             let l0 = builder.new_affine("l0", 768, hl_size);
-            let l1 = builder.new_affine("l1", 2 * hl_size, 1);
+            let l1 = builder.new_affine("l1", 2 * hl_size, NUM_OUTPUT_BUCKETS);
 
             let stm_hidden = l0.forward(stm_inputs).screlu();
             let ntm_hidden = l0.forward(ntm_inputs).screlu();
             let hidden_layer = stm_hidden.concat(ntm_hidden);
-            l1.forward(hidden_layer)
+            l1.forward(hidden_layer).select(output_buckets)
         });
 
     // Resume from checkpoint if provided
@@ -72,7 +89,9 @@ fn main() {
     }
 
     let schedule = TrainingSchedule {
-        net_id: "rival-256x2".to_string(),
+        // Distinct id so these checkpoints cannot overwrite the shipped
+        // single-bucket net in s3://chess-compete-builds/nnue-checkpoints-sf/
+        net_id: "rival-256x2-ob8".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
