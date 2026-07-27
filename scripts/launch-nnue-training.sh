@@ -134,19 +134,34 @@ su - ubuntu -c '
     cargo build --release --package bullet-utils
     UTILS=~/bullet/target/release/bullet-utils
 
-    # Convert text files to bullet binary format
+    # Convert text files to bullet binary format.
+    #
+    # Each .txt is deleted as soon as its .data is written (NET-322). Nothing
+    # reads the raw text after conversion, and keeping both copies previously
+    # left the 100GB volume at 99% full mid-training - one slightly larger
+    # dataset away from failing hours into a GPU run. Deleting inside the loop
+    # rather than after it also caps the peak, since full raw and converted
+    # copies of the dataset never coexist. The originals live permanently in
+    # S3, so this is not destructive.
+    #
+    # The && guard means a failed conversion leaves its input in place to
+    # diagnose rather than silently discarding it.
     echo "=== $(date) Converting data to bullet format ==="
     mkdir -p ~/data
     for txt_file in ~/raw-data/*.txt; do
         base=$(basename "$txt_file" .txt)
         echo "  Converting $base..."
-        $UTILS convert --from text --input "$txt_file" --output ~/data/${base}.data
+        $UTILS convert --from text --input "$txt_file" --output ~/data/${base}.data \
+            && rm -f "$txt_file"
     done
 
     echo "Converted files:"
     ls -lh ~/data/*.data
+    echo "Disk after conversion:"
+    df -h /
 
-    # Shuffle each file
+    # Shuffle each file. This transiently needs an extra copy of the largest
+    # shard, so headroom matters here too - hence the df either side.
     echo "=== $(date) Shuffling data files ==="
     for data_file in ~/data/*.data; do
         base=$(basename "$data_file" .data)
@@ -158,6 +173,8 @@ su - ubuntu -c '
     # Skip interleave (OOMs on large datasets) - train on shuffled individual files
     echo "=== $(date) Skipping interleave - training on individual shuffled files ==="
     echo "Data files: $(ls ~/data/*.data | wc -l) files, $(du -sh ~/data/ | cut -f1) total"
+    echo "Disk before training:"
+    df -h /
 
     # Copy training code
     cp -r ~/chess-compete/scripts/nnue-train ~/nnue-train
