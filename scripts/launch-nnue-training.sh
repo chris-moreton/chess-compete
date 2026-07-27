@@ -34,6 +34,10 @@ MAX_HOURS=12
 USE_SPOT=true
 MAX_SPOT_PRICE="1.50"
 S3_BUCKET="chess-compete-builds"
+# Branch of chess-compete the instance checks out for scripts/nnue-train.
+# The trainer config lives in git, so training the wrong branch silently
+# trains the wrong architecture — always pass --branch for experiments.
+BRANCH="main"
 
 # ---------- Parse arguments ----------
 while [[ $# -gt 0 ]]; do
@@ -41,6 +45,7 @@ while [[ $# -gt 0 ]]; do
         --type)      INSTANCE_TYPE="$2"; shift 2 ;;
         --region|-r) REGION="$2"; shift 2 ;;
         --hours)     MAX_HOURS="$2"; shift 2 ;;
+        --branch|-b) BRANCH="$2"; shift 2 ;;
         --on-demand) USE_SPOT=false; shift ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
@@ -56,6 +61,7 @@ echo "NNUE Training"
 echo "  Instance:    $INSTANCE_TYPE"
 echo "  Region:      $REGION"
 echo "  Max hours:   $MAX_HOURS"
+echo "  Branch:      $BRANCH"
 echo "  S3 data:     s3://${S3_BUCKET}/nnue-data-sf/"
 echo "  S3 output:   s3://${S3_BUCKET}/nnue-checkpoints-sf/"
 echo ""
@@ -119,7 +125,8 @@ su - ubuntu -c '
 
     # Clone bullet and chess-compete
     git clone https://github.com/jw1912/bullet.git
-    git clone https://github.com/chris-moreton/chess-compete.git
+    git clone -b __BRANCH__ https://github.com/chris-moreton/chess-compete.git
+    echo "chess-compete branch: $(cd ~/chess-compete && git rev-parse --abbrev-ref HEAD) @ $(cd ~/chess-compete && git rev-parse --short HEAD)"
 
     # Build bullet-utils (no CUDA needed for this)
     echo "=== $(date) Building bullet-utils ==="
@@ -168,8 +175,24 @@ su - ubuntu -c '
     fi
 
     echo "=== $(date) Starting training ==="
-    echo "Training data: $(ls -lh data/training.data)"
+    echo "Training data: $(ls -lh data/*.data | wc -l) shards, $(du -sh data/ | cut -f1)"
+
+    # Upload checkpoints periodically during training. Without this the only
+    # sync is the one after cargo run returns, so a spot interruption or the
+    # shutdown timer destroys the entire run. The trainer writes a checkpoint
+    # every 50 superbatches (save_rate), so 20 minutes is comfortably finer
+    # grained than the loss of work it protects against.
+    (
+        while true; do
+            sleep 1200
+            aws s3 sync checkpoints/ s3://__S3_BUCKET__/nnue-checkpoints-sf/ 2>/dev/null || true
+        done
+    ) &
+    PERIODIC_SYNC_PID=$!
+
     cargo run --release 2>&1
+
+    kill $PERIODIC_SYNC_PID 2>/dev/null || true
 
     echo "=== $(date) Training complete ==="
 
@@ -188,6 +211,7 @@ USERDATA
 
 # Substitute values
 USER_DATA="${USER_DATA//__S3_BUCKET__/$S3_BUCKET}"
+USER_DATA="${USER_DATA//__BRANCH__/$BRANCH}"
 USER_DATA="${USER_DATA//__SHUTDOWN_MINUTES__/$SHUTDOWN_MINUTES}"
 USER_DATA="${USER_DATA//__MAX_HOURS__/$MAX_HOURS}"
 
