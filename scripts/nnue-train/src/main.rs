@@ -45,7 +45,17 @@ fn main() {
         std::process::exit(1);
     }
 
-    println!("Training files: {:?}", data_files);
+    // NET-325: the shard set is whatever the launch script left in data/.
+    // With --data-fraction 0.5 that is half the shards, i.e. roughly half the
+    // GAMES - which is the quantity that matters. Positions within a game
+    // differ by one move and are heavily correlated: the dataset averages 117
+    // positions per game, so halving positions within games would change almost
+    // nothing, while halving games halves the independent information.
+    //
+    // Superbatch count is deliberately UNCHANGED, so this run does the same
+    // number of gradient steps over half the data (more epochs). That isolates
+    // data quantity at fixed compute, which is the question being asked.
+    println!("Training files ({}): {:?}", data_files.len(), data_files);
 
     let data_refs: Vec<&str> = data_files.iter().map(|s| s.as_str()).collect();
 
@@ -91,7 +101,7 @@ fn main() {
     let schedule = TrainingSchedule {
         // Distinct id so these checkpoints cannot overwrite the shipped
         // single-bucket net in s3://chess-compete-builds/nnue-checkpoints-sf/
-        net_id: "rival-256x2-ob8".to_string(),
+        net_id: "rival-256x2-ob8-halfdata".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,

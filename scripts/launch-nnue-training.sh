@@ -38,6 +38,10 @@ S3_BUCKET="chess-compete-builds"
 # The trainer config lives in git, so training the wrong branch silently
 # trains the wrong architecture — always pass --branch for experiments.
 BRANCH="main"
+# Fraction of data shards to train on (NET-325). 1.0 = all. Shards are dropped
+# alternately rather than by prefix, so the kept set spans every generation
+# batch instead of over-representing one of them.
+DATA_FRACTION="1.0"
 
 # ---------- Parse arguments ----------
 while [[ $# -gt 0 ]]; do
@@ -46,6 +50,7 @@ while [[ $# -gt 0 ]]; do
         --region|-r) REGION="$2"; shift 2 ;;
         --hours)     MAX_HOURS="$2"; shift 2 ;;
         --branch|-b) BRANCH="$2"; shift 2 ;;
+        --data-fraction) DATA_FRACTION="$2"; shift 2 ;;
         --on-demand) USE_SPOT=false; shift ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
@@ -62,6 +67,7 @@ echo "  Instance:    $INSTANCE_TYPE"
 echo "  Region:      $REGION"
 echo "  Max hours:   $MAX_HOURS"
 echo "  Branch:      $BRANCH"
+echo "  Data frac:   $DATA_FRACTION"
 echo "  S3 data:     s3://${S3_BUCKET}/nnue-data-sf/"
 echo "  S3 output:   s3://${S3_BUCKET}/nnue-checkpoints-sf/"
 echo ""
@@ -170,6 +176,34 @@ su - ubuntu -c '
         mv ~/data/${base}_shuffled.data "$data_file"
     done
 
+    # Drop shards to hit the requested data fraction (NET-325).
+    #
+    # Selection is by BYTES, not shard count: shards range from 364MB to 2.7GB,
+    # so "half the shards" would not be half the data. A deterministic seeded
+    # shuffle then takes shards until the byte target is met, which samples
+    # across generation batches rather than favouring any one of them.
+    if [ "__DATA_FRACTION__" != "1.0" ]; then
+        echo "=== $(date) Reducing to data fraction __DATA_FRACTION__ ==="
+        python3 - "__DATA_FRACTION__" <<'PYEOF'
+import glob, os, random, sys
+frac = float(sys.argv[1])
+files = sorted(glob.glob(os.path.expanduser("~/data/*.data")))
+total = sum(os.path.getsize(f) for f in files)
+random.Random(20260728).shuffle(files)
+keep, acc = set(), 0
+for f in files:
+    if acc >= total * frac:
+        break
+    keep.add(f); acc += os.path.getsize(f)
+removed = 0
+for f in files:
+    if f not in keep:
+        os.remove(f); removed += 1
+print(f"  kept {len(keep)} shards ({acc/1e9:.1f} GB of {total/1e9:.1f} GB = {acc/total:.1%}), removed {removed}")
+PYEOF
+        echo "  shards remaining: $(ls ~/data/*.data | wc -l)"
+    fi
+
     # Skip interleave (OOMs on large datasets) - train on shuffled individual files
     echo "=== $(date) Skipping interleave - training on individual shuffled files ==="
     echo "Data files: $(ls ~/data/*.data | wc -l) files, $(du -sh ~/data/ | cut -f1) total"
@@ -229,6 +263,7 @@ USERDATA
 # Substitute values
 USER_DATA="${USER_DATA//__S3_BUCKET__/$S3_BUCKET}"
 USER_DATA="${USER_DATA//__BRANCH__/$BRANCH}"
+USER_DATA="${USER_DATA//__DATA_FRACTION__/$DATA_FRACTION}"
 USER_DATA="${USER_DATA//__SHUTDOWN_MINUTES__/$SHUTDOWN_MINUTES}"
 USER_DATA="${USER_DATA//__MAX_HOURS__/$MAX_HOURS}"
 
