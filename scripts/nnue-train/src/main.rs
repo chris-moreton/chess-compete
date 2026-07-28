@@ -17,13 +17,23 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
 
-    // Architecture: (768 -> 256)x2 -> 8 output buckets (NET-321)
+    // Architecture: (768 -> 512)x2 -> 8 output buckets (NET-323)
     //
-    // hl_size is deliberately held at 256 so this run isolates a single
-    // variable. Whether a wider hidden layer pays at 635M positions is a
-    // separate, still-unanswered question: the only prior 512 attempt used the
-    // 204M dataset and stopped at 300 superbatches. Do not change both at once.
-    let hl_size = 256;
+    // This fills the empty cell of the width-vs-data grid:
+    //
+    //     256 @ 204M  -> +65 vs HCE
+    //     512 @ 204M  -> -19 vs 256      (capacity did not pay at 204M)
+    //     256 @ 635M  -> +215            (data paid, hugely)
+    //     512 @ 635M  -> NEVER RUN       <- this run
+    //
+    // "Larger architecture did not help" was only ever established at 204M, so
+    // it says nothing about 635M. Output buckets are held at 8 so width is the
+    // only variable versus the NET-321 net, which measured +5.3 +/-10.4.
+    //
+    // The prior 512 attempt also stopped at 300 superbatches against 600 for
+    // the shipped net, so it may not even have been a fair comparison at its
+    // own dataset size. This run goes the full 600.
+    let hl_size = 512;
 
     // Buckets are selected by material count. bullet's MaterialCount<N> uses:
     //     divisor = 32usize.div_ceil(N)            // N=8 -> 4
@@ -91,7 +101,7 @@ fn main() {
     let schedule = TrainingSchedule {
         // Distinct id so these checkpoints cannot overwrite the shipped
         // single-bucket net in s3://chess-compete-builds/nnue-checkpoints-sf/
-        net_id: "rival-256x2-ob8".to_string(),
+        net_id: "rival-512x2-ob8".to_string(),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
