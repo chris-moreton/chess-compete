@@ -198,6 +198,45 @@ su - ubuntu -c '
         python3 - "__DATA_FRACTION__" <<'PYEOF'
 import glob, os, random, sys
 frac = float(sys.argv[1])
+REC = 32   # bulletformat record size; truncation must land on a record boundary
+files = sorted(glob.glob(os.path.expanduser("~/data/*.data")))
+total = sum(os.path.getsize(f) for f in files)
+target = int(total * frac)
+random.Random(20260728).shuffle(files)
+
+# Take whole shards until the target is reached, then TRUNCATE the last one so
+# the kept volume matches the target exactly. Whole-shard selection alone is far
+# too coarse at small fractions: shards range 364MB-2.7GB, so a 890MB target
+# could take a single 2.7GB shard and overshoot 3x - which would silently break
+# an experiment whose whole premise is equal-sized corpora (NET-326).
+keep, acc = [], 0
+for f in files:
+    if acc >= target:
+        break
+    keep.append(f); acc += os.path.getsize(f)
+
+removed = 0
+for f in files:
+    if f not in keep:
+        os.remove(f); removed += 1
+
+if acc > target and keep:
+    excess = acc - target
+    last = keep[-1]
+    newsize = os.path.getsize(last) - excess
+    newsize -= newsize % REC
+    if newsize >= REC:
+        with open(last, "r+b") as fh:
+            fh.truncate(newsize)
+        print(f"  truncated {os.path.basename(last)} to {newsize/1e6:.0f} MB to hit the exact target")
+    else:
+        os.remove(last); keep.pop()
+
+final = sum(os.path.getsize(f) for f in keep)
+print(f"  kept {len(keep)} shards, {final/1e9:.3f} GB of {total/1e9:.3f} GB = {final/total:.2%} (target {frac:.2%}), removed {removed}")
+PYEOF'
+import glob, os, random, sys
+frac = float(sys.argv[1])
 files = sorted(glob.glob(os.path.expanduser("~/data/*.data")))
 total = sum(os.path.getsize(f) for f in files)
 random.Random(20260728).shuffle(files)
