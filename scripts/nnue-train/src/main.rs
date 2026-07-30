@@ -56,13 +56,23 @@ fn main() {
     // number of gradient steps over half the data (more epochs). That isolates
     // data quantity at fixed compute, which is the question being asked.
     println!("Training files ({}): {:?}", data_files.len(), data_files);
+    println!("net_id={} superbatches={}", std::env::var("NET_ID").unwrap_or_else(|_| "rival-256x2-ob8".into()), superbatches);
 
     let data_refs: Vec<&str> = data_files.iter().map(|s| s.as_str()).collect();
 
     // Training hyperparameters
     let initial_lr = 0.001;
     let final_lr = 0.001 * 0.3f32.powi(5);
-    let superbatches = 600;
+    // Superbatches, overridable via SUPERBATCHES. One superbatch processes
+    // ~100M positions, so the right value depends on CORPUS SIZE, not taste:
+    // the production 600-superbatch run over 505M unique positions is ~119
+    // epochs, but the same 600 over a 28M corpus would be ~2157 epochs and
+    // badly overfit. Scale it to keep epochs comparable when comparing corpora
+    // of different sizes, or the comparison measures overfitting (NET-326).
+    let superbatches: usize = std::env::var("SUPERBATCHES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(600);
     let wdl_proportion = 0.75;
 
     let mut trainer = ValueTrainerBuilder::default()
@@ -101,7 +111,9 @@ fn main() {
     let schedule = TrainingSchedule {
         // Distinct id so these checkpoints cannot overwrite the shipped
         // single-bucket net in s3://chess-compete-builds/nnue-checkpoints-sf/
-        net_id: "rival-256x2-ob8-halfdata".to_string(),
+        // Overridable so parallel experiments cannot overwrite each other's
+        // checkpoints in the shared S3 prefix.
+        net_id: std::env::var("NET_ID").unwrap_or_else(|_| "rival-256x2-ob8".to_string()),
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,

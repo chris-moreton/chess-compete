@@ -45,6 +45,8 @@ DATA_FRACTION="1.0"
 # S3 prefix to pull training data from. Override to train on a different corpus
 # (e.g. a depth-12 set) without touching the default depth-9 one (NET-326).
 S3_DATA_PATH=""
+NET_ID=""
+SUPERBATCHES=""
 
 # ---------- Parse arguments ----------
 while [[ $# -gt 0 ]]; do
@@ -55,6 +57,8 @@ while [[ $# -gt 0 ]]; do
         --branch|-b) BRANCH="$2"; shift 2 ;;
         --data-fraction) DATA_FRACTION="$2"; shift 2 ;;
         --s3-data-path)  S3_DATA_PATH="$2"; shift 2 ;;
+        --net-id)        NET_ID="$2"; shift 2 ;;
+        --superbatches)  SUPERBATCHES="$2"; shift 2 ;;
         --on-demand) USE_SPOT=false; shift ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
@@ -73,6 +77,8 @@ echo "  Max hours:   $MAX_HOURS"
 echo "  Branch:      $BRANCH"
 echo "  Data frac:   $DATA_FRACTION"
 echo "  Data path:   ${S3_DATA_PATH:-s3://${S3_BUCKET}/nnue-data-sf/}"
+echo "  net_id:      ${NET_ID:-<default>}"
+echo "  Superbatches:${SUPERBATCHES:-<default 600>}"
 echo "  S3 data:     s3://${S3_BUCKET}/nnue-data-sf/"
 echo "  S3 output:   s3://${S3_BUCKET}/nnue-checkpoints-sf/"
 echo ""
@@ -246,7 +252,7 @@ PYEOF
     ) &
     PERIODIC_SYNC_PID=$!
 
-    cargo run --release 2>&1
+    NET_ID="__NET_ID__" SUPERBATCHES="__SUPERBATCHES__" cargo run --release 2>&1
 
     kill $PERIODIC_SYNC_PID 2>/dev/null || true
 
@@ -270,6 +276,8 @@ USER_DATA="${USER_DATA//__S3_BUCKET__/$S3_BUCKET}"
 USER_DATA="${USER_DATA//__BRANCH__/$BRANCH}"
 USER_DATA="${USER_DATA//__DATA_FRACTION__/$DATA_FRACTION}"
 USER_DATA="${USER_DATA//__S3_DATA_PATH__/${S3_DATA_PATH:-s3://${S3_BUCKET}/nnue-data-sf/}}"
+USER_DATA="${USER_DATA//__NET_ID__/$NET_ID}"
+USER_DATA="${USER_DATA//__SUPERBATCHES__/$SUPERBATCHES}"
 USER_DATA="${USER_DATA//__SHUTDOWN_MINUTES__/$SHUTDOWN_MINUTES}"
 USER_DATA="${USER_DATA//__MAX_HOURS__/$MAX_HOURS}"
 
