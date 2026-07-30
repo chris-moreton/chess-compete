@@ -27,6 +27,12 @@ S3_BUCKET="chess-compete-builds"
 # label depths and quietly invalidate any depth comparison (NET-326).
 S3_PATH="s3://${S3_BUCKET}/nnue-data-sf/"
 INSTANCE_TYPE="c6a.4xlarge"
+USE_SPOT=true
+CHECKPOINT_GAMES=10000
+# Branch of chess-compete the workers check out. The generator lives in git, so
+# an experiment that modifies it MUST pass this or workers silently run main's
+# version (NET-326).
+DG_BRANCH="main"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -35,6 +41,9 @@ while [[ $# -gt 0 ]]; do
         --depth)    DEPTH="$2"; shift 2 ;;
         --s3-path)  S3_PATH="$2"; shift 2 ;;
         --type)     INSTANCE_TYPE="$2"; shift 2 ;;
+        --on-demand) USE_SPOT=false; shift ;;
+        --branch)   DG_BRANCH="$2"; shift 2 ;;
+        --checkpoint-games) CHECKPOINT_GAMES="$2"; shift 2 ;;
         --region|-r) REGION="$2"; shift 2 ;;
         -h|--help)  echo "Usage: $0 [--games N] [--workers N] [--depth N]"; exit 0 ;;
         *)          echo "Unknown: $1"; exit 1 ;;
@@ -48,6 +57,9 @@ echo "Stockfish NNUE Data Generation"
 echo "  Total games:     $GAMES"
 echo "  Workers:         $WORKERS ($GAMES_PER_WORKER games each)"
 echo "  Depth:           $DEPTH (fixed)"
+echo "  Market:          $([ "$USE_SPOT" = true ] && echo spot || echo on-demand)"
+echo "  Checkpoint:      every $CHECKPOINT_GAMES games"
+echo "  Branch:          $DG_BRANCH"
 echo "  Random plies:    8"
 echo "  S3 output:       $S3_PATH"
 echo ""
@@ -83,7 +95,8 @@ rm -rf /tmp/stockfish.tar /tmp/stockfish
 
 su - ubuntu -c '
     cd ~
-    git clone https://github.com/chris-moreton/chess-compete.git
+    git clone -b __DG_BRANCH__ https://github.com/chris-moreton/chess-compete.git
+    echo "chess-compete branch: $(cd ~/chess-compete && git rev-parse --abbrev-ref HEAD) @ $(cd ~/chess-compete && git rev-parse --short HEAD)"
     cd chess-compete
     python3 -m pip install -r requirements.txt
 
@@ -99,6 +112,7 @@ su - ubuntu -c '
         --concurrency __CONCURRENCY__ \
         --output /tmp/__OUTPUT_FILENAME__ \
         --upload "__S3_PATH__" \
+        --checkpoint-games __CHECKPOINT_GAMES__ \
         --api-url "__API_URL__" \
         --api-key "__API_KEY__"
 '
@@ -107,6 +121,11 @@ echo "=== $(date) Done ==="
 shutdown -h now
 USERDATA
 )
+
+    SPOT_ARGS=()
+    if [ "$USE_SPOT" = true ]; then
+        SPOT_ARGS=(--instance-market-options '{"MarketType":"spot","SpotOptions":{"SpotInstanceType":"one-time"}}')
+    fi
 
     VCPUS=$(aws ec2 describe-instance-types --instance-types "$INSTANCE_TYPE" --query 'InstanceTypes[0].VCpuInfo.DefaultVCpus' --output text 2>/dev/null || echo 48)
     CONCURRENCY=$VCPUS
@@ -117,6 +136,8 @@ USERDATA
     USER_DATA="${USER_DATA//__CONCURRENCY__/$CONCURRENCY}"
     USER_DATA="${USER_DATA//__OUTPUT_FILENAME__/$OUTPUT_FILENAME}"
     USER_DATA="${USER_DATA//__S3_PATH__/$S3_PATH}"
+    USER_DATA="${USER_DATA//__DG_BRANCH__/$DG_BRANCH}"
+    USER_DATA="${USER_DATA//__CHECKPOINT_GAMES__/$CHECKPOINT_GAMES}"
     USER_DATA="${USER_DATA//__API_URL__/${SPSA_API_URL:-}}"
     USER_DATA="${USER_DATA//__API_KEY__/${SPSA_API_KEY:-}}"
 
@@ -131,7 +152,7 @@ USERDATA
     INSTANCE_ID=$(aws ec2 run-instances --region "$region" \
         --image-id "$AMI_ID" \
         --instance-type "$INSTANCE_TYPE" \
-        --instance-market-options '{"MarketType":"spot","SpotOptions":{"SpotInstanceType":"one-time"}}' \
+        ${SPOT_ARGS[@]+"${SPOT_ARGS[@]}"} \
         --iam-instance-profile Name=SSMInstanceProfile \
         --instance-initiated-shutdown-behavior terminate \
         --user-data "$USER_DATA_B64" \
