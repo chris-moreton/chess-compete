@@ -22,6 +22,9 @@ DEPTH=9
 HASH=16
 REGION="us-west-2"
 S3_BUCKET="chess-compete-builds"
+# Output prefix. MUST differ per depth: launch-nnue-training.sh syncs an entire
+# prefix, so mixing depths in one prefix would silently train on a blend of
+# label depths and quietly invalidate any depth comparison (NET-326).
 S3_PATH="s3://${S3_BUCKET}/nnue-data-sf/"
 INSTANCE_TYPE="c6a.4xlarge"
 
@@ -30,6 +33,8 @@ while [[ $# -gt 0 ]]; do
         --games)    GAMES="$2"; shift 2 ;;
         --workers)  WORKERS="$2"; shift 2 ;;
         --depth)    DEPTH="$2"; shift 2 ;;
+        --s3-path)  S3_PATH="$2"; shift 2 ;;
+        --type)     INSTANCE_TYPE="$2"; shift 2 ;;
         --region|-r) REGION="$2"; shift 2 ;;
         -h|--help)  echo "Usage: $0 [--games N] [--workers N] [--depth N]"; exit 0 ;;
         *)          echo "Unknown: $1"; exit 1 ;;
