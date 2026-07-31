@@ -187,70 +187,14 @@ su - ubuntu -c '
         mv ~/data/${base}_shuffled.data "$data_file"
     done
 
-    # Drop shards to hit the requested data fraction (NET-325).
-    #
-    # Selection is by BYTES, not shard count: shards range from 364MB to 2.7GB,
-    # so "half the shards" would not be half the data. A deterministic seeded
-    # shuffle then takes shards until the byte target is met, which samples
-    # across generation batches rather than favouring any one of them.
+    # Reduce to the requested data fraction (NET-325/326). The selection logic
+    # lives in scripts/select_data_fraction.py rather than inline: a heredoc
+    # nested inside this single-quoted su block is unmaintainable, and when it
+    # was corrupted the breakage was invisible to bash -n and cost two idle
+    # 6-hour GPU instances.
     if [ "__DATA_FRACTION__" != "1.0" ]; then
         echo "=== $(date) Reducing to data fraction __DATA_FRACTION__ ==="
-        python3 - "__DATA_FRACTION__" <<'PYEOF'
-import glob, os, random, sys
-frac = float(sys.argv[1])
-REC = 32   # bulletformat record size; truncation must land on a record boundary
-files = sorted(glob.glob(os.path.expanduser("~/data/*.data")))
-total = sum(os.path.getsize(f) for f in files)
-target = int(total * frac)
-random.Random(20260728).shuffle(files)
-
-# Take whole shards until the target is reached, then TRUNCATE the last one so
-# the kept volume matches the target exactly. Whole-shard selection alone is far
-# too coarse at small fractions: shards range 364MB-2.7GB, so a 890MB target
-# could take a single 2.7GB shard and overshoot 3x - which would silently break
-# an experiment whose whole premise is equal-sized corpora (NET-326).
-keep, acc = [], 0
-for f in files:
-    if acc >= target:
-        break
-    keep.append(f); acc += os.path.getsize(f)
-
-removed = 0
-for f in files:
-    if f not in keep:
-        os.remove(f); removed += 1
-
-if acc > target and keep:
-    excess = acc - target
-    last = keep[-1]
-    newsize = os.path.getsize(last) - excess
-    newsize -= newsize % REC
-    if newsize >= REC:
-        with open(last, "r+b") as fh:
-            fh.truncate(newsize)
-        print(f"  truncated {os.path.basename(last)} to {newsize/1e6:.0f} MB to hit the exact target")
-    else:
-        os.remove(last); keep.pop()
-
-final = sum(os.path.getsize(f) for f in keep)
-print(f"  kept {len(keep)} shards, {final/1e9:.3f} GB of {total/1e9:.3f} GB = {final/total:.2%} (target {frac:.2%}), removed {removed}")
-PYEOF'
-import glob, os, random, sys
-frac = float(sys.argv[1])
-files = sorted(glob.glob(os.path.expanduser("~/data/*.data")))
-total = sum(os.path.getsize(f) for f in files)
-random.Random(20260728).shuffle(files)
-keep, acc = set(), 0
-for f in files:
-    if acc >= total * frac:
-        break
-    keep.add(f); acc += os.path.getsize(f)
-removed = 0
-for f in files:
-    if f not in keep:
-        os.remove(f); removed += 1
-print(f"  kept {len(keep)} shards ({acc/1e9:.1f} GB of {total/1e9:.1f} GB = {acc/total:.1%}), removed {removed}")
-PYEOF
+        python3 ~/chess-compete/scripts/select_data_fraction.py "__DATA_FRACTION__" ~/data || exit 1
         echo "  shards remaining: $(ls ~/data/*.data | wc -l)"
     fi
 
@@ -304,9 +248,11 @@ PYEOF
 '
 
 echo "=== $(date) All done ==="
-echo "=== Keeping instance alive for log inspection. Run 'shutdown -h now' manually to terminate. ==="
-# Don't auto-shutdown - let the scheduled shutdown handle it
-# This way we can inspect logs if something went wrong
+echo "=== Keeping instance alive briefly for log inspection. ==="
+# Shut down 20 minutes after the work finishes (or fails) rather than idling to
+# the --hours cap. A cloud-init syntax error once left two GPU instances doing
+# nothing for six hours because the only stop condition was the timer."
+shutdown -h +20
 USERDATA
 )
 
