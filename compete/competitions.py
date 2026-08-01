@@ -19,7 +19,10 @@ import chess.engine
 from compete.constants import PROVISIONAL_GAMES, DEFAULT_ELO
 from compete.database import load_elo_ratings, save_game_to_db, get_initial_elo, save_epd_test_run
 from compete.engine_manager import get_engine_info, get_active_engines, resolve_engine_display_name
-from compete.game import play_game, calculate_elo_difference, GameConfig, GameResult, play_game_from_config
+from compete.game import (
+    play_game, calculate_elo_difference, GameConfig, GameResult, play_game_from_config,
+    resolve_time_control, describe_time_control_options, format_time_control,
+)
 from compete.openings import OPENING_BOOK, load_epd_positions, load_epd_for_solving
 from compete.epd import EpdPosition, SolveResult
 
@@ -28,6 +31,9 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
               num_games: int, time_per_move: float,
               use_opening_book: bool = True,
               time_low: float = None, time_high: float = None,
+              tc_moves: int = None, tc_base: float = None,
+              tc_base_low: float = None, tc_base_high: float = None,
+              tc_inc: float = None, tc_inc_low: float = None, tc_inc_high: float = None,
               concurrency: int = 1, threads: int = None) -> dict:
     """Run a match between two engines, alternating colors.
 
@@ -41,8 +47,6 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
     # Resolve display names for multi-CPU runs
     engine1_name = resolve_engine_display_name(engine1_name, engine1_path, threads)
     engine2_name = resolve_engine_display_name(engine2_name, engine2_path, threads)
-
-    use_time_range = time_low is not None and time_high is not None
 
     # Load persistent Elo ratings
     elo_ratings = load_elo_ratings()
@@ -82,12 +86,13 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
     else:
         openings = None
 
+    tc_description = describe_time_control_options(
+        time_per_move, time_low, time_high,
+        tc_moves, tc_base, tc_base_low, tc_base_high, tc_inc, tc_inc_low, tc_inc_high)
+
     print(f"\n{'='*70}")
     print(f"Match: {engine1_name} vs {engine2_name}")
-    if use_time_range:
-        print(f"Games: {num_games}, Time: {time_low}-{time_high}s/move (random per game pair)")
-    else:
-        print(f"Games: {num_games}, Time: {time_per_move}s/move")
+    print(f"Games: {num_games}, Time control: {tc_description}")
     if use_opening_book:
         print(f"Opening book: {len(OPENING_BOOK)} positions (randomized)")
     else:
@@ -106,7 +111,7 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
 
     # Prepare game configurations
     game_configs = []
-    pair_time = None
+    pair_tc = None
 
     for i in range(num_games):
         # Get opening for this game pair
@@ -116,13 +121,11 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
         else:
             opening_fen, opening_name = None, None
 
-        # Select time for this game pair (same time for both colors)
+        # Select time control for this game pair (same for both colors)
         if i % 2 == 0:
-            if use_time_range:
-                pair_time = random.uniform(time_low, time_high)
-            else:
-                pair_time = time_per_move
-        game_time = pair_time
+            pair_tc = resolve_time_control(
+                time_per_move, time_low, time_high,
+                tc_moves, tc_base, tc_base_low, tc_base_high, tc_inc, tc_inc_low, tc_inc_high)
 
         # Alternate colors
         if i % 2 == 0:
@@ -148,11 +151,14 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
             black_path=black_path_str,
             white_uci_options=white_uci,
             black_uci_options=black_uci,
-            time_per_move=game_time,
+            time_per_move=pair_tc.time_per_move,
             opening_fen=opening_fen,
             opening_name=opening_name,
             is_engine1_white=is_engine1_white,
-            threads=threads
+            threads=threads,
+            tc_moves=pair_tc.tc_moves,
+            tc_base_seconds=pair_tc.tc_base_seconds,
+            tc_increment=pair_tc.tc_increment
         )
         game_configs.append(config)
 
@@ -197,10 +203,11 @@ def run_match(engine1_name: str, engine2_name: str, engine_dir: Path,
         # Save to database
         save_game_to_db(
             game_result.white_name, game_result.black_name,
-            game_result.result, f"{game_result.time_per_move:.2f}s/move",
+            game_result.result,
+            format_time_control(game_result.time_per_move, config.tc_moves, config.tc_base_seconds, config.tc_increment),
             game_result.opening_name, game_result.opening_fen,
             game_result.pgn,
-            time_per_move_ms=int(game_result.time_per_move * 1000),
+            time_per_move_ms=int(game_result.time_per_move * 1000) if config.tc_base_seconds is None else None,
             hostname=hostname
         )
 
@@ -505,6 +512,9 @@ def run_league(engine_names: list[str], engine_dir: Path,
                games_per_pairing: int, time_per_move: float, results_dir: Path,
                use_opening_book: bool = True,
                time_low: float = None, time_high: float = None,
+               tc_moves: int = None, tc_base: float = None,
+               tc_base_low: float = None, tc_base_high: float = None,
+               tc_inc: float = None, tc_inc_low: float = None, tc_inc_high: float = None,
                concurrency: int = 1, threads: int = None):
     """Run a round-robin league with interleaved pairings."""
 
@@ -516,7 +526,6 @@ def run_league(engine_names: list[str], engine_dir: Path,
 
     pairings = list(combinations(engine_names, 2))
     num_pairings = len(pairings)
-    use_time_range = time_low is not None and time_high is not None
 
     # Games per pairing should be even (play each opening from both sides)
     if games_per_pairing % 2 != 0:
@@ -549,10 +558,7 @@ def run_league(engine_names: list[str], engine_dir: Path,
     print(f"Games per pairing: {games_per_pairing}")
     print(f"Rounds: {num_rounds} (each round = 2 games per pairing)")
     print(f"Total games: {total_games}")
-    if use_time_range:
-        print(f"Time: {time_low}-{time_high}s/move (random per round)")
-    else:
-        print(f"Time: {time_per_move}s/move")
+    print(f"Time control: {describe_time_control_options(time_per_move, time_low, time_high, tc_moves, tc_base, tc_base_low, tc_base_high, tc_inc, tc_inc_low, tc_inc_high)}")
     if use_opening_book:
         print(f"Opening book: {len(OPENING_BOOK)} positions")
     if concurrency > 1:
@@ -592,13 +598,12 @@ def run_league(engine_names: list[str], engine_dir: Path,
     for round_idx in range(num_rounds):
         opening_fen, opening_name = openings[round_idx]
 
-        # Select time for this round
-        if use_time_range:
-            round_time = random.uniform(time_low, time_high)
-        else:
-            round_time = time_per_move
+        # Select time control for this round
+        round_tc = resolve_time_control(
+            time_per_move, time_low, time_high,
+            tc_moves, tc_base, tc_base_low, tc_base_high, tc_inc, tc_inc_low, tc_inc_high)
 
-        print(f"\n--- Round {round_idx + 1}/{num_rounds}: {opening_name or 'Starting position'} ({round_time:.2f}s/move) ---\n")
+        print(f"\n--- Round {round_idx + 1}/{num_rounds}: {opening_name or 'Starting position'} ({round_tc.describe()}) ---\n")
 
         if concurrency > 1:
             # Parallel execution: batch all games in this round
@@ -621,11 +626,14 @@ def run_league(engine_names: list[str], engine_dir: Path,
                         black_path=str(black_path),
                         white_uci_options=white_uci,
                         black_uci_options=black_uci,
-                        time_per_move=round_time,
+                        time_per_move=round_tc.time_per_move,
                         opening_fen=opening_fen,
                         opening_name=opening_name,
                         is_engine1_white=not color_swap,
-                        threads=threads
+                        threads=threads,
+                        tc_moves=round_tc.tc_moves,
+                        tc_base_seconds=round_tc.tc_base_seconds,
+                        tc_increment=round_tc.tc_increment
                     )
                     configs.append(config)
 
@@ -644,9 +652,10 @@ def run_league(engine_names: list[str], engine_dir: Path,
                     engine1, engine2 = black, white
 
                 # Save to database
-                save_game_to_db(white, black, result, f"{round_time:.2f}s/move",
+                save_game_to_db(white, black, result, round_tc.describe(),
                                 game_result.opening_name, game_result.opening_fen,
-                                game_result.pgn, time_per_move_ms=int(round_time * 1000),
+                                game_result.pgn,
+                                time_per_move_ms=int(round_tc.time_per_move * 1000) if round_tc.tc_base_seconds is None else None,
                                 hostname=hostname)
 
                 # Update games and points for this competition
@@ -704,13 +713,15 @@ def run_league(engine_names: list[str], engine_dir: Path,
                     black_path, black_uci = engine_info[black]
 
                     result, game, _ = play_game(white_path, black_path, white, black,
-                                             round_time, opening_fen, opening_name,
-                                             white_uci, black_uci, threads=threads)
+                                             round_tc.time_per_move, opening_fen, opening_name,
+                                             white_uci, black_uci, threads=threads,
+                                             tc_moves=round_tc.tc_moves, tc_base_seconds=round_tc.tc_base_seconds,
+                                             tc_increment=round_tc.tc_increment)
 
                     # Save to database with full PGN
-                    save_game_to_db(white, black, result, f"{round_time:.2f}s/move",
+                    save_game_to_db(white, black, result, round_tc.describe(),
                                     opening_name, opening_fen, str(game),
-                                    time_per_move_ms=int(round_time * 1000),
+                                    time_per_move_ms=int(round_tc.time_per_move * 1000) if round_tc.tc_base_seconds is None else None,
                                     hostname=hostname)
 
                     # Update games and points for this competition
@@ -770,6 +781,9 @@ def run_league(engine_names: list[str], engine_dir: Path,
 def run_gauntlet(challenger_name: str, engine_dir: Path,
                  num_rounds: int, time_per_move: float, results_dir: Path,
                  time_low: float = None, time_high: float = None,
+                 tc_moves: int = None, tc_base: float = None,
+                 tc_base_low: float = None, tc_base_high: float = None,
+                 tc_inc: float = None, tc_inc_low: float = None, tc_inc_high: float = None,
                  engine_type: str = None, include_inactive: bool = False,
                  concurrency: int = 1, threads: int = None):
     """
@@ -784,7 +798,6 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
     # Find all engines matching filters except the challenger
     all_engines = get_active_engines(engine_dir, engine_type, include_inactive)
     opponents = [e for e in all_engines if e != challenger_name]
-    use_time_range = time_low is not None and time_high is not None
 
     if not opponents:
         print(f"Error: No opponent engines found in {engine_dir}")
@@ -830,10 +843,7 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
     print(f"Rounds: {num_rounds} (2 games per opponent per round)")
     print(f"Games per opponent: {games_per_opponent}")
     print(f"Total games: {total_games}")
-    if use_time_range:
-        print(f"Time: {time_low}-{time_high}s/move (random per round)")
-    else:
-        print(f"Time: {time_per_move}s/move")
+    print(f"Time control: {describe_time_control_options(time_per_move, time_low, time_high, tc_moves, tc_base, tc_base_low, tc_base_high, tc_inc, tc_inc_low, tc_inc_high)}")
     print(f"Opening book: {len(OPENING_BOOK)} positions (random selection)")
     if concurrency > 1:
         print(f"Concurrency: {concurrency} games in parallel")
@@ -857,11 +867,10 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
     config_metadata = []  # Track (opponent, is_challenger_white) for each config
 
     for round_idx in range(num_rounds):
-        # Select time for this round's games
-        if use_time_range:
-            round_time = random.uniform(time_low, time_high)
-        else:
-            round_time = time_per_move
+        # Select time control for this round's games
+        round_tc = resolve_time_control(
+            time_per_move, time_low, time_high,
+            tc_moves, tc_base, tc_base_low, tc_base_high, tc_inc, tc_inc_low, tc_inc_high)
 
         for opponent in opponents:
             opponent_path, opponent_uci = opponent_info[opponent]
@@ -876,11 +885,14 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
                 black_path=str(opponent_path),
                 white_uci_options=challenger_uci,
                 black_uci_options=opponent_uci,
-                time_per_move=round_time,
+                time_per_move=round_tc.time_per_move,
                 opening_fen=opening_fen1,
                 opening_name=opening_name1,
                 is_engine1_white=True,
-                threads=threads
+                threads=threads,
+                tc_moves=round_tc.tc_moves,
+                tc_base_seconds=round_tc.tc_base_seconds,
+                tc_increment=round_tc.tc_increment
             )
             game_configs.append(config1)
             config_metadata.append((opponent, True))
@@ -895,11 +907,14 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
                 black_path=str(challenger_path),
                 white_uci_options=opponent_uci,
                 black_uci_options=challenger_uci,
-                time_per_move=round_time,
+                time_per_move=round_tc.time_per_move,
                 opening_fen=opening_fen2,
                 opening_name=opening_name2,
                 is_engine1_white=False,
-                threads=threads
+                threads=threads,
+                tc_moves=round_tc.tc_moves,
+                tc_base_seconds=round_tc.tc_base_seconds,
+                tc_increment=round_tc.tc_increment
             )
             game_configs.append(config2)
             config_metadata.append((opponent, False))
@@ -912,10 +927,10 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
         # Save to database
         save_game_to_db(
             game_result.white_name, game_result.black_name, game_result.result,
-            f"{game_result.time_per_move:.2f}s/move",
+            format_time_control(game_result.time_per_move, config.tc_moves, config.tc_base_seconds, config.tc_increment),
             game_result.opening_name, game_result.opening_fen,
             game_result.pgn,
-            time_per_move_ms=int(game_result.time_per_move * 1000),
+            time_per_move_ms=int(game_result.time_per_move * 1000) if config.tc_base_seconds is None else None,
             hostname=hostname
         )
 
@@ -980,6 +995,9 @@ def run_gauntlet(challenger_name: str, engine_dir: Path,
 
 def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results_dir: Path, weighted: bool = False,
                time_low: float = None, time_high: float = None,
+               tc_moves: int = None, tc_base: float = None,
+               tc_base_low: float = None, tc_base_high: float = None,
+               tc_inc: float = None, tc_inc_low: float = None, tc_inc_high: float = None,
                engine_type: str = None, include_inactive: bool = False,
                concurrency: int = 1, threads: int = None):
     """
@@ -1001,7 +1019,6 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
         engine_type: Filter engines by type ('rusty' or 'stockfish', None = all)
         include_inactive: If True, include inactive engines
     """
-    use_time_range = time_low is not None and time_high is not None
     # Find all engines matching filters
     all_engines = get_active_engines(engine_dir, engine_type, include_inactive)
 
@@ -1027,10 +1044,7 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
     if weighted:
         print("Selection: first engine weighted (fewer games = higher chance), second random")
     print(f"Matches: {num_matches} (2 games each = {total_games} total games)")
-    if use_time_range:
-        print(f"Time: {time_low}-{time_high}s/move (random per match)")
-    else:
-        print(f"Time: {time_per_move}s/move")
+    print(f"Time control: {describe_time_control_options(time_per_move, time_low, time_high, tc_moves, tc_base, tc_base_low, tc_base_high, tc_inc, tc_inc_low, tc_inc_high)}")
     print(f"Opening book: {len(OPENING_BOOK)} positions (random selection)")
     if concurrency > 1:
         print(f"Concurrency: {concurrency} games in parallel")
@@ -1090,10 +1104,11 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
 
         # Save to database
         save_game_to_db(
-            white, black, result, f"{game_result.time_per_move:.2f}s/move",
+            white, black, result,
+            format_time_control(game_result.time_per_move, config.tc_moves, config.tc_base_seconds, config.tc_increment),
             game_result.opening_name, game_result.opening_fen,
             game_result.pgn,
-            time_per_move_ms=int(game_result.time_per_move * 1000),
+            time_per_move_ms=int(game_result.time_per_move * 1000) if config.tc_base_seconds is None else None,
             hostname=hostname
         )
 
@@ -1140,10 +1155,9 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
                 engine1 = resolve_engine_display_name(engine1, engine1_path, threads)
                 engine2 = resolve_engine_display_name(engine2, engine2_path, threads)
 
-                if use_time_range:
-                    match_time = random.uniform(time_low, time_high)
-                else:
-                    match_time = time_per_move
+                match_tc = resolve_time_control(
+                    time_per_move, time_low, time_high,
+                    tc_moves, tc_base, tc_base_low, tc_base_high, tc_inc, tc_inc_low, tc_inc_high)
 
                 # Capture starting ELO
                 for eng in [engine1, engine2]:
@@ -1162,10 +1176,13 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
                     white_name=engine1, black_name=engine2,
                     white_path=e1_path_str, black_path=e2_path_str,
                     white_uci_options=engine1_uci, black_uci_options=engine2_uci,
-                    time_per_move=match_time,
+                    time_per_move=match_tc.time_per_move,
                     opening_fen=opening_fen1, opening_name=opening_name1,
                     is_engine1_white=True,
-                    threads=threads
+                    threads=threads,
+                    tc_moves=match_tc.tc_moves,
+                    tc_base_seconds=match_tc.tc_base_seconds,
+                    tc_increment=match_tc.tc_increment
                 )
                 game_configs.append(config1)
 
@@ -1176,10 +1193,13 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
                     white_name=engine2, black_name=engine1,
                     white_path=e2_path_str, black_path=e1_path_str,
                     white_uci_options=engine2_uci, black_uci_options=engine1_uci,
-                    time_per_move=match_time,
+                    time_per_move=match_tc.time_per_move,
                     opening_fen=opening_fen2, opening_name=opening_name2,
                     is_engine1_white=False,
-                    threads=threads
+                    threads=threads,
+                    tc_moves=match_tc.tc_moves,
+                    tc_base_seconds=match_tc.tc_base_seconds,
+                    tc_increment=match_tc.tc_increment
                 )
                 game_configs.append(config2)
 
@@ -1208,12 +1228,11 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
             engine1 = resolve_engine_display_name(engine1, engine1_path, threads)
             engine2 = resolve_engine_display_name(engine2, engine2_path, threads)
 
-            if use_time_range:
-                match_time = random.uniform(time_low, time_high)
-            else:
-                match_time = time_per_move
+            match_tc = resolve_time_control(
+                time_per_move, time_low, time_high,
+                tc_moves, tc_base, tc_base_low, tc_base_high, tc_inc, tc_inc_low, tc_inc_high)
 
-            print(f"\n--- Match {match_idx + 1}/{num_matches}: {engine1} vs {engine2} ({match_time:.2f}s/move) ---\n")
+            print(f"\n--- Match {match_idx + 1}/{num_matches}: {engine1} vs {engine2} ({match_tc.describe()}) ---\n")
 
             # Capture starting ELO
             for eng in [engine1, engine2]:
@@ -1225,12 +1244,14 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
             opening_fen, opening_name = random.choice(OPENING_BOOK)
             result, game, _ = play_game(engine1_path, engine2_path,
                                       engine1, engine2,
-                                      match_time, opening_fen, opening_name,
-                                      engine1_uci, engine2_uci, threads=threads)
+                                      match_tc.time_per_move, opening_fen, opening_name,
+                                      engine1_uci, engine2_uci, threads=threads,
+                                      tc_moves=match_tc.tc_moves, tc_base_seconds=match_tc.tc_base_seconds,
+                                      tc_increment=match_tc.tc_increment)
 
-            save_game_to_db(engine1, engine2, result, f"{match_time:.2f}s/move",
+            save_game_to_db(engine1, engine2, result, match_tc.describe(),
                             opening_name, opening_fen, str(game),
-                            time_per_move_ms=int(match_time * 1000),
+                            time_per_move_ms=int(match_tc.time_per_move * 1000) if match_tc.tc_base_seconds is None else None,
                             hostname=hostname)
 
             game_num += 1
@@ -1266,12 +1287,14 @@ def run_random(engine_dir: Path, num_matches: int, time_per_move: float, results
             opening_fen, opening_name = random.choice(OPENING_BOOK)
             result, game, _ = play_game(engine2_path, engine1_path,
                                       engine2, engine1,
-                                      match_time, opening_fen, opening_name,
-                                      engine2_uci, engine1_uci, threads=threads)
+                                      match_tc.time_per_move, opening_fen, opening_name,
+                                      engine2_uci, engine1_uci, threads=threads,
+                                      tc_moves=match_tc.tc_moves, tc_base_seconds=match_tc.tc_base_seconds,
+                                      tc_increment=match_tc.tc_increment)
 
-            save_game_to_db(engine2, engine1, result, f"{match_time:.2f}s/move",
+            save_game_to_db(engine2, engine1, result, match_tc.describe(),
                             opening_name, opening_fen, str(game),
-                            time_per_move_ms=int(match_time * 1000),
+                            time_per_move_ms=int(match_tc.time_per_move * 1000) if match_tc.tc_base_seconds is None else None,
                             hostname=hostname)
 
             game_num += 1

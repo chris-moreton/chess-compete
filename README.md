@@ -833,8 +833,17 @@ Look for:
 | `--time T`, `-t T` | Fixed time per move in seconds (default: 1.0) |
 | `--timelow T` | Minimum time per move (use with `--timehigh`) |
 | `--timehigh T` | Maximum time per move (use with `--timelow`) |
+| `--tc-moves N` | Moves per time control period (e.g. 40). Omit for sudden death |
+| `--tc-base T` | Base time in seconds for incremental TC (e.g. 60 for "60+1") |
+| `--tc-base-low T` | Minimum base time (use with `--tc-base-high` for a random base per pair) |
+| `--tc-base-high T` | Maximum base time (use with `--tc-base-low` for a random base per pair) |
+| `--tc-inc T` | Increment per move in seconds (default: 0) |
+| `--tc-inc-low T` | Minimum increment (use with `--tc-inc-high` for a random increment per pair) |
+| `--tc-inc-high T` | Maximum increment (use with `--tc-inc-low` for a random increment per pair) |
 
 When using `--timelow` and `--timehigh`, a random time is selected for each match/round.
+
+`--tc-*` flags enable incremental (base + increment) time control instead of a fixed movetime, and cannot be combined with `--time`/`--timelow`/`--timehigh`. They work across all competition modes (head-to-head, league, gauntlet, random, cup). Example: `--tc-base 60 --tc-inc 1` plays "60+1" (60s base, +1s/move, no period reset). Add `--tc-moves 40` for a Winboard-style "40 moves in 60s, +1s/move" repeating period. The `-low`/`-high` variants pick a new random base/increment independently for each game pair, e.g. `--tc-base-low 30 --tc-base-high 90 --tc-inc-low 0.5 --tc-inc-high 2`.
 
 ### Parallel Execution Options
 
