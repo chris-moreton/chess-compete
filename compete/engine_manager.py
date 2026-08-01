@@ -490,6 +490,10 @@ def get_active_engines(engine_dir: Path, engine_type: str = None,
     Returns:
         Sorted list of engine names matching the filters.
     """
+    if not DB_ENABLED:
+        print("Error: DATABASE_URL not configured. Set it in .env file.")
+        sys.exit(1)
+
     try:
         from web.database import db
         from web.models import Engine
@@ -522,6 +526,10 @@ def set_engine_active(engine_name: str, active: bool, initial_elo: float | None 
         active: Whether to enable or disable the engine
         initial_elo: Optional starting Elo (if not provided, derived from engine name)
     """
+    if not DB_ENABLED:
+        print(f"Warning: DATABASE_URL not configured, '{engine_name}' downloaded but not registered/enabled in database.")
+        return False
+
     try:
         from web.database import db
         from web.models import Engine

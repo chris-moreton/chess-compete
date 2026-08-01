@@ -4,6 +4,7 @@ Game playing and Elo calculation.
 
 import math
 import os
+import random
 import socket
 import subprocess
 import time
@@ -70,6 +71,73 @@ class GameResult:
     black_nps: Optional[int] = None
     timemult: Optional[float] = None
     adjudicated: Optional[str] = None  # "resign", "draw", "maxmoves", or None
+
+
+def format_time_control(time_per_move: float, tc_moves: Optional[int] = None,
+                        tc_base_seconds: Optional[float] = None,
+                        tc_increment: Optional[float] = None) -> str:
+    """Human-readable time control string, e.g. '60+1', '40/60+1', or '1.00s/move'."""
+    if tc_base_seconds is not None:
+        moves_part = f"{tc_moves}/" if tc_moves else ""
+        return f"{moves_part}{tc_base_seconds:g}+{tc_increment or 0:g}"
+    return f"{time_per_move:.2f}s/move"
+
+
+@dataclass
+class TimeControl:
+    """A concrete time control resolved for one game pair/round (same setting used for both colors)."""
+    time_per_move: float
+    tc_moves: Optional[int]
+    tc_base_seconds: Optional[float]
+    tc_increment: Optional[float]
+
+    def describe(self) -> str:
+        return format_time_control(self.time_per_move, self.tc_moves, self.tc_base_seconds, self.tc_increment)
+
+
+def resolve_time_control(time_per_move: float, time_low: Optional[float] = None, time_high: Optional[float] = None,
+                         tc_moves: Optional[int] = None, tc_base: Optional[float] = None,
+                         tc_base_low: Optional[float] = None, tc_base_high: Optional[float] = None,
+                         tc_inc: Optional[float] = None, tc_inc_low: Optional[float] = None,
+                         tc_inc_high: Optional[float] = None) -> TimeControl:
+    """
+    Roll a concrete time control for one game pair/round.
+
+    Incremental TC (--tc-base/--tc-base-low+high) takes priority over fixed/ranged
+    movetime (--time/--timelow+high) if both are somehow set. Base and increment are
+    each re-rolled from their range independently when ranges are given.
+    """
+    use_incremental = tc_base is not None or tc_base_low is not None
+    if use_incremental:
+        base = random.uniform(tc_base_low, tc_base_high) if tc_base_low is not None else tc_base
+        if tc_inc_low is not None:
+            inc = random.uniform(tc_inc_low, tc_inc_high)
+        else:
+            inc = tc_inc if tc_inc is not None else 0.0
+        return TimeControl(time_per_move=time_per_move, tc_moves=tc_moves,
+                           tc_base_seconds=base, tc_increment=inc)
+
+    pair_time = random.uniform(time_low, time_high) if time_low is not None else time_per_move
+    return TimeControl(time_per_move=pair_time, tc_moves=None, tc_base_seconds=None, tc_increment=None)
+
+
+def describe_time_control_options(time_per_move: float, time_low: Optional[float] = None,
+                                  time_high: Optional[float] = None,
+                                  tc_moves: Optional[int] = None, tc_base: Optional[float] = None,
+                                  tc_base_low: Optional[float] = None, tc_base_high: Optional[float] = None,
+                                  tc_inc: Optional[float] = None, tc_inc_low: Optional[float] = None,
+                                  tc_inc_high: Optional[float] = None) -> str:
+    """Describe the configured time control mode (not a rolled instance) for header/summary printing."""
+    use_incremental = tc_base is not None or tc_base_low is not None
+    if use_incremental:
+        moves_part = f"{tc_moves} moves in " if tc_moves else ""
+        base_part = f"{tc_base_low}-{tc_base_high}s" if tc_base_low is not None else f"{tc_base}s"
+        inc_part = f"{tc_inc_low}-{tc_inc_high}s" if tc_inc_low is not None else f"{tc_inc or 0}s"
+        random_note = " (randomized per pair)" if (tc_base_low is not None or tc_inc_low is not None) else ""
+        return f"{moves_part}{base_part} + {inc_part} increment{random_note}"
+    if time_low is not None:
+        return f"{time_low}-{time_high}s/move (random per pair)"
+    return f"{time_per_move}s/move"
 
 
 def calibrate_nps(engine_path: str) -> tuple[int, float]:
@@ -253,11 +321,8 @@ def play_game(engine1_cmd: Path | list, engine2_cmd: Path | list,
     game.headers["White"] = engine1_name
     game.headers["Black"] = engine2_name
     # Determine time control mode
-    use_incremental_tc = tc_moves is not None and tc_base_seconds is not None
-    if use_incremental_tc:
-        game.headers["TimeControl"] = f"{tc_moves}/{tc_base_seconds}+{tc_increment or 0}"
-    else:
-        game.headers["TimeControl"] = f"{time_per_move:.2f}s/move"
+    use_incremental_tc = tc_base_seconds is not None
+    game.headers["TimeControl"] = format_time_control(time_per_move, tc_moves, tc_base_seconds, tc_increment)
     if start_fen:
         game.headers["FEN"] = start_fen
         game.headers["SetUp"] = "1"
@@ -301,10 +366,6 @@ def play_game(engine1_cmd: Path | list, engine2_cmd: Path | list,
             engine = engines[0] if is_white else engines[1]
 
             if use_incremental_tc:
-                # Build incremental time limit
-                clock = white_clock if is_white else black_clock
-                moves_in_period = white_moves_in_period if is_white else black_moves_in_period
-                remaining_moves = tc_moves - moves_in_period if tc_moves > moves_in_period else tc_moves
                 limit = chess.engine.Limit(
                     white_clock=white_clock,
                     black_clock=black_clock,
@@ -351,17 +412,19 @@ def play_game(engine1_cmd: Path | list, engine2_cmd: Path | list,
                 if is_white:
                     white_clock -= elapsed
                     white_clock += tc_inc
-                    white_moves_in_period += 1
-                    if white_moves_in_period >= tc_moves:
-                        white_clock += tc_base_seconds
-                        white_moves_in_period = 0
+                    if tc_moves:
+                        white_moves_in_period += 1
+                        if white_moves_in_period >= tc_moves:
+                            white_clock += tc_base_seconds
+                            white_moves_in_period = 0
                 else:
                     black_clock -= elapsed
                     black_clock += tc_inc
-                    black_moves_in_period += 1
-                    if black_moves_in_period >= tc_moves:
-                        black_clock += tc_base_seconds
-                        black_moves_in_period = 0
+                    if tc_moves:
+                        black_moves_in_period += 1
+                        if black_moves_in_period >= tc_moves:
+                            black_clock += tc_base_seconds
+                            black_moves_in_period = 0
 
             # --- Adjudication checks ---
             if white_cp is not None:

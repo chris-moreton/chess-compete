@@ -63,6 +63,22 @@ def main():
                         help="Minimum time per move (use with --timehigh for random range)")
     parser.add_argument("--timehigh", type=float, default=None,
                         help="Maximum time per move (use with --timelow for random range)")
+    parser.add_argument("--tc-moves", type=int, default=None, metavar="N",
+                        help="Moves per time control period (e.g. 40). Omit for sudden death (no period reset). "
+                             "Requires --tc-base/--tc-base-low")
+    parser.add_argument("--tc-base", type=float, default=None, metavar="T",
+                        help="Base time in seconds for incremental time control (e.g. 60 for '60+1'). "
+                             "Enables incremental TC instead of fixed movetime; cannot be used with --time/--timelow/--timehigh")
+    parser.add_argument("--tc-base-low", type=float, default=None, metavar="T",
+                        help="Minimum base time in seconds (use with --tc-base-high for random base time per pair)")
+    parser.add_argument("--tc-base-high", type=float, default=None, metavar="T",
+                        help="Maximum base time in seconds (use with --tc-base-low for random base time per pair)")
+    parser.add_argument("--tc-inc", type=float, default=None, metavar="T",
+                        help="Increment per move in seconds for incremental time control (default: 0)")
+    parser.add_argument("--tc-inc-low", type=float, default=None, metavar="T",
+                        help="Minimum increment in seconds (use with --tc-inc-high for random increment per pair)")
+    parser.add_argument("--tc-inc-high", type=float, default=None, metavar="T",
+                        help="Maximum increment in seconds (use with --tc-inc-low for random increment per pair)")
     parser.add_argument("--no-book", action="store_true",
                         help="Disable opening book (start all games from initial position)")
     parser.add_argument("--gauntlet", action="store_true",
@@ -220,6 +236,43 @@ def main():
         time_low = None
         time_high = None
 
+    # Validate incremental time control arguments
+    if args.tc_base_low is not None or args.tc_base_high is not None:
+        if args.tc_base_low is None or args.tc_base_high is None:
+            print("Error: --tc-base-low and --tc-base-high must be used together")
+            sys.exit(1)
+        if args.tc_base_low > args.tc_base_high:
+            print("Error: --tc-base-low must be less than or equal to --tc-base-high")
+            sys.exit(1)
+        if args.tc_base is not None:
+            print("Error: Cannot use --tc-base with --tc-base-low/--tc-base-high")
+            sys.exit(1)
+
+    if args.tc_inc_low is not None or args.tc_inc_high is not None:
+        if args.tc_inc_low is None or args.tc_inc_high is None:
+            print("Error: --tc-inc-low and --tc-inc-high must be used together")
+            sys.exit(1)
+        if args.tc_inc_low > args.tc_inc_high:
+            print("Error: --tc-inc-low must be less than or equal to --tc-inc-high")
+            sys.exit(1)
+        if args.tc_inc is not None:
+            print("Error: Cannot use --tc-inc with --tc-inc-low/--tc-inc-high")
+            sys.exit(1)
+
+    use_incremental_tc = args.tc_base is not None or args.tc_base_low is not None
+
+    if use_incremental_tc:
+        if args.time is not None or args.timelow is not None or args.timehigh is not None:
+            print("Error: Cannot use --time/--timelow/--timehigh with --tc-base/--tc-base-low (incremental time control)")
+            sys.exit(1)
+    else:
+        if args.tc_moves is not None:
+            print("Error: --tc-moves requires --tc-base or --tc-base-low/--tc-base-high")
+            sys.exit(1)
+        if args.tc_inc is not None or args.tc_inc_low is not None:
+            print("Error: --tc-inc/--tc-inc-low requires --tc-base or --tc-base-low/--tc-base-high")
+            sys.exit(1)
+
     script_dir = Path(__file__).parent.parent  # Go up from compete/ to project root
     engine_dir = get_engines_dir()
     results_dir = script_dir / "results" / "competitions"
@@ -282,6 +335,9 @@ def main():
             print("Warning: Engine arguments ignored in cup mode (uses active engines by Ordo rating)")
         run_cup(engine_dir, args.cup_engines, args.games, time_per_move or 1.0,
                 args.cup_name, time_low, time_high,
+                tc_moves=args.tc_moves, tc_base=args.tc_base,
+                tc_base_low=args.tc_base_low, tc_base_high=args.tc_base_high,
+                tc_inc=args.tc_inc, tc_inc_low=args.tc_inc_low, tc_inc_high=args.tc_inc_high,
                 engine_type=args.enginetype, include_inactive=args.includeinactive,
                 concurrency=args.concurrency, threads=args.threads)
     elif args.epd_solve:
@@ -341,12 +397,18 @@ def main():
         if time_per_move is None:
             print("Error: --timelow/--timehigh not supported in EPD mode, use --time")
             sys.exit(1)
+        if use_incremental_tc:
+            print("Error: Incremental time control (--tc-*) not supported in EPD mode, use --time")
+            sys.exit(1)
         run_epd(resolved_engines, engine_dir, epd_path, time_per_move, results_dir)
     elif args.random:
         # Random mode: randomly pair engines for matches
         if args.engines:
             print("Warning: Engine arguments ignored in random mode")
         run_random(engine_dir, args.games, time_per_move, results_dir, args.weighted, time_low, time_high,
+                   tc_moves=args.tc_moves, tc_base=args.tc_base,
+                   tc_base_low=args.tc_base_low, tc_base_high=args.tc_base_high,
+                   tc_inc=args.tc_inc, tc_inc_low=args.tc_inc_low, tc_inc_high=args.tc_inc_high,
                    engine_type=args.enginetype, include_inactive=args.includeinactive,
                    concurrency=args.concurrency, threads=args.threads)
     elif args.gauntlet:
@@ -356,17 +418,26 @@ def main():
             sys.exit(1)
         run_gauntlet(resolved_engines[0], engine_dir, args.games, time_per_move or 1.0, results_dir,
                      time_low, time_high,
+                     tc_moves=args.tc_moves, tc_base=args.tc_base,
+                     tc_base_low=args.tc_base_low, tc_base_high=args.tc_base_high,
+                     tc_inc=args.tc_inc, tc_inc_low=args.tc_inc_low, tc_inc_high=args.tc_inc_high,
                      engine_type=args.enginetype, include_inactive=args.includeinactive,
                      concurrency=args.concurrency, threads=args.threads)
     elif len(resolved_engines) >= 3:
         # Round-robin league for 3+ engines
         run_league(resolved_engines, engine_dir, args.games, time_per_move or 1.0, results_dir,
-                   use_opening_book, time_low, time_high, concurrency=args.concurrency,
-                   threads=args.threads)
+                   use_opening_book, time_low, time_high,
+                   tc_moves=args.tc_moves, tc_base=args.tc_base,
+                   tc_base_low=args.tc_base_low, tc_base_high=args.tc_base_high,
+                   tc_inc=args.tc_inc, tc_inc_low=args.tc_inc_low, tc_inc_high=args.tc_inc_high,
+                   concurrency=args.concurrency, threads=args.threads)
     elif len(resolved_engines) == 2:
         # Head-to-head match for exactly 2 engines
         run_match(resolved_engines[0], resolved_engines[1], engine_dir,
                   args.games, time_per_move or 1.0, use_opening_book, time_low, time_high,
+                  tc_moves=args.tc_moves, tc_base=args.tc_base,
+                  tc_base_low=args.tc_base_low, tc_base_high=args.tc_base_high,
+                  tc_inc=args.tc_inc, tc_inc_low=args.tc_inc_low, tc_inc_high=args.tc_inc_high,
                   concurrency=args.concurrency, threads=args.threads)
     else:
         print("Error: At least 2 engines are required (or use --random or --gauntlet mode)")

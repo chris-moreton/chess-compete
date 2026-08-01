@@ -13,7 +13,10 @@ from pathlib import Path
 from compete.constants import PROVISIONAL_GAMES
 from compete.database import load_elo_ratings, save_game_to_db, get_initial_elo
 from compete.engine_manager import get_engine_info, ensure_engines_initialized, resolve_engine_display_name
-from compete.game import play_game, GameConfig, GameResult, play_game_from_config
+from compete.game import (
+    play_game, GameConfig, GameResult, play_game_from_config,
+    TimeControl, resolve_time_control, describe_time_control_options, format_time_control,
+)
 from compete.openings import OPENING_BOOK
 from compete.parallel import run_games_parallel
 
@@ -126,6 +129,9 @@ def get_round_name(remaining_participants: int) -> str:
 def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
                    games_per_match: int, time_per_move: float,
                    time_low: float = None, time_high: float = None,
+                   tc_moves: int = None, tc_base: float = None,
+                   tc_base_low: float = None, tc_base_high: float = None,
+                   tc_inc: float = None, tc_inc_low: float = None, tc_inc_high: float = None,
                    cup_id: int = None, concurrency: int = 1,
                    threads: int = None) -> tuple[str, float, float, int, bool, bool]:
     """
@@ -150,7 +156,6 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
     engine1_name = resolve_engine_display_name(engine1_name, engine1_path, threads)
     engine2_name = resolve_engine_display_name(engine2_name, engine2_path, threads)
 
-    use_time_range = time_low is not None and time_high is not None
     hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
 
     engine1_points = 0.0
@@ -160,7 +165,7 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
     decided_by_coin_flip = False
 
     def play_one_game(white_name: str, black_name: str, white_path, black_path,
-                      white_uci, black_uci, game_time: float):
+                      white_uci, black_uci, tc: TimeControl):
         """Play a single game with random opening and return the result."""
         nonlocal games_played
         games_played += 1
@@ -169,13 +174,15 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
         opening_fen, opening_name = random.choice(OPENING_BOOK)
 
         result, game, _ = play_game(white_path, black_path, white_name, black_name,
-                                 game_time, opening_fen, opening_name,
-                                 white_uci, black_uci, threads=threads)
+                                 tc.time_per_move, opening_fen, opening_name,
+                                 white_uci, black_uci, threads=threads,
+                                 tc_moves=tc.tc_moves, tc_base_seconds=tc.tc_base_seconds,
+                                 tc_increment=tc.tc_increment)
 
         # Save to database
-        save_game_to_db(white_name, black_name, result, f"{game_time:.2f}s/move",
+        save_game_to_db(white_name, black_name, result, tc.describe(),
                         opening_name, opening_fen, str(game),
-                        time_per_move_ms=int(game_time * 1000),
+                        time_per_move_ms=int(tc.time_per_move * 1000) if tc.tc_base_seconds is None else None,
                         hostname=hostname)
 
         return result, opening_name
@@ -185,11 +192,10 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
         # Parallel execution: prepare all games upfront
         all_configs = []
         for pair_idx in range(games_per_match):
-            # Select time for this pair
-            if use_time_range:
-                pair_time = random.uniform(time_low, time_high)
-            else:
-                pair_time = time_per_move
+            # Select time control for this pair
+            pair_tc = resolve_time_control(
+                time_per_move, time_low, time_high,
+                tc_moves, tc_base, tc_base_low, tc_base_high, tc_inc, tc_inc_low, tc_inc_high)
 
             opening_fen1, opening_name1 = random.choice(OPENING_BOOK)
             opening_fen2, opening_name2 = random.choice(OPENING_BOOK)
@@ -203,11 +209,14 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
                 black_path=str(engine2_path),
                 white_uci_options=engine1_uci,
                 black_uci_options=engine2_uci,
-                time_per_move=pair_time,
+                time_per_move=pair_tc.time_per_move,
                 opening_fen=opening_fen1,
                 opening_name=opening_name1,
                 is_engine1_white=True,
-                threads=threads
+                threads=threads,
+                tc_moves=pair_tc.tc_moves,
+                tc_base_seconds=pair_tc.tc_base_seconds,
+                tc_increment=pair_tc.tc_increment
             )
             all_configs.append(config1)
 
@@ -220,11 +229,14 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
                 black_path=str(engine1_path),
                 white_uci_options=engine2_uci,
                 black_uci_options=engine1_uci,
-                time_per_move=pair_time,
+                time_per_move=pair_tc.time_per_move,
                 opening_fen=opening_fen2,
                 opening_name=opening_name2,
                 is_engine1_white=False,
-                threads=threads
+                threads=threads,
+                tc_moves=pair_tc.tc_moves,
+                tc_base_seconds=pair_tc.tc_base_seconds,
+                tc_increment=pair_tc.tc_increment
             )
             all_configs.append(config2)
 
@@ -234,9 +246,10 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
 
             # Save to database
             save_game_to_db(game_result.white_name, game_result.black_name, game_result.result,
-                            f"{game_result.time_per_move:.2f}s/move", game_result.opening_name,
+                            format_time_control(game_result.time_per_move, config.tc_moves, config.tc_base_seconds, config.tc_increment),
+                            game_result.opening_name,
                             game_result.opening_fen, game_result.pgn,
-                            time_per_move_ms=int(game_result.time_per_move * 1000),
+                            time_per_move_ms=int(game_result.time_per_move * 1000) if config.tc_base_seconds is None else None,
                             hostname=hostname)
 
             # Update points based on who was engine1
@@ -263,16 +276,15 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
     else:
         # Sequential execution (original code)
         for pair_idx in range(games_per_match):
-            # Select time for this pair
-            if use_time_range:
-                pair_time = random.uniform(time_low, time_high)
-            else:
-                pair_time = time_per_move
+            # Select time control for this pair
+            pair_tc = resolve_time_control(
+                time_per_move, time_low, time_high,
+                tc_moves, tc_base, tc_base_low, tc_base_high, tc_inc, tc_inc_low, tc_inc_high)
 
             # Game 1: engine1 as white
             result, opening = play_one_game(engine1_name, engine2_name,
                                             engine1_path, engine2_path,
-                                            engine1_uci, engine2_uci, pair_time)
+                                            engine1_uci, engine2_uci, pair_tc)
 
             if result == "1-0":
                 engine1_points += 1
@@ -288,7 +300,7 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
             # Game 2: engine2 as white (different random opening)
             result, opening = play_one_game(engine2_name, engine1_name,
                                             engine2_path, engine1_path,
-                                            engine2_uci, engine1_uci, pair_time)
+                                            engine2_uci, engine1_uci, pair_tc)
 
             if result == "1-0":
                 engine2_points += 1
@@ -309,12 +321,14 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
         is_tiebreaker = True
         tiebreaker_pairs += 1
 
-        game_time = random.uniform(time_low, time_high) if use_time_range else time_per_move
+        tiebreaker_tc = resolve_time_control(
+            time_per_move, time_low, time_high,
+            tc_moves, tc_base, tc_base_low, tc_base_high, tc_inc, tc_inc_low, tc_inc_high)
 
         # Game 1 of tiebreaker pair: engine1 as white
         result, opening = play_one_game(engine1_name, engine2_name,
                                         engine1_path, engine2_path,
-                                        engine1_uci, engine2_uci, game_time)
+                                        engine1_uci, engine2_uci, tiebreaker_tc)
         if result == "1-0":
             engine1_points += 1
         elif result == "0-1":
@@ -333,7 +347,7 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
         # Game 2 of tiebreaker pair: engine2 as white
         result, opening = play_one_game(engine2_name, engine1_name,
                                         engine2_path, engine1_path,
-                                        engine2_uci, engine1_uci, game_time)
+                                        engine2_uci, engine1_uci, tiebreaker_tc)
         if result == "1-0":
             engine2_points += 1
         elif result == "0-1":
@@ -360,6 +374,9 @@ def play_cup_match(engine1_name: str, engine2_name: str, engine_dir: Path,
 def run_cup(engine_dir: Path, num_engines: int = None, games_per_match: int = 10,
             time_per_move: float = 1.0, cup_name: str = None,
             time_low: float = None, time_high: float = None,
+            tc_moves: int = None, tc_base: float = None,
+            tc_base_low: float = None, tc_base_high: float = None,
+            tc_inc: float = None, tc_inc_low: float = None, tc_inc_high: float = None,
             engine_type: str = None, include_inactive: bool = False,
             concurrency: int = 1, threads: int = None):
     """
@@ -369,7 +386,7 @@ def run_cup(engine_dir: Path, num_engines: int = None, games_per_match: int = 10
         engine_dir: Path to engines directory
         num_engines: Limit to top N engines (None = all active)
         games_per_match: Number of game PAIRS per match (total games = pairs * 2)
-        time_per_move: Fixed time per move (ignored if time_low/time_high set)
+        time_per_move: Fixed time per move (ignored if time_low/time_high or tc_base/tc_base_low set)
         cup_name: Optional custom cup name
         time_low: Minimum time per move for random range
         time_high: Maximum time per move for random range
@@ -422,10 +439,7 @@ def run_cup(engine_dir: Path, num_engines: int = None, games_per_match: int = 10
     print(f"Bracket size: {bracket_size}")
     print(f"Rounds: {num_rounds}")
     print(f"Games per match: {games_per_match}")
-    if use_time_range:
-        print(f"Time: {time_low}-{time_high}s/move (random)")
-    else:
-        print(f"Time: {time_per_move}s/move")
+    print(f"Time control: {describe_time_control_options(time_per_move, time_low, time_high, tc_moves, tc_base, tc_base_low, tc_base_high, tc_inc, tc_inc_low, tc_inc_high)}")
     if concurrency > 1:
         print(f"Concurrency: {concurrency} games in parallel")
     print(f"{'='*70}")
@@ -444,7 +458,7 @@ def run_cup(engine_dir: Path, num_engines: int = None, games_per_match: int = 10
             status='in_progress',
             num_participants=num_participants,
             games_per_match=games_per_match,
-            time_per_move_ms=int(time_per_move * 1000) if not use_time_range else None,
+            time_per_move_ms=int(time_per_move * 1000) if not use_time_range and tc_base is None and tc_base_low is None else None,
             time_low_ms=int(time_low * 1000) if time_low else None,
             time_high_ms=int(time_high * 1000) if time_high else None,
             hostname=hostname
@@ -566,7 +580,10 @@ def run_cup(engine_dir: Path, num_engines: int = None, games_per_match: int = 10
             winner_name, e1_points, e2_points, games, is_tb, coin_flip = play_cup_match(
                 engine1_name, engine2_name, engine_dir,
                 games_per_match, time_per_move,
-                time_low, time_high, cup_id, concurrency,
+                time_low, time_high,
+                tc_moves=tc_moves, tc_base=tc_base, tc_base_low=tc_base_low, tc_base_high=tc_base_high,
+                tc_inc=tc_inc, tc_inc_low=tc_inc_low, tc_inc_high=tc_inc_high,
+                cup_id=cup_id, concurrency=concurrency,
                 threads=threads
             )
 
