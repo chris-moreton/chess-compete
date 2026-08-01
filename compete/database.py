@@ -164,6 +164,10 @@ def save_game_to_db(white: str, black: str, result: str, time_control: str,
         time_per_move_ms: Time per move in milliseconds
         hostname: Machine that played the game
     """
+    if not DB_ENABLED:
+        print("Warning: DATABASE_URL not configured, game not saved.")
+        return
+
     # Calculate scores first - incomplete games should return early without DB interaction
     if result == "1-0":
         white_score, black_score = 1.0, 0.0
@@ -215,6 +219,9 @@ def get_initial_elo(engine_name: str) -> float:
     2. Derive from engine name (sf-2400 -> 2400, v* -> 2600)
     3. DEFAULT_ELO
     """
+    if not DB_ENABLED:
+        return derive_elo_from_name(engine_name)
+
     # Try database first
     try:
         from web.database import db
