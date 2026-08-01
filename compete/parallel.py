@@ -58,7 +58,8 @@ class ProgressDisplay:
     FILLED_CHAR = "●"
     EMPTY_CHAR = "○"
 
-    def __init__(self, label: str = "Game", concurrency: int = 4, engine1_name: str = None):
+    def __init__(self, label: str = "Game", concurrency: int = 4, engine1_name: str = None,
+                 extra_lines_fn: Optional[Callable[[], list[str]]] = None):
         self.label = label
         self.concurrency = concurrency
         self.max_slots = concurrency * 2  # Fixed display height
@@ -74,10 +75,18 @@ class ProgressDisplay:
         self.engine1_wins = 0
         self.engine1_losses = 0
         self.engine1_draws = 0
+        # Optional callback for extra content (e.g. league standings), rendered as part
+        # of this display's own single-threaded update cycle - NOT a second stdout
+        # writer, to avoid corrupting the live block (see git history for why that matters).
+        self.extra_lines_fn = extra_lines_fn
         self.ansi_supported = self._check_ansi_support()
 
     def _check_ansi_support(self) -> bool:
         """Check if terminal supports ANSI escape codes."""
+        if not sys.stdout.isatty():
+            # Not a real interactive terminal (piped/redirected/captured) - cursor
+            # movement codes won't do anything useful, so don't emit them.
+            return False
         if os.name == 'nt':
             try:
                 import ctypes
@@ -222,6 +231,14 @@ class ProgressDisplay:
             else:
                 lines.append(f"  [{self.completed_count} done: White {ww}W-{bw}L-{d}D | {active_count} active]")
 
+            # Optional extra content (e.g. live standings), rendered here as part of
+            # this same locked, single-threaded cycle - never printed independently.
+            if self.extra_lines_fn:
+                try:
+                    lines.extend(self.extra_lines_fn())
+                except Exception as e:
+                    lines.append(f"  [standings unavailable: {e}]")
+
         return lines
 
     def _clear_lines(self, count: int):
@@ -282,7 +299,8 @@ def run_games_parallel(
     concurrency: int,
     on_game_complete: Callable[[GameConfig, GameResult], None],
     label: str = "Game",
-    engine1_name: str = None
+    engine1_name: str = None,
+    extra_lines_fn: Optional[Callable[[], list[str]]] = None
 ) -> dict:
     """
     Run games in parallel with continuous pipeline.
@@ -295,6 +313,9 @@ def run_games_parallel(
         concurrency: Number of parallel games to maintain
         on_game_complete: Callback called for each completed game with (config, result)
         label: Label for progress display (default "Game")
+        extra_lines_fn: Optional callback returning extra lines (e.g. live standings) to
+            render below the progress display, called from within its own locked render
+            cycle - use this instead of printing separately, which would race with it.
 
     Returns:
         dict with summary: {'completed': N, 'errors': N, 'results': {'1-0': N, ...}}
@@ -322,7 +343,8 @@ def run_games_parallel(
         return {'completed': completed, 'errors': errors, 'results': results}
 
     # Parallel execution with continuous pipeline
-    progress = ProgressDisplay(label=label, concurrency=concurrency, engine1_name=engine1_name)
+    progress = ProgressDisplay(label=label, concurrency=concurrency, engine1_name=engine1_name,
+                               extra_lines_fn=extra_lines_fn)
     progress.start()
 
     def make_move_callback(game_idx: int):

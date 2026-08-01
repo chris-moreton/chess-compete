@@ -636,10 +636,6 @@ def run_league(engine_names: list[str], engine_dir: Path,
                     )
                     all_configs.append(config)
 
-        # Games complete out of order once pipelined, so standings print on a
-        # periodic game-count cadence instead of strict round boundaries.
-        standings_interval = max(num_pairings * 2, concurrency)
-
         def on_game_complete(config: GameConfig, game_result: GameResult):
             nonlocal game_num
             game_num += 1
@@ -693,14 +689,23 @@ def run_league(engine_names: list[str], engine_dir: Path,
 
             head_to_head[key] = (e1_wins, e2_wins, draws)
 
-            if game_num % standings_interval == 0:
-                print_league_table(competitors, games_this_comp, points_this_comp,
-                                   0, competitors_only=True, game_num=game_num, total_games=total_games)
+        def standings_lines() -> list[str]:
+            """Compact live standings, rendered inside the progress display's own
+            locked render cycle (see ProgressDisplay.extra_lines_fn) - not printed
+            separately, which would race with its background redraw thread."""
+            ranked = sorted(competitors, key=lambda n: -points_this_comp.get(n, 0.0))
+            lines = ["  Standings:"]
+            for rank, name in enumerate(ranked, 1):
+                pts = points_this_comp.get(name, 0.0)
+                games = games_this_comp.get(name, 0)
+                lines.append(f"    {rank}. {name:<20} {pts:>5.1f} pts ({games} games)")
+            return lines
 
         print(f"\nRunning {total_games} games across {num_rounds} round(s), {concurrency} at a time...\n")
 
         # Run games with continuous pipeline
-        run_games_parallel(all_configs, concurrency, on_game_complete, label="Game")
+        run_games_parallel(all_configs, concurrency, on_game_complete, label="Game",
+                           extra_lines_fn=standings_lines)
 
     else:
         # Sequential execution (original code)
