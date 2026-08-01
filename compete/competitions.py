@@ -594,20 +594,19 @@ def run_league(engine_names: list[str], engine_dir: Path,
     game_num = 0
     hostname = os.environ.get("COMPUTER_NAME", socket.gethostname())
 
-    # Play rounds
-    for round_idx in range(num_rounds):
-        opening_fen, opening_name = openings[round_idx]
+    if concurrency > 1:
+        # Parallel execution: build every game across every round upfront and run
+        # them all through ONE continuous pipeline (like run_match/run_gauntlet),
+        # so `concurrency` is fully used regardless of how many pairings exist
+        # per round - batching one round at a time would cap real concurrency at
+        # pairings*2, however high `concurrency` is set.
+        all_configs = []
+        for round_idx in range(num_rounds):
+            opening_fen, opening_name = openings[round_idx]
+            round_tc = resolve_time_control(
+                time_per_move, time_low, time_high,
+                tc_moves, tc_base, tc_base_low, tc_base_high, tc_inc, tc_inc_low, tc_inc_high)
 
-        # Select time control for this round
-        round_tc = resolve_time_control(
-            time_per_move, time_low, time_high,
-            tc_moves, tc_base, tc_base_low, tc_base_high, tc_inc, tc_inc_low, tc_inc_high)
-
-        print(f"\n--- Round {round_idx + 1}/{num_rounds}: {opening_name or 'Starting position'} ({round_tc.describe()}) ---\n")
-
-        if concurrency > 1:
-            # Parallel execution: batch all games in this round
-            configs = []
             for pairing_idx, (engine1, engine2) in enumerate(pairings):
                 for color_swap in [False, True]:
                     if color_swap:
@@ -619,7 +618,7 @@ def run_league(engine_names: list[str], engine_dir: Path,
                     black_path, black_uci = engine_info[black]
 
                     config = GameConfig(
-                        game_index=len(configs),
+                        game_index=len(all_configs),
                         white_name=white,
                         black_name=black,
                         white_path=str(white_path),
@@ -635,69 +634,86 @@ def run_league(engine_names: list[str], engine_dir: Path,
                         tc_base_seconds=round_tc.tc_base_seconds,
                         tc_increment=round_tc.tc_increment
                     )
-                    configs.append(config)
+                    all_configs.append(config)
 
-            def on_game_complete(config: GameConfig, game_result: GameResult):
-                nonlocal game_num
-                game_num += 1
+        # Games complete out of order once pipelined, so standings print on a
+        # periodic game-count cadence instead of strict round boundaries.
+        standings_interval = max(num_pairings * 2, concurrency)
 
-                white = game_result.white_name
-                black = game_result.black_name
-                result = game_result.result
+        def on_game_complete(config: GameConfig, game_result: GameResult):
+            nonlocal game_num
+            game_num += 1
 
-                # Reconstruct engine1/engine2 from config
-                if config.is_engine1_white:
-                    engine1, engine2 = white, black
+            white = game_result.white_name
+            black = game_result.black_name
+            result = game_result.result
+
+            # Reconstruct engine1/engine2 from config
+            if config.is_engine1_white:
+                engine1, engine2 = white, black
+            else:
+                engine1, engine2 = black, white
+
+            # Save to database
+            save_game_to_db(white, black, result,
+                            format_time_control(game_result.time_per_move, config.tc_moves, config.tc_base_seconds, config.tc_increment),
+                            game_result.opening_name, game_result.opening_fen,
+                            game_result.pgn,
+                            time_per_move_ms=int(game_result.time_per_move * 1000) if config.tc_base_seconds is None else None,
+                            hostname=hostname)
+
+            # Update games and points for this competition
+            games_this_comp[white] += 1
+            games_this_comp[black] += 1
+
+            if result == "1-0":
+                points_this_comp[white] += 1.0
+            elif result == "0-1":
+                points_this_comp[black] += 1.0
+            elif result == "1/2-1/2":
+                points_this_comp[white] += 0.5
+                points_this_comp[black] += 0.5
+
+            # Update head-to-head tracking
+            key = (engine1, engine2) if engine1 < engine2 else (engine2, engine1)
+            e1_wins, e2_wins, draws = head_to_head[key]
+
+            if result == "1-0":
+                if white == key[0]:
+                    e1_wins += 1
                 else:
-                    engine1, engine2 = black, white
+                    e2_wins += 1
+            elif result == "0-1":
+                if black == key[0]:
+                    e1_wins += 1
+                else:
+                    e2_wins += 1
+            elif result == "1/2-1/2":
+                draws += 1
 
-                # Save to database
-                save_game_to_db(white, black, result, round_tc.describe(),
-                                game_result.opening_name, game_result.opening_fen,
-                                game_result.pgn,
-                                time_per_move_ms=int(round_tc.time_per_move * 1000) if round_tc.tc_base_seconds is None else None,
-                                hostname=hostname)
+            head_to_head[key] = (e1_wins, e2_wins, draws)
 
-                # Update games and points for this competition
-                games_this_comp[white] += 1
-                games_this_comp[black] += 1
+            if game_num % standings_interval == 0:
+                print_league_table(competitors, games_this_comp, points_this_comp,
+                                   0, competitors_only=True, game_num=game_num, total_games=total_games)
 
-                if result == "1-0":
-                    points_this_comp[white] += 1.0
-                elif result == "0-1":
-                    points_this_comp[black] += 1.0
-                elif result == "1/2-1/2":
-                    points_this_comp[white] += 0.5
-                    points_this_comp[black] += 0.5
+        print(f"\nRunning {total_games} games across {num_rounds} round(s), {concurrency} at a time...\n")
 
-                # Update head-to-head tracking
-                key = (engine1, engine2) if engine1 < engine2 else (engine2, engine1)
-                e1_wins, e2_wins, draws = head_to_head[key]
+        # Run games with continuous pipeline
+        run_games_parallel(all_configs, concurrency, on_game_complete, label="Game")
 
-                if result == "1-0":
-                    if white == key[0]:
-                        e1_wins += 1
-                    else:
-                        e2_wins += 1
-                elif result == "0-1":
-                    if black == key[0]:
-                        e1_wins += 1
-                    else:
-                        e2_wins += 1
-                elif result == "1/2-1/2":
-                    draws += 1
+    else:
+        # Sequential execution (original code)
+        for round_idx in range(num_rounds):
+            opening_fen, opening_name = openings[round_idx]
 
-                head_to_head[key] = (e1_wins, e2_wins, draws)
+            # Select time control for this round
+            round_tc = resolve_time_control(
+                time_per_move, time_low, time_high,
+                tc_moves, tc_base, tc_base_low, tc_base_high, tc_inc, tc_inc_low, tc_inc_high)
 
-            # Run games with continuous pipeline
-            run_games_parallel(configs, concurrency, on_game_complete, label="Game")
+            print(f"\n--- Round {round_idx + 1}/{num_rounds}: {opening_name or 'Starting position'} ({round_tc.describe()}) ---\n")
 
-            # Print standings after each round (for parallel mode)
-            print_league_table(competitors, games_this_comp, points_this_comp,
-                               round_idx + 1, competitors_only=True, game_num=game_num, total_games=total_games)
-
-        else:
-            # Sequential execution (original code)
             for pairing_idx, (engine1, engine2) in enumerate(pairings):
                 match_label = f"Match {pairing_idx + 1}/{num_pairings}"
 
