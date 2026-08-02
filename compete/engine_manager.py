@@ -32,6 +32,92 @@ def get_engines_dir() -> Path:
     return Path(__file__).parent.parent / "engines"
 
 
+ASSET_VARIANT_ENV = "RIVAL_ASSET_VARIANT"
+
+
+def cpu_supports_avx2() -> bool:
+    """Best-effort AVX2 detection.
+
+    Conservative by design: if we cannot tell, assume no. Running an AVX2
+    binary on a CPU without AVX2 dies with SIGILL, whereas running the
+    baseline binary on an AVX2 machine merely costs speed.
+    """
+    system = platform.system().lower()
+    try:
+        if system == "linux":
+            with open("/proc/cpuinfo") as fh:
+                flags = fh.read().replace("\n", " ")
+            return " avx2 " in f" {flags} "
+        if system == "darwin":
+            out = subprocess.run(
+                ["sysctl", "-n", "machdep.cpu.leaf7_features"],
+                capture_output=True, text=True, timeout=5,
+            ).stdout.lower()
+            return "avx2" in out
+    except Exception:
+        pass
+    return False
+
+
+def rusty_asset_names(version: str) -> list[str]:
+    """Rusty Rival release asset names for this platform, most preferred first.
+
+    The -avx2 build is preferred wherever the CPU supports it. The plain
+    x86_64 asset is compiled for baseline x86-64 - no POPCNT, no SSE4, no AVX -
+    which costs a large amount of speed on any modern CPU. For a testing
+    harness that is worse than slow: it changes which engine changes look like
+    wins. A measured example is the NNUE accumulator rewrite in v1.0.51-rc1,
+    worth ~+22% NPS on an AVX2 build and roughly nothing on the baseline one.
+
+    Set RIVAL_ASSET_VARIANT=baseline (or =avx2) to pin a variant, which is how
+    you deliberately A/B the two builds.
+    """
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+
+    if system == "darwin":
+        # No -avx2 variants are published for macOS; the x86_64 asset is
+        # already built with target-cpu=x86-64-v3.
+        if machine in ("arm64", "aarch64"):
+            return [f"rusty-rival-{version}-macos-aarch64"]
+        return [f"rusty-rival-{version}-macos-x86_64"]
+
+    if system == "windows":
+        baseline = f"rusty-rival-{version}-windows-x86_64.exe"
+        avx2 = f"rusty-rival-{version}-windows-x86_64-avx2.exe"
+    else:  # Linux
+        baseline = f"rusty-rival-{version}-linux-x86_64"
+        avx2 = f"rusty-rival-{version}-linux-x86_64-avx2"
+
+    variant = os.environ.get(ASSET_VARIANT_ENV, "auto").lower()
+    if variant == "baseline":
+        return [baseline]
+    if variant == "avx2":
+        return [avx2]
+    return [avx2, baseline] if cpu_supports_avx2() else [baseline]
+
+
+def preferred_binary(files: list) -> object:
+    """Pick one binary when a version directory holds several.
+
+    Directories populated before the avx2 switch can contain both assets;
+    without an explicit order this depended on iterdir() ordering, so which
+    build a match actually ran was luck.
+    """
+    if not files:
+        return None
+    variant = os.environ.get(ASSET_VARIANT_ENV, "auto").lower()
+    avx2 = [f for f in files if "avx2" in f.name]
+    plain = [f for f in files if "avx2" not in f.name]
+    if variant == "baseline":
+        return (plain or avx2)[0]
+    if variant == "avx2":
+        return (avx2 or plain)[0]
+    if avx2 and cpu_supports_avx2():
+        return avx2[0]
+    return (plain or avx2)[0]
+
+
 def init_engine(engine_type: str, version: str) -> bool:
     """
     Download and initialize an engine from GitHub releases.
@@ -43,6 +129,7 @@ def init_engine(engine_type: str, version: str) -> bool:
     Returns:
         True if successful, False otherwise
     """
+    # (see rusty_asset_names below for the baseline-vs-avx2 asset choice)
     engine_dir = get_engines_dir()
     engine_dir.mkdir(parents=True, exist_ok=True)
 
@@ -54,20 +141,9 @@ def init_engine(engine_type: str, version: str) -> bool:
         if not version.startswith("v"):
             version = f"v{version}"
 
-        # Determine platform-specific asset name
-        if system == "windows":
-            asset_name = f"rusty-rival-{version}-windows-x86_64.exe"
-        elif system == "darwin":
-            if machine in ("arm64", "aarch64"):
-                asset_name = f"rusty-rival-{version}-macos-aarch64"
-            else:
-                asset_name = f"rusty-rival-{version}-macos-x86_64"
-        else:  # Linux
-            asset_name = f"rusty-rival-{version}-linux-x86_64"
-
-        download_url = f"https://github.com/chris-moreton/rusty-rival/releases/download/{version}/{asset_name}"
+        # Preferred asset first, then fallbacks (see rusty_asset_names)
+        candidates = rusty_asset_names(version)
         target_dir = engine_dir / version
-        target_file = target_dir / asset_name
 
     elif engine_type == "java":
         # Java version: "38" -> "v38.0.0"
@@ -79,38 +155,62 @@ def init_engine(engine_type: str, version: str) -> bool:
         else:
             full_version = f"v{version}"
 
-        asset_name = f"rivalchess-{full_version}.jar"
-        download_url = f"https://github.com/chris-moreton/rivalchess-uci/releases/download/{full_version}/{asset_name}"
+        candidates = [f"rivalchess-{full_version}.jar"]
         target_dir = engine_dir / f"java-rival-{full_version[1:]}"  # e.g., java-rival-38.0.0
-        target_file = target_dir / asset_name
 
     else:
         print(f"Error: Unknown engine type '{engine_type}'. Use 'rusty' or 'java'.")
         return False
 
-    # Check if already exists
-    if target_file.exists():
-        print(f"Engine already exists: {target_file}")
+    # Only the PREFERRED asset counts as "already downloaded". Accepting any
+    # candidate here would mean a directory holding the old baseline binary
+    # never upgrades to the avx2 one. Releases that never published an -avx2
+    # artifact are handled after the download loop, where a 404 on every
+    # candidate falls back to whatever is already on disk.
+    if (target_dir / candidates[0]).exists():
+        print(f"Engine already exists: {target_dir / candidates[0]}")
         return True
 
     # Create target directory
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    # Download the asset
-    print(f"Downloading {asset_name} from {download_url}...")
-    try:
-        urllib.request.urlretrieve(download_url, target_file)
-        print(f"Downloaded to {target_file}")
-    except urllib.error.HTTPError as e:
-        print(f"Error: Failed to download {download_url}")
-        print(f"HTTP Error {e.code}: {e.reason}")
+    # Download the first candidate that exists on the release. Older releases
+    # predate the -avx2 artifacts, so a 404 on the preferred name is expected
+    # and simply falls through to the baseline asset.
+    repo = "rusty-rival" if engine_type == "rusty" else "rivalchess-uci"
+    release_tag = version if engine_type == "rusty" else full_version
+    last_error = None
+    asset_name = None
+    for candidate in candidates:
+        url = f"https://github.com/chris-moreton/{repo}/releases/download/{release_tag}/{candidate}"
+        target_file = target_dir / candidate
+        print(f"Downloading {candidate} from {url}...")
+        try:
+            urllib.request.urlretrieve(url, target_file)
+            print(f"Downloaded to {target_file}")
+            asset_name = candidate
+            break
+        except urllib.error.HTTPError as e:
+            last_error = f"HTTP Error {e.code}: {e.reason} for {url}"
+            if len(candidates) > 1:
+                print(f"  not available ({e.code}), trying next asset...")
+            target_file.unlink(missing_ok=True)
+        except Exception as e:
+            last_error = str(e)
+            traceback.print_exc()
+            target_file.unlink(missing_ok=True)
+
+    if asset_name is None:
+        # Nothing downloadable. If a usable binary is already present (a release
+        # predating the -avx2 artifacts), that is a success, not a failure.
+        for candidate in candidates[1:]:
+            if (target_dir / candidate).exists():
+                print(f"Preferred asset unavailable; keeping existing {candidate}")
+                return True
+        print(f"Error: Failed to download any asset for {version}")
+        if last_error:
+            print(f"  {last_error}")
         # Clean up empty directory if download failed
-        if target_dir.exists() and not any(target_dir.iterdir()):
-            target_dir.rmdir()
-        return False
-    except Exception as e:
-        print(f"Error: Failed to download: {e}")
-        traceback.print_exc()
         if target_dir.exists() and not any(target_dir.iterdir()):
             target_dir.rmdir()
         return False
@@ -369,11 +469,14 @@ def discover_engines(engine_dir: Path) -> dict:
         if name.startswith("v") and len(name) > 1 and name[1:2].isdigit():
             binary = None
 
-            # First try versioned binary names (e.g., rusty-rival-v1.0.13-windows-x86_64.exe)
-            for f in entry.iterdir():
-                if f.is_file() and f.name.startswith(f"rusty-rival-{name}"):
-                    binary = f
-                    break
+            # First try versioned binary names (e.g., rusty-rival-v1.0.13-windows-x86_64.exe).
+            # A directory can hold both the baseline and -avx2 assets, so choose
+            # explicitly rather than taking whatever iterdir() yields first.
+            versioned = sorted(
+                (f for f in entry.iterdir() if f.is_file() and f.name.startswith(f"rusty-rival-{name}")),
+                key=lambda f: f.name,
+            )
+            binary = preferred_binary(versioned)
 
             # Fall back to legacy names: rusty-rival.exe or rusty-rival
             if not binary:

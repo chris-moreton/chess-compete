@@ -22,19 +22,67 @@ REPO_ROOT = Path(__file__).parent.parent
 GITHUB_REPO = "chris-moreton/rusty-rival"
 
 
-def expected_asset_name(version: str) -> str:
-    """Mirrors compete.engine_manager.init_engine()'s current asset-naming scheme.
-    Older releases (roughly v0.0.1-v1.0.12) used different naming/archive schemes
-    that init_engine() has never supported - see is_supported_release() below."""
+def cpu_supports_avx2() -> bool:
+    """Mirrors compete.engine_manager.cpu_supports_avx2(). Conservative: if we
+    cannot tell, assume no - an AVX2 binary on a non-AVX2 CPU dies with SIGILL."""
+    system = platform.system().lower()
+    try:
+        if system == "linux":
+            with open("/proc/cpuinfo") as fh:
+                flags = fh.read().replace("\n", " ")
+            return " avx2 " in f" {flags} "
+        if system == "darwin":
+            out = subprocess.run(
+                ["sysctl", "-n", "machdep.cpu.leaf7_features"],
+                capture_output=True, text=True, timeout=5,
+            ).stdout.lower()
+            return "avx2" in out
+    except Exception:
+        pass
+    return False
+
+
+def asset_candidates(version: str) -> list[str]:
+    """Mirrors compete.engine_manager.rusty_asset_names(): preferred asset first.
+
+    The -avx2 build is preferred where the CPU supports it - the plain x86_64
+    asset is built for baseline x86-64 (no POPCNT/SSE4/AVX) and is markedly
+    slower, which for a testing harness distorts which changes look like wins.
+    Set RIVAL_ASSET_VARIANT=baseline|avx2 to pin one."""
     system = platform.system().lower()
     machine = platform.machine().lower()
-    if system == "windows":
-        return f"rusty-rival-{version}-windows-x86_64.exe"
-    elif system == "darwin":
+    if system == "darwin":
         if machine in ("arm64", "aarch64"):
-            return f"rusty-rival-{version}-macos-aarch64"
-        return f"rusty-rival-{version}-macos-x86_64"
-    return f"rusty-rival-{version}-linux-x86_64"
+            return [f"rusty-rival-{version}-macos-aarch64"]
+        return [f"rusty-rival-{version}-macos-x86_64"]
+    if system == "windows":
+        baseline = f"rusty-rival-{version}-windows-x86_64.exe"
+        avx2 = f"rusty-rival-{version}-windows-x86_64-avx2.exe"
+    else:
+        baseline = f"rusty-rival-{version}-linux-x86_64"
+        avx2 = f"rusty-rival-{version}-linux-x86_64-avx2"
+    variant = os.environ.get("RIVAL_ASSET_VARIANT", "auto").lower()
+    if variant == "baseline":
+        return [baseline]
+    if variant == "avx2":
+        return [avx2]
+    return [avx2, baseline] if cpu_supports_avx2() else [baseline]
+
+
+def expected_asset_name(version: str, available: set = None) -> str:
+    """The asset this machine wants for `version`.
+
+    When the release's asset list is known, return the best candidate it
+    actually publishes - releases predating the -avx2 artifacts only offer the
+    baseline name. Older releases (roughly v0.0.1-v1.0.12) used different
+    naming/archive schemes that init_engine() has never supported - see
+    is_supported_release() below."""
+    candidates = asset_candidates(version)
+    if available:
+        for candidate in candidates:
+            if candidate in available:
+                return candidate
+    return candidates[-1]
 
 
 def get_engines_dir() -> Path:
@@ -91,17 +139,22 @@ def fetch_all_releases(repo: str) -> list[dict]:
     return list(reversed(releases))  # API returns newest-first; we want oldest-first
 
 
-def find_existing_rusty_rival_versions(engine_dir: Path) -> set[str]:
-    """A version counts as 'already downloaded' only if its binary is actually present,
-    not just an (possibly empty/partial) directory - matches init_engine()'s own check."""
+def find_existing_rusty_rival_binaries(engine_dir: Path) -> dict:
+    """Map version -> set of rusty-rival binary filenames already present.
+
+    Returning the filenames rather than a bare "is it downloaded" flag lets the
+    caller decide per release WHICH asset it wants: a directory holding only the
+    baseline binary is incomplete on an AVX2 machine, but complete for a release
+    that never published an -avx2 artifact."""
     if not engine_dir.exists():
-        return set()
-    existing = set()
+        return {}
+    existing = {}
     for d in engine_dir.iterdir():
         if not d.is_dir() or not (d.name.startswith("v") and len(d.name) > 1 and d.name[1].isdigit()):
             continue
-        if any(f.is_file() and f.name.startswith(f"rusty-rival-{d.name}") for f in d.iterdir()):
-            existing.add(d.name)
+        existing[d.name] = {
+            f.name for f in d.iterdir() if f.is_file() and f.name.startswith(f"rusty-rival-{d.name}")
+        }
     return existing
 
 
@@ -117,15 +170,16 @@ def main():
     releases = fetch_all_releases(GITHUB_REPO)
     print(f"Found {len(releases)} published release(s) on GitHub")
 
-    existing = find_existing_rusty_rival_versions(engine_dir)
+    existing = find_existing_rusty_rival_binaries(engine_dir)
 
     have, missing, unsupported = [], [], []
     for r in releases:
         tag = r["tag"]
-        if tag in existing:
-            have.append(tag)
-        elif expected_asset_name(tag) not in r["assets"]:
+        want = expected_asset_name(tag, r["assets"])
+        if want not in r["assets"]:
             unsupported.append(tag)
+        elif want in existing.get(tag, set()):
+            have.append(tag)
         else:
             missing.append(tag)
 
