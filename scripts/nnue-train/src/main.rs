@@ -56,7 +56,6 @@ fn main() {
     // number of gradient steps over half the data (more epochs). That isolates
     // data quantity at fixed compute, which is the question being asked.
     println!("Training files ({}): {:?}", data_files.len(), data_files);
-    println!("net_id={} superbatches={}", std::env::var("NET_ID").unwrap_or_else(|_| "rival-256x2-ob8".into()), superbatches);
 
     let data_refs: Vec<&str> = data_files.iter().map(|s| s.as_str()).collect();
 
@@ -74,6 +73,16 @@ fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(600);
     let wdl_proportion = 0.75;
+
+    // Echo the two knobs that distinguish one experiment run from another. This
+    // has to come after `superbatches` is bound, not before it: the original
+    // line sat above the `let` and so did not compile at all. Nothing caught it
+    // because the training host is the only thing that ever builds this crate,
+    // and the two runs before it died earlier, in the user-data script. Note
+    // that validate-userdata.sh cannot catch this class of bug - it checks the
+    // shell syntax of the user-data, not the Rust it later builds.
+    let net_id = std::env::var("NET_ID").unwrap_or_else(|_| "rival-256x2-ob8".to_string());
+    println!("net_id={} superbatches={}", net_id, superbatches);
 
     let mut trainer = ValueTrainerBuilder::default()
         .dual_perspective()
@@ -113,7 +122,7 @@ fn main() {
         // single-bucket net in s3://chess-compete-builds/nnue-checkpoints-sf/
         // Overridable so parallel experiments cannot overwrite each other's
         // checkpoints in the shared S3 prefix.
-        net_id: std::env::var("NET_ID").unwrap_or_else(|_| "rival-256x2-ob8".to_string()),
+        net_id,
         eval_scale: 400.0,
         steps: TrainingSteps {
             batch_size: 16_384,
