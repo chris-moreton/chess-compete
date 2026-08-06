@@ -280,6 +280,10 @@ def main():
     parser.add_argument("--fixed-depth", action="store_true", help="Use exact depth (no ±2 randomization)")
     parser.add_argument("--book", default="", help="Path to opening book PGN")
     parser.add_argument("--upload", default="", help="S3 path to upload results (e.g. s3://bucket/path/)")
+    parser.add_argument("--checkpoint-games", type=int, default=10000,
+                        help="Upload to S3 every N games. Lower this for slow/deep runs on spot: "
+                             "work since the last checkpoint is lost on interruption, and at depth 12 "
+                             "10000 games can exceed the instance lifetime entirely (NET-326).")
     parser.add_argument("--engine-tag", default="", help="Engine version tag for dashboard (e.g. v1.0.38)")
     parser.add_argument("--api-url", default="", help="Dashboard API URL for progress reporting")
     parser.add_argument("--api-key", default="", help="API key for dashboard")
@@ -381,8 +385,11 @@ def main():
                         })
                         last_api_report = games_completed
 
-                    # Periodic S3 checkpoint every 10,000 games
-                    if args.upload and games_completed % 10000 == 0 and games_completed > 0:
+                    # Periodic S3 checkpoint. Interval matters: everything since
+                    # the last upload is lost if the instance goes away, and spot
+                    # reclaimed both depth-12 workers inside 40 minutes having
+                    # produced nothing, because the default 10000 was unreachable.
+                    if args.upload and games_completed % args.checkpoint_games == 0 and games_completed > 0:
                         f.flush()
                         s3_path = args.upload.rstrip("/") + "/" + os.path.basename(args.output)
                         print(f"  [Checkpoint] Uploading {total_positions:,} positions to S3...")

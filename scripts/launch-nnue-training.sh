@@ -34,6 +34,19 @@ MAX_HOURS=12
 USE_SPOT=true
 MAX_SPOT_PRICE="1.50"
 S3_BUCKET="chess-compete-builds"
+# Branch of chess-compete the instance checks out for scripts/nnue-train.
+# The trainer config lives in git, so training the wrong branch silently
+# trains the wrong architecture — always pass --branch for experiments.
+BRANCH="main"
+# Fraction of data shards to train on (NET-325). 1.0 = all. Shards are dropped
+# alternately rather than by prefix, so the kept set spans every generation
+# batch instead of over-representing one of them.
+DATA_FRACTION="1.0"
+# S3 prefix to pull training data from. Override to train on a different corpus
+# (e.g. a depth-12 set) without touching the default depth-9 one (NET-326).
+S3_DATA_PATH=""
+NET_ID=""
+SUPERBATCHES=""
 
 # ---------- Parse arguments ----------
 while [[ $# -gt 0 ]]; do
@@ -41,6 +54,11 @@ while [[ $# -gt 0 ]]; do
         --type)      INSTANCE_TYPE="$2"; shift 2 ;;
         --region|-r) REGION="$2"; shift 2 ;;
         --hours)     MAX_HOURS="$2"; shift 2 ;;
+        --branch|-b) BRANCH="$2"; shift 2 ;;
+        --data-fraction) DATA_FRACTION="$2"; shift 2 ;;
+        --s3-data-path)  S3_DATA_PATH="$2"; shift 2 ;;
+        --net-id)        NET_ID="$2"; shift 2 ;;
+        --superbatches)  SUPERBATCHES="$2"; shift 2 ;;
         --on-demand) USE_SPOT=false; shift ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
@@ -56,6 +74,11 @@ echo "NNUE Training"
 echo "  Instance:    $INSTANCE_TYPE"
 echo "  Region:      $REGION"
 echo "  Max hours:   $MAX_HOURS"
+echo "  Branch:      $BRANCH"
+echo "  Data frac:   $DATA_FRACTION"
+echo "  Data path:   ${S3_DATA_PATH:-s3://${S3_BUCKET}/nnue-data-sf/}"
+echo "  net_id:      ${NET_ID:-<default>}"
+echo "  Superbatches:${SUPERBATCHES:-<default 600>}"
 echo "  S3 data:     s3://${S3_BUCKET}/nnue-data-sf/"
 echo "  S3 output:   s3://${S3_BUCKET}/nnue-checkpoints-sf/"
 echo ""
@@ -114,12 +137,13 @@ su - ubuntu -c '
     mkdir -p data
 
     # Download all training data files from S3
-    aws s3 sync s3://__S3_BUCKET__/nnue-data-sf/ ~/raw-data/
+    aws s3 sync __S3_DATA_PATH__ ~/raw-data/
     echo "Downloaded $(ls ~/raw-data/*.txt | wc -l) data files"
 
     # Clone bullet and chess-compete
     git clone https://github.com/jw1912/bullet.git
-    git clone https://github.com/chris-moreton/chess-compete.git
+    git clone -b __BRANCH__ https://github.com/chris-moreton/chess-compete.git
+    echo "chess-compete branch: $(cd ~/chess-compete && git rev-parse --abbrev-ref HEAD) @ $(cd ~/chess-compete && git rev-parse --short HEAD)"
 
     # Build bullet-utils (no CUDA needed for this)
     echo "=== $(date) Building bullet-utils ==="
@@ -127,19 +151,34 @@ su - ubuntu -c '
     cargo build --release --package bullet-utils
     UTILS=~/bullet/target/release/bullet-utils
 
-    # Convert text files to bullet binary format
+    # Convert text files to bullet binary format.
+    #
+    # Each .txt is deleted as soon as its .data is written (NET-322). Nothing
+    # reads the raw text after conversion, and keeping both copies previously
+    # left the 100GB volume at 99% full mid-training - one slightly larger
+    # dataset away from failing hours into a GPU run. Deleting inside the loop
+    # rather than after it also caps the peak, since full raw and converted
+    # copies of the dataset never coexist. The originals live permanently in
+    # S3, so this is not destructive.
+    #
+    # The && guard means a failed conversion leaves its input in place to
+    # diagnose rather than silently discarding it.
     echo "=== $(date) Converting data to bullet format ==="
     mkdir -p ~/data
     for txt_file in ~/raw-data/*.txt; do
         base=$(basename "$txt_file" .txt)
         echo "  Converting $base..."
-        $UTILS convert --from text --input "$txt_file" --output ~/data/${base}.data
+        $UTILS convert --from text --input "$txt_file" --output ~/data/${base}.data \
+            && rm -f "$txt_file"
     done
 
     echo "Converted files:"
     ls -lh ~/data/*.data
+    echo "Disk after conversion:"
+    df -h /
 
-    # Shuffle each file
+    # Shuffle each file. This transiently needs an extra copy of the largest
+    # shard, so headroom matters here too - hence the df either side.
     echo "=== $(date) Shuffling data files ==="
     for data_file in ~/data/*.data; do
         base=$(basename "$data_file" .data)
@@ -148,9 +187,22 @@ su - ubuntu -c '
         mv ~/data/${base}_shuffled.data "$data_file"
     done
 
+    # Reduce to the requested data fraction (NET-325/326). The selection logic
+    # lives in scripts/select_data_fraction.py rather than inline: a heredoc
+    # nested inside this single-quoted su block is unmaintainable, and when it
+    # was corrupted the breakage was invisible to bash -n and cost two idle
+    # 6-hour GPU instances.
+    if [ "__DATA_FRACTION__" != "1.0" ]; then
+        echo "=== $(date) Reducing to data fraction __DATA_FRACTION__ ==="
+        python3 ~/chess-compete/scripts/select_data_fraction.py "__DATA_FRACTION__" ~/data || exit 1
+        echo "  shards remaining: $(ls ~/data/*.data | wc -l)"
+    fi
+
     # Skip interleave (OOMs on large datasets) - train on shuffled individual files
     echo "=== $(date) Skipping interleave - training on individual shuffled files ==="
     echo "Data files: $(ls ~/data/*.data | wc -l) files, $(du -sh ~/data/ | cut -f1) total"
+    echo "Disk before training:"
+    df -h /
 
     # Copy training code
     cp -r ~/chess-compete/scripts/nnue-train ~/nnue-train
@@ -168,8 +220,24 @@ su - ubuntu -c '
     fi
 
     echo "=== $(date) Starting training ==="
-    echo "Training data: $(ls -lh data/training.data)"
-    cargo run --release 2>&1
+    echo "Training data: $(ls -lh data/*.data | wc -l) shards, $(du -sh data/ | cut -f1)"
+
+    # Upload checkpoints periodically during training. Without this the only
+    # sync is the one after cargo run returns, so a spot interruption or the
+    # shutdown timer destroys the entire run. The trainer writes a checkpoint
+    # every 50 superbatches (save_rate), so 20 minutes is comfortably finer
+    # grained than the loss of work it protects against.
+    (
+        while true; do
+            sleep 1200
+            aws s3 sync checkpoints/ s3://__S3_BUCKET__/nnue-checkpoints-sf/ 2>/dev/null || true
+        done
+    ) &
+    PERIODIC_SYNC_PID=$!
+
+    NET_ID="__NET_ID__" SUPERBATCHES="__SUPERBATCHES__" cargo run --release 2>&1
+
+    kill $PERIODIC_SYNC_PID 2>/dev/null || true
 
     echo "=== $(date) Training complete ==="
 
@@ -180,14 +248,21 @@ su - ubuntu -c '
 '
 
 echo "=== $(date) All done ==="
-echo "=== Keeping instance alive for log inspection. Run 'shutdown -h now' manually to terminate. ==="
-# Don't auto-shutdown - let the scheduled shutdown handle it
-# This way we can inspect logs if something went wrong
+echo "=== Keeping instance alive briefly for log inspection. ==="
+# Shut down 20 minutes after the work finishes (or fails) rather than idling to
+# the --hours cap. A cloud-init syntax error once left two GPU instances doing
+# nothing for six hours because the only stop condition was the timer."
+shutdown -h +20
 USERDATA
 )
 
 # Substitute values
 USER_DATA="${USER_DATA//__S3_BUCKET__/$S3_BUCKET}"
+USER_DATA="${USER_DATA//__BRANCH__/$BRANCH}"
+USER_DATA="${USER_DATA//__DATA_FRACTION__/$DATA_FRACTION}"
+USER_DATA="${USER_DATA//__S3_DATA_PATH__/${S3_DATA_PATH:-s3://${S3_BUCKET}/nnue-data-sf/}}"
+USER_DATA="${USER_DATA//__NET_ID__/$NET_ID}"
+USER_DATA="${USER_DATA//__SUPERBATCHES__/$SUPERBATCHES}"
 USER_DATA="${USER_DATA//__SHUTDOWN_MINUTES__/$SHUTDOWN_MINUTES}"
 USER_DATA="${USER_DATA//__MAX_HOURS__/$MAX_HOURS}"
 
