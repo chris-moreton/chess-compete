@@ -29,6 +29,12 @@ PARAM_MAPPINGS = {
         r'pub const BETA_PRUNE_MAX_DEPTH: u8 = \d+;',
         'pub const BETA_PRUNE_MAX_DEPTH: u8 = {value};'
     ),
+    # Quiescence delta pruning. Moved out of quiesce.rs into engine_constants.rs
+    # by NET-404 so this builder can reach it.
+    'delta_margin': (
+        r'pub const DELTA_MARGIN: Score = \d+;',
+        'pub const DELTA_MARGIN: Score = {value};'
+    ),
     'null_move_reduce_depth_base': (
         r'pub const NULL_MOVE_REDUCE_DEPTH_BASE: u8 = \d+;',
         'pub const NULL_MOVE_REDUCE_DEPTH_BASE: u8 = {value};'
@@ -408,10 +414,30 @@ ARRAY_PARAM_MAPPINGS = {
         'base_param': 'alpha_prune_margin_base',
         'step_param': 'alpha_prune_margin_per_depth',
     },
+    # The array grew to 9 entries when LMP was extended to depth 8; this pattern
+    # still said 4 and so matched nothing. Because the array substitutions below
+    # did not check whether they matched, tuning these thresholds silently
+    # patched nothing at all — plus and minus built identical engines and the
+    # gradient was pure noise. Both halves of that are fixed (NET-404).
     'lmp_move_thresholds': {
-        'pattern': r'pub const LMP_MOVE_THRESHOLDS: \[u8; 4\] = \[[^\]]+\];',
-        'template': 'pub const LMP_MOVE_THRESHOLDS: [u8; 4] = [{values}];',
+        'pattern': r'pub const LMP_MOVE_THRESHOLDS: \[u8; 9\] = \[[^\]]+\];',
+        'template': 'pub const LMP_MOVE_THRESHOLDS: [u8; 9] = [{values}];',
         'params': ['0', 'lmp_threshold_depth1', 'lmp_threshold_depth2', 'lmp_threshold_depth3'],
+    },
+    # Razoring, indexed by depth: [unused, d1, d2, d3].
+    'razor_margins': {
+        'pattern': r'pub const RAZOR_MARGINS: \[Score; 4\] = \[[^\]]+\];',
+        'template': 'pub const RAZOR_MARGINS: [Score; 4] = [{values}];',
+        'params': ['0', 'razor_margin_depth1', 'razor_margin_depth2', 'razor_margin_depth3'],
+    },
+    # Aspiration ladder. Parameterised as base * growth^i rather than six free
+    # values: the rungs are strongly correlated, and tuning them independently
+    # invites a non-monotone ladder that widens then narrows.
+    'aspiration_radius': {
+        'pattern': r'pub const ASPIRATION_RADIUS: \[Score; 6\] = \[[^\]]+\];',
+        'template': 'pub const ASPIRATION_RADIUS: [Score; 6] = [{values}];',
+        'base_param': 'aspiration_radius_base',
+        'growth_param': 'aspiration_radius_growth_x100',
     },
     'passed_pawn_bonus': {
         'pattern': r'pub const VALUE_PASSED_PAWN_BONUS: \[Score; 6\] = \[[^\]]+\];',
@@ -457,6 +483,27 @@ def write_engine_constants(src_path: Path, content: str):
     constants_file.write_text(content)
 
 
+def _apply_array(content: str, name: str, values: list) -> str:
+    """
+    Substitute one ARRAY_PARAM_MAPPINGS entry, refusing to no-op.
+
+    The scalar path has always raised on a stale pattern. The array path did not,
+    which is how a `[u8; 4]` pattern survived the array growing to 9 entries: the
+    substitution quietly matched nothing, plus and minus built identical engines,
+    and the gradient for those parameters was noise around zero (NET-404).
+    """
+    mapping = ARRAY_PARAM_MAPPINGS[name]
+    replacement = mapping['template'].format(values=', '.join(str(v) for v in values))
+    content, n_subs = re.subn(mapping['pattern'], replacement, content)
+    if n_subs == 0:
+        raise ValueError(
+            f"SPSA array param '{name}' did not match engine_constants.rs "
+            f"(pattern: {mapping['pattern']}) - the mapping is stale; a build "
+            f"with it would silently ignore the parameter"
+        )
+    return content
+
+
 def apply_parameters(content: str, params: dict) -> str:
     """
     Apply parameter values to engine_constants.rs content.
@@ -486,11 +533,7 @@ def apply_parameters(content: str, params: dict) -> str:
         base = int(round(params['alpha_prune_margin_base']))
         step = int(round(params['alpha_prune_margin_per_depth']))
         values = [base + i * step for i in range(8)]
-        values_str = ', '.join(str(v) for v in values)
-
-        mapping = ARRAY_PARAM_MAPPINGS['alpha_prune_margins']
-        replacement = mapping['template'].format(values=values_str)
-        content = re.sub(mapping['pattern'], replacement, content)
+        content = _apply_array(content, 'alpha_prune_margins', values)
 
     # Apply LMP_MOVE_THRESHOLDS
     lmp_params = ['lmp_threshold_depth1', 'lmp_threshold_depth2', 'lmp_threshold_depth3']
@@ -503,11 +546,25 @@ def apply_parameters(content: str, params: dict) -> str:
                 # Default values if not specified
                 defaults = {'lmp_threshold_depth1': 8, 'lmp_threshold_depth2': 12, 'lmp_threshold_depth3': 16}
                 values.append(defaults[p])
-        values_str = ', '.join(str(v) for v in values)
+        # Depths 4-8 are not tuned; they follow the 3 + depth^2 curve the engine
+        # ships with. Rebuild them rather than dropping them, or the array would
+        # shrink to 4 entries and stop compiling.
+        values += [3 + d * d for d in range(4, 9)]
+        content = _apply_array(content, 'lmp_move_thresholds', values)
 
-        mapping = ARRAY_PARAM_MAPPINGS['lmp_move_thresholds']
-        replacement = mapping['template'].format(values=values_str)
-        content = re.sub(mapping['pattern'], replacement, content)
+    # Apply RAZOR_MARGINS
+    razor_params = ['razor_margin_depth1', 'razor_margin_depth2', 'razor_margin_depth3']
+    if any(p in params for p in razor_params):
+        defaults = {'razor_margin_depth1': 240, 'razor_margin_depth2': 400, 'razor_margin_depth3': 620}
+        values = [0] + [int(round(params.get(p, defaults[p]))) for p in razor_params]
+        content = _apply_array(content, 'razor_margins', values)
+
+    # Apply ASPIRATION_RADIUS (geometric: base * growth^i)
+    if 'aspiration_radius_base' in params or 'aspiration_radius_growth_x100' in params:
+        base = params.get('aspiration_radius_base', 25)
+        growth = params.get('aspiration_radius_growth_x100', 200) / 100.0
+        values = [max(1, int(round(base * growth ** i))) for i in range(6)]
+        content = _apply_array(content, 'aspiration_radius', values)
 
     # Apply PASSED_PAWN_BONUS array
     ppb_params = ['passed_pawn_bonus_rank2', 'passed_pawn_bonus_rank3', 'passed_pawn_bonus_rank4',
@@ -517,10 +574,7 @@ def apply_parameters(content: str, params: dict) -> str:
         values = []
         for i, p in enumerate(ppb_params):
             values.append(int(round(params.get(p, defaults[i]))))
-        values_str = ', '.join(str(v) for v in values)
-        mapping = ARRAY_PARAM_MAPPINGS['passed_pawn_bonus']
-        replacement = mapping['template'].format(values=values_str)
-        content = re.sub(mapping['pattern'], replacement, content)
+        content = _apply_array(content, 'passed_pawn_bonus', values)
 
     # Apply CONNECTED_PASSED_PAWNS array
     cpp_params = ['connected_passed_pawn_rank2', 'connected_passed_pawn_rank3', 'connected_passed_pawn_rank4',
@@ -530,10 +584,7 @@ def apply_parameters(content: str, params: dict) -> str:
         values = []
         for i, p in enumerate(cpp_params):
             values.append(int(round(params.get(p, defaults[i]))))
-        values_str = ', '.join(str(v) for v in values)
-        mapping = ARRAY_PARAM_MAPPINGS['connected_passed_pawns']
-        replacement = mapping['template'].format(values=values_str)
-        content = re.sub(mapping['pattern'], replacement, content)
+        content = _apply_array(content, 'connected_passed_pawns', values)
 
     # Apply piece value pairs (opening, endgame tuples)
     for piece, mapping in PIECE_VALUE_MAPPINGS.items():
