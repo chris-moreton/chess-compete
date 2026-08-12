@@ -535,21 +535,21 @@ def apply_parameters(content: str, params: dict) -> str:
         values = [base + i * step for i in range(8)]
         content = _apply_array(content, 'alpha_prune_margins', values)
 
-    # Apply LMP_MOVE_THRESHOLDS
-    lmp_params = ['lmp_threshold_depth1', 'lmp_threshold_depth2', 'lmp_threshold_depth3']
+    # Apply LMP_MOVE_THRESHOLDS, depths 1-8.
+    #
+    # Only depths 1-3 used to be tunable, because the array was [u8; 4] when the
+    # mapping was written. Commit e2379ef grew it to [u8; 9] and extended LMP to
+    # depth 8 without updating the pattern, so every run since then silently
+    # patched nothing (NET-493). Depths 4-8 have never been tuned at all - they
+    # are the textbook 3 + depth^2 curve - and depths 1-3 still carry the
+    # non-monotone 9, 6, 9 from before the array grew.
+    LMP_DEFAULTS = {1: 9, 2: 6, 3: 9, 4: 19, 5: 28, 6: 39, 7: 52, 8: 67}
+    lmp_params = [f'lmp_threshold_depth{d}' for d in range(1, 9)]
     if any(p in params for p in lmp_params):
-        values = [0]  # Index 0 is always 0
-        for p in lmp_params:
-            if p in params:
-                values.append(int(round(params[p])))
-            else:
-                # Default values if not specified
-                defaults = {'lmp_threshold_depth1': 8, 'lmp_threshold_depth2': 12, 'lmp_threshold_depth3': 16}
-                values.append(defaults[p])
-        # Depths 4-8 are not tuned; they follow the 3 + depth^2 curve the engine
-        # ships with. Rebuild them rather than dropping them, or the array would
-        # shrink to 4 entries and stop compiling.
-        values += [3 + d * d for d in range(4, 9)]
+        values = [0]  # index 0 is unused; depth 0 never prunes
+        for d in range(1, 9):
+            key = f'lmp_threshold_depth{d}'
+            values.append(int(round(params.get(key, LMP_DEFAULTS[d]))))
         content = _apply_array(content, 'lmp_move_thresholds', values)
 
     # Apply RAZOR_MARGINS
