@@ -1050,7 +1050,10 @@ def register_routes(app):
         worker_host = request.headers.get('X-Worker-Host', 'unknown')
 
         # Only serve work from the active run
-        active_run = SpsaRun.query.filter_by(is_active=True).first()
+        # A previous crash can leave more than one run active.  Prefer the most
+        # recently created run deterministically; normal master operations make
+        # this a single-row query.
+        active_run = SpsaRun.query.filter_by(is_active=True).order_by(SpsaRun.id.desc()).first()
         if not active_run:
             return jsonify({})  # No active run
 
@@ -1206,18 +1209,11 @@ def register_routes(app):
             if not isinstance(data[field], int) or data[field] < 0:
                 return jsonify({'error': f'invalid value for {field}'}), 400
 
-        # Reject results for completed iterations
-        iter_check = db.session.execute(db.text(
-            "SELECT status FROM spsa_iterations WHERE id = :id"
-        ), {'id': iteration_id}).fetchone()
-        if not iter_check:
-            return jsonify({'error': 'iteration not found'}), 404
-        if iter_check.status == 'complete':
-            return jsonify({'status': 'ignored', 'reason': 'iteration already complete', 'remaining': 0})
-
-        # Atomic increment using SQL
+        # Only the active run may accept results.  Keep the active-run check in
+        # the UPDATE so deactivation racing a worker cannot leak games into an
+        # abandoned run after a separate pre-check succeeds.
         try:
-            db.session.execute(
+            updated = db.session.execute(
                 db.text("""
                     UPDATE spsa_iterations
                     SET games_played = games_played + :games,
@@ -1225,6 +1221,12 @@ def register_routes(app):
                         minus_wins = minus_wins + :minus_wins,
                         draws = draws + :draws
                     WHERE id = :id
+                      AND status IN ('pending', 'in_progress')
+                      AND EXISTS (
+                          SELECT 1 FROM spsa_runs
+                          WHERE spsa_runs.id = spsa_iterations.run_id
+                            AND spsa_runs.is_active = TRUE
+                      )
                 """),
                 {
                     'games': data['games'],
@@ -1234,6 +1236,17 @@ def register_routes(app):
                     'id': iteration_id
                 }
             )
+            if updated.rowcount == 0:
+                db.session.rollback()
+                exists = db.session.execute(db.text(
+                    "SELECT 1 FROM spsa_iterations WHERE id = :id"
+                ), {'id': iteration_id}).fetchone()
+                if not exists:
+                    return jsonify({'error': 'iteration not found'}), 404
+                return jsonify({
+                    'status': 'ignored', 'accepted': False,
+                    'reason': 'iteration is not active', 'remaining': 0,
+                })
             db.session.commit()
         except Exception as e:
             db.session.rollback()
@@ -1252,7 +1265,7 @@ def register_routes(app):
         concurrency = data.get('concurrency')
         record_worker_activity(worker_name, iteration_id, 'spsa', data['games'], avg_nps, timemult, concurrency)
 
-        return jsonify({'status': 'ok', 'remaining': remaining})
+        return jsonify({'status': 'ok', 'accepted': True, 'remaining': remaining})
 
     @app.route('/api/spsa/iterations/<int:iteration_id>/ref-results', methods=['POST'])
     def spsa_report_ref_results(iteration_id):
@@ -1287,18 +1300,10 @@ def register_routes(app):
             if not isinstance(data[field], int) or data[field] < 0:
                 return jsonify({'error': f'invalid value for {field}'}), 400
 
-        # Reject results for completed iterations
-        iter_check = db.session.execute(db.text(
-            "SELECT status FROM spsa_iterations WHERE id = :id"
-        ), {'id': iteration_id}).fetchone()
-        if not iter_check:
-            return jsonify({'error': 'iteration not found'}), 404
-        if iter_check.status == 'complete':
-            return jsonify({'status': 'ignored', 'reason': 'iteration already complete', 'remaining': 0})
-
-        # Atomic increment using SQL
+        # As above, make the phase and active-run checks part of the atomic
+        # update so stale workers cannot write after their run is abandoned.
         try:
-            db.session.execute(
+            updated = db.session.execute(
                 db.text("""
                     UPDATE spsa_iterations
                     SET ref_games_played = ref_games_played + :games,
@@ -1306,6 +1311,12 @@ def register_routes(app):
                         ref_losses = ref_losses + :losses,
                         ref_draws = ref_draws + :draws
                     WHERE id = :id
+                      AND status = 'ref_pending'
+                      AND EXISTS (
+                          SELECT 1 FROM spsa_runs
+                          WHERE spsa_runs.id = spsa_iterations.run_id
+                            AND spsa_runs.is_active = TRUE
+                      )
                 """),
                 {
                     'games': data['games'],
@@ -1315,6 +1326,17 @@ def register_routes(app):
                     'id': iteration_id
                 }
             )
+            if updated.rowcount == 0:
+                db.session.rollback()
+                exists = db.session.execute(db.text(
+                    "SELECT 1 FROM spsa_iterations WHERE id = :id"
+                ), {'id': iteration_id}).fetchone()
+                if not exists:
+                    return jsonify({'error': 'iteration not found'}), 404
+                return jsonify({
+                    'status': 'ignored', 'accepted': False,
+                    'reason': 'iteration is not active', 'remaining': 0,
+                })
             db.session.commit()
         except Exception as e:
             db.session.rollback()
@@ -1333,7 +1355,7 @@ def register_routes(app):
         concurrency = data.get('concurrency')
         record_worker_activity(worker_name, iteration_id, 'ref', data['games'], avg_nps, timemult, concurrency)
 
-        return jsonify({'status': 'ok', 'remaining': remaining})
+        return jsonify({'status': 'ok', 'accepted': True, 'remaining': remaining})
 
     # =========================================================================
     # SPSA Workers Dashboard

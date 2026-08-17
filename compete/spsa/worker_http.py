@@ -93,7 +93,8 @@ class APIClient:
         """
         Report SPSA game results.
 
-        Returns remaining game count from server, or None on error.
+        Returns remaining game count from server, -1 when the assignment was
+        abandoned, or None on error.
         """
         try:
             payload = {
@@ -118,6 +119,10 @@ class APIClient:
             )
             resp.raise_for_status()
             data = resp.json()
+            if data.get('accepted') is False:
+                print(f"\n  Iteration {iteration_id} abandoned by server: "
+                      f"{data.get('reason', 'unknown reason')}; re-polling")
+                return -1
             return data.get('remaining')
         except requests.RequestException as e:
             print(f"\n  API error (report_spsa_results): {e}")
@@ -130,7 +135,8 @@ class APIClient:
         """
         Report reference game results.
 
-        Returns remaining game count from server, or None on error.
+        Returns remaining game count from server, -1 when the assignment was
+        abandoned, or None on error.
         """
         try:
             payload = {
@@ -155,6 +161,10 @@ class APIClient:
             )
             resp.raise_for_status()
             data = resp.json()
+            if data.get('accepted') is False:
+                print(f"\n  Iteration {iteration_id} abandoned by server: "
+                      f"{data.get('reason', 'unknown reason')}; re-polling")
+                return -1
             return data.get('remaining')
         except requests.RequestException as e:
             print(f"\n  API error (report_ref_results): {e}")
@@ -586,7 +596,8 @@ def run_spsa_games(
                                     cancelled += 1
                             in_flight = len(pending_futures)
                             if cancelled or in_flight:
-                                print(f"  Phase complete — cancelled {cancelled} queued game(s), abandoning {in_flight} in-flight")
+                                state = "Assignment abandoned" if remaining < 0 else "Phase complete"
+                                print(f"  {state} — cancelled {cancelled} queued game(s), abandoning {in_flight} in-flight")
                             pending_futures.clear()
                             phase_complete = True
                             break
@@ -869,7 +880,8 @@ def run_ref_games(
                                     cancelled += 1
                             in_flight = len(pending_futures)
                             if cancelled or in_flight:
-                                print(f"  Phase complete — cancelled {cancelled} queued game(s), abandoning {in_flight} in-flight")
+                                state = "Assignment abandoned" if remaining < 0 else "Phase complete"
+                                print(f"  {state} — cancelled {cancelled} queued game(s), abandoning {in_flight} in-flight")
                             pending_futures.clear()
                             phase_complete = True
                             break

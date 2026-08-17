@@ -357,7 +357,7 @@ class SpsaIteration(db.Model):
     ref_draws = db.Column(db.Integer, nullable=False, default=0)
 
     # Status: pending (SPSA phase), building (master building new base),
-    #         ref_pending (ref phase), complete
+    #         ref_pending (ref phase), complete, abandoned (superseded run)
     status = db.Column(db.String(20), nullable=False, default='pending')
 
     # Parameter snapshot (JSON for reproducibility and analysis)
