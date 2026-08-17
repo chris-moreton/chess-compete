@@ -117,6 +117,25 @@ DEFAULT_GROUP_ORDER = [
     'search-pruning', 'reductions-extensions', 'move-ordering',
 ]
 
+STAGNANT_PROGRESS_POLLS = 10
+
+
+def _warn_if_progress_stalled(iteration_id: int, phase: str, progress: int,
+                              previous_progress: int | None,
+                              stagnant_polls: int, poll_interval: int) -> tuple[int, int]:
+    """Track unchanged worker counters and periodically make a stalled run visible."""
+    if progress != previous_progress:
+        return progress, 0
+
+    stagnant_polls += 1
+    if stagnant_polls >= STAGNANT_PROGRESS_POLLS and stagnant_polls % STAGNANT_PROGRESS_POLLS == 0:
+        minutes = stagnant_polls * poll_interval / 60
+        print(
+            f"\n  WARNING: {phase} iteration {iteration_id} has made no progress "
+            f"for about {minutes:.0f} minutes. Check workers and active run state."
+        )
+    return previous_progress, stagnant_polls
+
 
 def with_db_retry(func, max_retries=5, retry_delay=10):
     """Execute a database operation with retry logic."""
@@ -136,7 +155,17 @@ def with_db_retry(func, max_retries=5, retry_delay=10):
 
 
 def _activate_run(db, SpsaRun, run):
-    """Deactivate all runs and activate the given one."""
+    """Abandon incomplete work on other active runs and activate ``run``."""
+    from web.models import SpsaIteration
+
+    previous_active_ids = [row.id for row in SpsaRun.query.filter(
+        SpsaRun.is_active.is_(True), SpsaRun.id != run.id
+    ).all()]
+    if previous_active_ids:
+        SpsaIteration.query.filter(
+            SpsaIteration.run_id.in_(previous_active_ids),
+            SpsaIteration.status.in_(['pending', 'in_progress', 'building', 'ref_pending'])
+        ).update({SpsaIteration.status: 'abandoned'}, synchronize_session=False)
     SpsaRun.query.update({SpsaRun.is_active: False})
     run.is_active = True
     db.session.commit()
@@ -358,6 +387,8 @@ def wait_for_spsa_completion(iteration_id: int, poll_interval: int = 30) -> dict
 
     db_errors = 0
     max_db_errors = 10
+    previous_progress = None
+    stagnant_polls = 0
 
     while True:
         try:
@@ -387,6 +418,11 @@ def wait_for_spsa_completion(iteration_id: int, poll_interval: int = 30) -> dict
                         'base_parameters': iteration.base_parameters,
                         'perturbation_signs': iteration.perturbation_signs,
                     }
+
+                previous_progress, stagnant_polls = _warn_if_progress_stalled(
+                    iteration_id, 'SPSA', iteration.games_played, previous_progress,
+                    stagnant_polls, poll_interval,
+                )
 
                 # Reset error counter on success
                 db_errors = 0
@@ -444,6 +480,8 @@ def wait_for_ref_completion(iteration_id: int, poll_interval: int = 30) -> dict:
 
     db_errors = 0
     max_db_errors = 10
+    previous_progress = None
+    stagnant_polls = 0
 
     while True:
         try:
@@ -472,6 +510,11 @@ def wait_for_ref_completion(iteration_id: int, poll_interval: int = 30) -> dict:
                         'ref_losses': iteration.ref_losses,
                         'ref_draws': iteration.ref_draws,
                     }
+
+                previous_progress, stagnant_polls = _warn_if_progress_stalled(
+                    iteration_id, 'reference', iteration.ref_games_played, previous_progress,
+                    stagnant_polls, poll_interval,
+                )
 
                 # Reset error counter on success
                 db_errors = 0
@@ -1149,16 +1192,20 @@ def _create_new_run(db, SpsaRun, SpsaParam) -> tuple[int, str]:
         else:
             print(f"  All groups active ({sum(available_groups.values())} params)")
 
-    # Mark any incomplete iterations on existing runs as complete
+    # Preserve incomplete work as abandoned rather than counting a partial
+    # iteration as a completed SPSA sample.
     from web.models import SpsaIteration
+    active_run_ids = [row.id for row in SpsaRun.query.filter(
+        SpsaRun.is_active.is_(True)
+    ).all()]
     incomplete_iters = SpsaIteration.query.filter(
+        SpsaIteration.run_id.in_(active_run_ids),
         SpsaIteration.status.in_(['pending', 'in_progress', 'building', 'ref_pending'])
     ).all()
     if incomplete_iters:
         for it in incomplete_iters:
-            it.status = 'complete'
-            it.completed_at = datetime.utcnow()
-        print(f"  Marked {len(incomplete_iters)} incomplete iteration(s) as complete")
+            it.status = 'abandoned'
+        print(f"  Abandoned {len(incomplete_iters)} incomplete iteration(s)")
 
     # Deactivate all runs, create the new one
     SpsaRun.query.update({SpsaRun.is_active: False})
@@ -1262,14 +1309,13 @@ def _create_cycle_run(previous_run_id: int, next_group: str, cycle_sequence: int
 
             run_name = f"Auto-cycle: {next_group} (from run {previous_run_id})"
 
-            # Mark any incomplete iterations as complete
+            # Preserve incomplete work as abandoned rather than completed.
             incomplete_iters = SpsaIteration.query.filter(
                 SpsaIteration.run_id == previous_run_id,
                 SpsaIteration.status.in_(['pending', 'in_progress', 'building', 'ref_pending'])
             ).all()
             for it in incomplete_iters:
-                it.status = 'complete'
-                it.completed_at = datetime.utcnow()
+                it.status = 'abandoned'
 
             # Deactivate all runs
             SpsaRun.query.update({SpsaRun.is_active: False})
