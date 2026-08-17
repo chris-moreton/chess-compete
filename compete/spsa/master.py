@@ -55,8 +55,8 @@ DEFAULT_PARAMS = {
     'alpha_prune_margin_base': {'value': 70, 'min': 20, 'max': 120, 'step': 8, 'group': 'search-pruning'},
     'alpha_prune_margin_per_depth': {'value': 54, 'min': 30, 'max': 120, 'step': 8, 'group': 'search-pruning'},
     'lmp_threshold_depth1': {'value': 9, 'min': 3, 'max': 15, 'step': 1, 'group': 'search-pruning'},
-    'lmp_threshold_depth2': {'value': 5, 'min': 3, 'max': 20, 'step': 1, 'group': 'search-pruning'},
-    'lmp_threshold_depth3': {'value': 8, 'min': 3, 'max': 25, 'step': 1, 'group': 'search-pruning'},
+    'lmp_threshold_depth2': {'value': 6, 'min': 3, 'max': 20, 'step': 1, 'group': 'search-pruning'},
+    'lmp_threshold_depth3': {'value': 9, 'min': 3, 'max': 25, 'step': 1, 'group': 'search-pruning'},
     # Depths 4-8 seeded from the engine's shipped 3 + depth^2 curve. They became
     # patchable when the [u8; 4] -> [u8; 9] mapping was fixed, but were never
     # added here - so new runs created no values for them and SPSA could not

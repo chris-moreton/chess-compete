@@ -14,6 +14,12 @@ from pathlib import Path
 # Default path to rusty-rival source (relative to chess-compete root)
 DEFAULT_RUSTY_RIVAL_PATH = "../rusty-rival"
 
+# LMP thresholds the engine ships with, used when a run does not supply every
+# depth. Module scope so it is inspectable and testable: it is one of three
+# places these numbers live (here, DEFAULT_PARAMS in master.py, and
+# engine_constants.rs), and they have already drifted apart once.
+LMP_DEFAULTS = {1: 9, 2: 6, 3: 9, 4: 19, 5: 28, 6: 39, 7: 52, 8: 67}
+
 # Mapping from params.toml names to engine_constants.rs patterns
 # Format: param_name -> (regex_pattern, replacement_template)
 # The template uses {value} as placeholder
@@ -548,7 +554,6 @@ def apply_parameters(content: str, params: dict) -> str:
     # patched nothing (NET-493). Depths 4-8 have never been tuned at all - they
     # are the textbook 3 + depth^2 curve - and depths 1-3 still carry the
     # non-monotone 9, 6, 9 from before the array grew.
-    LMP_DEFAULTS = {1: 9, 2: 6, 3: 9, 4: 19, 5: 28, 6: 39, 7: 52, 8: 67}
     lmp_params = [f'lmp_threshold_depth{d}' for d in range(1, 9)]
     if any(p in params for p in lmp_params):
         values = [0]  # index 0 is unused; depth 0 never prunes
