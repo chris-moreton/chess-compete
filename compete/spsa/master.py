@@ -55,8 +55,17 @@ DEFAULT_PARAMS = {
     'alpha_prune_margin_base': {'value': 70, 'min': 20, 'max': 120, 'step': 8, 'group': 'search-pruning'},
     'alpha_prune_margin_per_depth': {'value': 54, 'min': 30, 'max': 120, 'step': 8, 'group': 'search-pruning'},
     'lmp_threshold_depth1': {'value': 9, 'min': 3, 'max': 15, 'step': 1, 'group': 'search-pruning'},
-    'lmp_threshold_depth2': {'value': 5, 'min': 3, 'max': 20, 'step': 1, 'group': 'search-pruning'},
-    'lmp_threshold_depth3': {'value': 8, 'min': 3, 'max': 25, 'step': 1, 'group': 'search-pruning'},
+    'lmp_threshold_depth2': {'value': 6, 'min': 3, 'max': 20, 'step': 1, 'group': 'search-pruning'},
+    'lmp_threshold_depth3': {'value': 9, 'min': 3, 'max': 25, 'step': 1, 'group': 'search-pruning'},
+    # Depths 4-8 seeded from the engine's shipped 3 + depth^2 curve. They became
+    # patchable when the [u8; 4] -> [u8; 9] mapping was fixed, but were never
+    # added here - so new runs created no values for them and SPSA could not
+    # perturb them at all. Caught in review of PR #7.
+    'lmp_threshold_depth4': {'value': 19, 'min': 6, 'max': 44, 'step': 3, 'group': 'search-pruning'},
+    'lmp_threshold_depth5': {'value': 28, 'min': 8, 'max': 56, 'step': 4, 'group': 'search-pruning'},
+    'lmp_threshold_depth6': {'value': 39, 'min': 10, 'max': 70, 'step': 5, 'group': 'search-pruning'},
+    'lmp_threshold_depth7': {'value': 52, 'min': 12, 'max': 86, 'step': 6, 'group': 'search-pruning'},
+    'lmp_threshold_depth8': {'value': 67, 'min': 14, 'max': 104, 'step': 7, 'group': 'search-pruning'},
     'lmr_legal_moves_before_attempt': {'value': 4, 'min': 2, 'max': 8, 'step': 1, 'group': 'search-pruning'},
     'lmr_min_depth': {'value': 3, 'min': 2, 'max': 6, 'step': 1, 'group': 'search-pruning'},
     # Correction history (NET-228): corrects static eval feeding RFP/futility margins
