@@ -428,7 +428,6 @@ ARRAY_PARAM_MAPPINGS = {
     'lmp_move_thresholds': {
         'pattern': r'pub const LMP_MOVE_THRESHOLDS: \[u8; 9\] = \[[^\]]+\];',
         'template': 'pub const LMP_MOVE_THRESHOLDS: [u8; 9] = [{values}];',
-        'params': ['0', 'lmp_threshold_depth1', 'lmp_threshold_depth2', 'lmp_threshold_depth3'],
     },
     # Razoring, indexed by depth: [unused, d1, d2, d3].
     'razor_margins': {
