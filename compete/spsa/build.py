@@ -495,11 +495,16 @@ def _apply_array(content: str, name: str, values: list) -> str:
     mapping = ARRAY_PARAM_MAPPINGS[name]
     replacement = mapping['template'].format(values=', '.join(str(v) for v in values))
     content, n_subs = re.subn(mapping['pattern'], replacement, content)
-    if n_subs == 0:
+    if n_subs != 1:
+        # Zero means the mapping is stale and the parameter would be silently
+        # ignored. More than one means the pattern is ambiguous and we have just
+        # overwritten something we did not intend. Both are bugs; neither should
+        # reach a build that then reports a confident gradient.
+        problem = ('did not match' if n_subs == 0
+                   else f'matched {n_subs} times (expected exactly 1)')
         raise ValueError(
-            f"SPSA array param '{name}' did not match engine_constants.rs "
-            f"(pattern: {mapping['pattern']}) - the mapping is stale; a build "
-            f"with it would silently ignore the parameter"
+            f"SPSA array param '{name}' {problem} in engine_constants.rs "
+            f"(pattern: {mapping['pattern']})"
         )
     return content
 
