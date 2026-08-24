@@ -34,3 +34,13 @@ def test_relabel_rejects_malformed_records(tmp_path: Path):
 
     with pytest.raises(ValueError, match="expected FEN"):
         relabel(corpus)
+
+
+def test_relabel_rejects_delimited_invalid_fen_without_writing(tmp_path: Path):
+    corpus = tmp_path / "sample.txt"
+    original = "not-a-fen | 250 | 0.0\n"
+    corpus.write_text(original)
+
+    with pytest.raises(ValueError, match="invalid FEN"):
+        relabel(corpus)
+    assert corpus.read_text() == original

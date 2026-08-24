@@ -13,6 +13,42 @@ import argparse
 from pathlib import Path
 
 
+def validate_fen(value: bytes) -> None:
+    try:
+        board, side, castling, ep, halfmove, fullmove = value.decode("ascii").split()
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ValueError("FEN must contain six ASCII fields") from exc
+
+    ranks = board.split("/")
+    if len(ranks) != 8:
+        raise ValueError("FEN board must contain eight ranks")
+    pieces = "prnbqkPRNBQK"
+    for rank in ranks:
+        squares = 0
+        for symbol in rank:
+            if symbol in pieces:
+                squares += 1
+            elif symbol in "12345678":
+                squares += int(symbol)
+            else:
+                raise ValueError(f"invalid FEN board symbol {symbol!r}")
+        if squares != 8:
+            raise ValueError("each FEN rank must contain eight squares")
+    if board.count("K") != 1 or board.count("k") != 1:
+        raise ValueError("FEN must contain exactly one king of each colour")
+    if side not in ("w", "b"):
+        raise ValueError("invalid FEN side to move")
+    if castling != "-" and (any(c not in "KQkq" for c in castling) or len(set(castling)) != len(castling)):
+        raise ValueError("invalid FEN castling rights")
+    if ep != "-" and (len(ep) != 2 or ep[0] not in "abcdefgh" or ep[1] not in "36"):
+        raise ValueError("invalid FEN en-passant square")
+    try:
+        if int(halfmove) < 0 or int(fullmove) < 1:
+            raise ValueError("invalid FEN move clocks")
+    except ValueError as exc:
+        raise ValueError("invalid FEN move clocks") from exc
+
+
 def relabel(path: Path) -> tuple[int, int, int]:
     records = 0
     decisive = 0
@@ -30,6 +66,10 @@ def relabel(path: Path) -> tuple[int, int, int]:
             parts = line.rstrip(b"\r\n").rsplit(b" | ", 2)
             if len(parts) != 3:
                 raise ValueError(f"{path}:{records + 1}: expected FEN | score | result")
+            try:
+                validate_fen(parts[0])
+            except ValueError as exc:
+                raise ValueError(f"{path}:{records + 1}: invalid FEN: {exc}") from exc
             try:
                 score = int(parts[1])
             except ValueError as exc:
