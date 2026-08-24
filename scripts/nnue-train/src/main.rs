@@ -3,27 +3,29 @@ use bullet_lib::{
     nn::optimiser::AdamW,
     trainer::{
         save::SavedFormat,
-        schedule::{TrainingSchedule, TrainingSteps, lr, wdl},
+        schedule::{lr, wdl, TrainingSchedule, TrainingSteps},
         settings::LocalSettings,
     },
-    value::{ValueTrainerBuilder, loader::DirectSequentialDataLoader},
+    value::{loader::DirectSequentialDataLoader, ValueTrainerBuilder},
 };
 
 fn main() {
     // Parse optional args: [checkpoint_path] [start_superbatch]
     let args: Vec<String> = std::env::args().collect();
     let checkpoint_path = args.get(1).filter(|s| !s.is_empty());
-    let start_superbatch: usize = args.get(2)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1);
+    let start_superbatch: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1);
 
-    // Architecture: (768 -> 256)x2 -> 8 output buckets (NET-321)
-    //
-    // hl_size is deliberately held at 256 so this run isolates a single
-    // variable. Whether a wider hidden layer pays at 635M positions is a
-    // separate, still-unanswered question: the only prior 512 attempt used the
-    // 204M dataset and stopped at 300 superbatches. Do not change both at once.
-    let hl_size = 256;
+    // Require architecture selection explicitly. A training run is expensive,
+    // and silently falling back to 256 once already produced a valid-looking
+    // checkpoint for the wrong experiment.
+    let hl_size: usize = std::env::var("NNUE_HIDDEN_SIZE")
+        .expect("NNUE_HIDDEN_SIZE must be set explicitly (supported: 256, 512)")
+        .parse()
+        .expect("NNUE_HIDDEN_SIZE must be an integer");
+    assert!(
+        matches!(hl_size, 256 | 512),
+        "unsupported NNUE_HIDDEN_SIZE={hl_size}"
+    );
 
     // Buckets are selected by material count. bullet's MaterialCount<N> uses:
     //     divisor = 32usize.div_ceil(N)            // N=8 -> 4
@@ -81,8 +83,15 @@ fn main() {
     // and the two runs before it died earlier, in the user-data script. Note
     // that validate-userdata.sh cannot catch this class of bug - it checks the
     // shell syntax of the user-data, not the Rust it later builds.
-    let net_id = std::env::var("NET_ID").unwrap_or_else(|_| "rival-256x2-ob8".to_string());
-    println!("net_id={} superbatches={}", net_id, superbatches);
+    let net_id = std::env::var("NET_ID").expect("NET_ID must be set explicitly");
+    assert!(
+        net_id.contains(&format!("{hl_size}x2")),
+        "NET_ID must contain {hl_size}x2"
+    );
+    println!(
+        "net_id={} hidden_size={} superbatches={}",
+        net_id, hl_size, superbatches
+    );
 
     let mut trainer = ValueTrainerBuilder::default()
         .dual_perspective()
@@ -96,7 +105,10 @@ fn main() {
             // from the single-bucket config. It changes the on-disk layout of
             // l1w, so the engine loader must be verified against an actual
             // checkpoint before the net is trusted.
-            SavedFormat::id("l1w").round().quantise::<i16>(64).transpose(),
+            SavedFormat::id("l1w")
+                .round()
+                .quantise::<i16>(64)
+                .transpose(),
             SavedFormat::id("l1b").round().quantise::<i16>(255 * 64),
         ])
         .loss_fn(|output, target| output.sigmoid().squared_error(target))
@@ -130,8 +142,14 @@ fn main() {
             start_superbatch,
             end_superbatch: superbatches,
         },
-        wdl_scheduler: wdl::ConstantWDL { value: wdl_proportion },
-        lr_scheduler: lr::CosineDecayLR { initial_lr, final_lr, final_superbatch: superbatches },
+        wdl_scheduler: wdl::ConstantWDL {
+            value: wdl_proportion,
+        },
+        lr_scheduler: lr::CosineDecayLR {
+            initial_lr,
+            final_lr,
+            final_superbatch: superbatches,
+        },
         save_rate: 50,
     };
 
