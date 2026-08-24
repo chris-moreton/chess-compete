@@ -42,11 +42,12 @@ def validate_fen(value: bytes) -> None:
         raise ValueError("invalid FEN castling rights")
     if ep != "-" and (len(ep) != 2 or ep[0] not in "abcdefgh" or ep[1] not in "36"):
         raise ValueError("invalid FEN en-passant square")
-    try:
-        if int(halfmove) < 0 or int(fullmove) < 1:
-            raise ValueError("invalid FEN move clocks")
-    except ValueError as exc:
-        raise ValueError("invalid FEN move clocks") from exc
+    if not halfmove.isascii() or not halfmove.isdecimal():
+        raise ValueError("invalid FEN halfmove clock")
+    if not fullmove.isascii() or not fullmove.isdecimal():
+        raise ValueError("invalid FEN fullmove number")
+    if int(fullmove) < 1:
+        raise ValueError("invalid FEN fullmove number")
 
 
 def relabel(path: Path) -> tuple[int, int, int]:

@@ -44,3 +44,14 @@ def test_relabel_rejects_delimited_invalid_fen_without_writing(tmp_path: Path):
     with pytest.raises(ValueError, match="invalid FEN"):
         relabel(corpus)
     assert corpus.read_text() == original
+
+
+@pytest.mark.parametrize("clocks", ["+1 1", "-0 1", "0 +1", "0 -1"])
+def test_relabel_rejects_signed_move_clocks_without_writing(tmp_path: Path, clocks: str):
+    corpus = tmp_path / "sample.txt"
+    original = f"8/8/8/8/8/8/8/K6k w - - {clocks} | 250 | 0.0\n"
+    corpus.write_text(original)
+
+    with pytest.raises(ValueError, match="invalid FEN"):
+        relabel(corpus)
+    assert corpus.read_text() == original
