@@ -33,4 +33,18 @@ def test_validator_rejects_preencoded_userdata(tmp_path: Path):
 
     result = run_validator(bad_launcher)
     assert result.returncode == 3
-    assert "must not be pre-encoded" in result.stderr
+    assert "must pass raw" in result.stderr
+
+
+def test_validator_rejects_encoded_userdata_via_alternate_variable(tmp_path: Path):
+    bad_launcher = tmp_path / "launch.sh"
+    source = LAUNCHER.read_text()
+    source = source.replace(
+        '# ---------- Launch instance ----------',
+        'ENCODED_PAYLOAD=$(echo "$USER_DATA" | base64)\n\n# ---------- Launch instance ----------',
+    ).replace('--user-data "$USER_DATA"', '--user-data "$ENCODED_PAYLOAD"')
+    bad_launcher.write_text(source)
+
+    result = run_validator(bad_launcher)
+    assert result.returncode == 3
+    assert "must pass raw" in result.stderr

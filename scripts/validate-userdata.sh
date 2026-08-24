@@ -14,19 +14,19 @@ body = m.group(1)
 # Substitute placeholders with harmless literals so it parses.
 for ph in set(re.findall(r"__[A-Z0-9_]+__", body)):
     body = body.replace(ph, "PLACEHOLDER")
+
+# Inspect the argument on the real RunInstances command, excluding comments.
+# Requiring the direct raw variable rejects pre-encoding regardless of the
+# intermediary variable's name.
+commands = "\n".join(line for line in s.splitlines() if not line.lstrip().startswith("#"))
+args = re.findall(r'--user-data\s+("[^"]*"|\'[^\']*\'|\S+)', commands)
+if args != ['"$USER_DATA"']:
+    print(
+        f'aws ec2 run-instances must pass raw "$USER_DATA" exactly once; found {args}',
+        file=sys.stderr,
+    )
+    sys.exit(3)
 print(body)
 PY
 bash -n /tmp/userdata_extracted.sh && echo "USER-DATA SYNTAX OK ($(wc -l < /tmp/userdata_extracted.sh) lines)"
-
-# `aws ec2 run-instances --user-data` accepts raw text and performs the API's
-# required base64 encoding itself. Pre-encoding here produces a syntactically
-# valid launch script but cloud-init receives inert base64 text.
-if grep -q 'USER_DATA_B64' "$SCRIPT"; then
-    echo "user-data must not be pre-encoded before aws ec2 run-instances" >&2
-    exit 3
-fi
-grep -Fq -- '--user-data "$USER_DATA"' "$SCRIPT" || {
-    echo 'launch script must pass raw $USER_DATA to aws ec2 run-instances' >&2
-    exit 4
-}
 echo "USER-DATA AWS ENCODING OK"
