@@ -47,6 +47,7 @@ DATA_FRACTION="1.0"
 S3_DATA_PATH=""
 NET_ID=""
 SUPERBATCHES=""
+HIDDEN_SIZE=""
 
 # ---------- Parse arguments ----------
 while [[ $# -gt 0 ]]; do
@@ -59,6 +60,7 @@ while [[ $# -gt 0 ]]; do
         --s3-data-path)  S3_DATA_PATH="$2"; shift 2 ;;
         --net-id)        NET_ID="$2"; shift 2 ;;
         --superbatches)  SUPERBATCHES="$2"; shift 2 ;;
+        --hidden-size)   HIDDEN_SIZE="$2"; shift 2 ;;
         --on-demand) USE_SPOT=false; shift ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
@@ -67,6 +69,15 @@ while [[ $# -gt 0 ]]; do
         *)           shift ;;
     esac
 done
+
+if [[ "$HIDDEN_SIZE" != "256" && "$HIDDEN_SIZE" != "512" ]]; then
+    echo "Error: --hidden-size must be explicitly set to 256 or 512" >&2
+    exit 1
+fi
+if [[ -z "$NET_ID" || "$NET_ID" != *"${HIDDEN_SIZE}x2"* ]]; then
+    echo "Error: --net-id must be set and contain ${HIDDEN_SIZE}x2" >&2
+    exit 1
+fi
 
 SHUTDOWN_MINUTES=$((MAX_HOURS * 60))
 
@@ -78,6 +89,7 @@ echo "  Branch:      $BRANCH"
 echo "  Data frac:   $DATA_FRACTION"
 echo "  Data path:   ${S3_DATA_PATH:-s3://${S3_BUCKET}/nnue-data-sf/}"
 echo "  net_id:      ${NET_ID:-<default>}"
+echo "  Hidden size: $HIDDEN_SIZE"
 echo "  Superbatches:${SUPERBATCHES:-<default 600>}"
 echo "  S3 data:     s3://${S3_BUCKET}/nnue-data-sf/"
 echo "  S3 output:   s3://${S3_BUCKET}/nnue-checkpoints-sf/"
@@ -167,6 +179,8 @@ su - ubuntu -c '
     mkdir -p ~/data
     for txt_file in ~/raw-data/*.txt; do
         base=$(basename "$txt_file" .txt)
+        echo "  Correcting white-relative result labels in $base..."
+        python3 ~/chess-compete/scripts/relabel_nnue_results.py "$txt_file" || exit 1
         echo "  Converting $base..."
         $UTILS convert --from text --input "$txt_file" --output ~/data/${base}.data \
             && rm -f "$txt_file"
@@ -235,7 +249,7 @@ su - ubuntu -c '
     ) &
     PERIODIC_SYNC_PID=$!
 
-    NET_ID="__NET_ID__" SUPERBATCHES="__SUPERBATCHES__" cargo run --release 2>&1
+    NET_ID="__NET_ID__" NNUE_HIDDEN_SIZE="__HIDDEN_SIZE__" SUPERBATCHES="__SUPERBATCHES__" cargo run --release 2>&1
 
     kill $PERIODIC_SYNC_PID 2>/dev/null || true
 
@@ -262,6 +276,7 @@ USER_DATA="${USER_DATA//__BRANCH__/$BRANCH}"
 USER_DATA="${USER_DATA//__DATA_FRACTION__/$DATA_FRACTION}"
 USER_DATA="${USER_DATA//__S3_DATA_PATH__/${S3_DATA_PATH:-s3://${S3_BUCKET}/nnue-data-sf/}}"
 USER_DATA="${USER_DATA//__NET_ID__/$NET_ID}"
+USER_DATA="${USER_DATA//__HIDDEN_SIZE__/$HIDDEN_SIZE}"
 USER_DATA="${USER_DATA//__SUPERBATCHES__/$SUPERBATCHES}"
 USER_DATA="${USER_DATA//__SHUTDOWN_MINUTES__/$SHUTDOWN_MINUTES}"
 USER_DATA="${USER_DATA//__MAX_HOURS__/$MAX_HOURS}"
