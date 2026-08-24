@@ -17,3 +17,16 @@ for ph in set(re.findall(r"__[A-Z0-9_]+__", body)):
 print(body)
 PY
 bash -n /tmp/userdata_extracted.sh && echo "USER-DATA SYNTAX OK ($(wc -l < /tmp/userdata_extracted.sh) lines)"
+
+# `aws ec2 run-instances --user-data` accepts raw text and performs the API's
+# required base64 encoding itself. Pre-encoding here produces a syntactically
+# valid launch script but cloud-init receives inert base64 text.
+if grep -q 'USER_DATA_B64' "$SCRIPT"; then
+    echo "user-data must not be pre-encoded before aws ec2 run-instances" >&2
+    exit 3
+fi
+grep -Fq -- '--user-data "$USER_DATA"' "$SCRIPT" || {
+    echo 'launch script must pass raw $USER_DATA to aws ec2 run-instances' >&2
+    exit 4
+}
+echo "USER-DATA AWS ENCODING OK"

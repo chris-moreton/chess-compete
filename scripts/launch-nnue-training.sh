@@ -281,8 +281,6 @@ USER_DATA="${USER_DATA//__SUPERBATCHES__/$SUPERBATCHES}"
 USER_DATA="${USER_DATA//__SHUTDOWN_MINUTES__/$SHUTDOWN_MINUTES}"
 USER_DATA="${USER_DATA//__MAX_HOURS__/$MAX_HOURS}"
 
-USER_DATA_B64=$(echo "$USER_DATA" | base64)
-
 # ---------- Launch instance ----------
 REGION_ARGS=(--region "$REGION")
 
@@ -301,13 +299,16 @@ else
     echo "Launching on-demand instance in $REGION (AMI: $AMI_ID)..."
 fi
 
+# AWS CLI base64-encodes the user-data payload for RunInstances. Passing a
+# pre-encoded value here makes cloud-init receive inert base64 text instead of
+# a shell script (observed on cloud-init 26.1 / AWS CLI 2.31).
 INSTANCE_ID=$(aws ec2 run-instances "${REGION_ARGS[@]}" \
     --image-id "$AMI_ID" \
     --instance-type "$INSTANCE_TYPE" \
     ${SPOT_ARGS[@]+"${SPOT_ARGS[@]}"} \
     --iam-instance-profile Name=SSMInstanceProfile \
     --instance-initiated-shutdown-behavior terminate \
-    --user-data "$USER_DATA_B64" \
+    --user-data "$USER_DATA" \
     --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":100,"VolumeType":"gp3"}}]' \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=nnue-training}]" \
     --query 'Instances[0].InstanceId' \
