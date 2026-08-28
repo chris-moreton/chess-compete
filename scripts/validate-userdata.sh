@@ -28,5 +28,6 @@ if args != ['"$USER_DATA"']:
     sys.exit(3)
 print(body)
 PY
-bash -n /tmp/userdata_extracted.sh && echo "USER-DATA SYNTAX OK ($(wc -l < /tmp/userdata_extracted.sh) lines)"
+bash -n /tmp/userdata_extracted.sh
+echo "USER-DATA SYNTAX OK ($(wc -l < /tmp/userdata_extracted.sh) lines)"
 echo "USER-DATA AWS ENCODING OK"
