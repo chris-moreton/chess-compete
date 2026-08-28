@@ -11,7 +11,7 @@
 #
 # Prerequisites:
 #   - AWS CLI configured
-#   - Training data in s3://chess-compete-builds/nnue-data-sf/
+#   - Training data in S3 as legacy Stockfish .txt files or Rust self-play .zst shards
 
 set -euo pipefail
 
@@ -78,8 +78,28 @@ if [[ -z "$NET_ID" || "$NET_ID" != *"${HIDDEN_SIZE}x2"* ]]; then
     echo "Error: --net-id must be set and contain ${HIDDEN_SIZE}x2" >&2
     exit 1
 fi
+if [[ ! "$MAX_HOURS" =~ ^[1-9][0-9]*$ \
+    || ! "$INSTANCE_TYPE" =~ ^[A-Za-z0-9.]+$ \
+    || ! "$REGION" =~ ^[a-z0-9-]+$ \
+    || ! "$S3_BUCKET" =~ ^[a-z0-9.-]+$ \
+    || ! "$MAX_SPOT_PRICE" =~ ^[0-9]+([.][0-9]+)?$ \
+    || ! "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ \
+    || ! "$NET_ID" =~ ^[A-Za-z0-9._-]+$ \
+    || ( "$HIDDEN_SIZE" != "256" && "$HIDDEN_SIZE" != "512" ) \
+    || ! "$DATA_FRACTION" =~ ^(0[.][0-9]*[1-9][0-9]*|1([.]0+)?)$ \
+    || ( -n "$SUPERBATCHES" && ! "$SUPERBATCHES" =~ ^[1-9][0-9]*$ ) ]]; then
+    echo "Error: invalid training launcher argument" >&2
+    exit 1
+fi
+EFFECTIVE_S3_DATA_PATH="${S3_DATA_PATH:-s3://${S3_BUCKET}/nnue-data-sf/}"
+if [[ ! "$EFFECTIVE_S3_DATA_PATH" =~ ^s3://[a-z0-9.-]+/[A-Za-z0-9._/-]+$ ]]; then
+    echo "Error: invalid S3 data path" >&2
+    exit 1
+fi
 
 SHUTDOWN_MINUTES=$((MAX_HOURS * 60))
+TIMESTAMP=$(date -u +%Y%m%d-%H%M%S)
+LOG_NAME="nnue-training-${NET_ID}-${TIMESTAMP}.log"
 
 echo "NNUE Training"
 echo "  Instance:    $INSTANCE_TYPE"
@@ -87,7 +107,7 @@ echo "  Region:      $REGION"
 echo "  Max hours:   $MAX_HOURS"
 echo "  Branch:      $BRANCH"
 echo "  Data frac:   $DATA_FRACTION"
-echo "  Data path:   ${S3_DATA_PATH:-s3://${S3_BUCKET}/nnue-data-sf/}"
+echo "  Data path:   $EFFECTIVE_S3_DATA_PATH"
 echo "  net_id:      ${NET_ID:-<default>}"
 echo "  Hidden size: $HIDDEN_SIZE"
 echo "  Superbatches:${SUPERBATCHES:-<default 600>}"
@@ -98,12 +118,29 @@ echo ""
 # ---------- Build user-data script ----------
 USER_DATA=$(cat <<'USERDATA'
 #!/bin/bash
+set -euo pipefail
 exec > >(tee /var/log/nnue-training.log) 2>&1
 
 echo "=== $(date) Starting NNUE training setup ==="
 
 # Schedule auto-termination
 shutdown -h +__SHUTDOWN_MINUTES__
+persist_and_shutdown() {
+    status=$?
+    trap - EXIT
+    set +e
+    if command -v aws >/dev/null 2>&1; then
+        aws s3 cp /var/log/nnue-training.log \
+            "s3://__S3_BUCKET__/nnue-checkpoints-sf/logs/__LOG_NAME__" --only-show-errors
+        if [ -d /home/ubuntu/nnue-train/checkpoints ]; then
+            aws s3 sync /home/ubuntu/nnue-train/checkpoints/ \
+                s3://__S3_BUCKET__/nnue-checkpoints-sf/ --only-show-errors
+        fi
+    fi
+    shutdown -h now 2>/dev/null || true
+    exit "$status"
+}
+trap persist_and_shutdown EXIT
 
 # Hard deadline watchdog
 (
@@ -120,7 +157,8 @@ disown
 # Deep Learning AMI has NVIDIA drivers + CUDA pre-installed
 # Just install minimal extras without running apt-get update (avoids triggering upgrades)
 export DEBIAN_FRONTEND=noninteractive
-apt-get install -y git awscli 2>/dev/null || apt-get update -y && apt-get install -y git awscli
+apt-get install -y git awscli zstd 2>/dev/null \
+    || { apt-get update -y && apt-get install -y git awscli zstd; }
 
 # Verify GPU
 echo "=== $(date) Verifying GPU ==="
@@ -142,6 +180,7 @@ CUDAEOF
 echo "=== $(date) Downloading training data from S3 ==="
 
 su - ubuntu -c '
+    set -euo pipefail
     source ~/.cargo/env
     source /etc/profile.d/cuda.sh
 
@@ -150,20 +189,24 @@ su - ubuntu -c '
 
     # Download all training data files from S3
     aws s3 sync __S3_DATA_PATH__ ~/raw-data/
-    echo "Downloaded $(ls ~/raw-data/*.txt | wc -l) data files"
+    echo "Downloaded $(find ~/raw-data -type f \( -name "*.txt" -o -name "*.zst" \) | wc -l) data files"
 
-    # Clone bullet and chess-compete
+    # Clone the exact Bullet revision used by the trainer manifest. Letting the
+    # converter and trainer follow a moving HEAD makes identical input produce
+    # an unrepeatable toolchain.
     git clone https://github.com/jw1912/bullet.git
+    git -C ~/bullet checkout --detach c1a3433ba0ab4ce177a42240249fa8e1ecdbe45d
     git clone -b __BRANCH__ https://github.com/chris-moreton/chess-compete.git
     echo "chess-compete branch: $(cd ~/chess-compete && git rev-parse --abbrev-ref HEAD) @ $(cd ~/chess-compete && git rev-parse --short HEAD)"
 
     # Build bullet-utils (no CUDA needed for this)
     echo "=== $(date) Building bullet-utils ==="
     cd ~/bullet
+    echo "bullet revision: $(git rev-parse HEAD)"
     cargo build --release --package bullet-utils
     UTILS=~/bullet/target/release/bullet-utils
 
-    # Convert text files to bullet binary format.
+    # Convert legacy text and Rust self-play zstd shards to bullet format.
     #
     # Each .txt is deleted as soon as its .data is written (NET-322). Nothing
     # reads the raw text after conversion, and keeping both copies previously
@@ -177,14 +220,46 @@ su - ubuntu -c '
     # diagnose rather than silently discarding it.
     echo "=== $(date) Converting data to bullet format ==="
     mkdir -p ~/data
-    for txt_file in ~/raw-data/*.txt; do
-        base=$(basename "$txt_file" .txt)
-        echo "  Correcting white-relative result labels in $base..."
-        python3 ~/chess-compete/scripts/relabel_nnue_results.py "$txt_file" || exit 1
-        echo "  Converting $base..."
-        $UTILS convert --from text --input "$txt_file" --output ~/data/${base}.data \
-            && rm -f "$txt_file"
+    mapfile -d "" raw_files < <(find ~/raw-data -type f \( -name "*.txt" -o -name "*.zst" \) -print0 | LC_ALL=C sort -z)
+    if [ ${#raw_files[@]} -eq 0 ]; then
+        echo "ERROR: no .txt or .zst training shards downloaded"
+        exit 1
+    fi
+    for raw_file in "${raw_files[@]}"; do
+        relative=${raw_file#"$HOME/raw-data/"}
+        name=$(basename "$relative")
+        # S3 prefixes can contain several runs whose shard basenames repeat or
+        # whose paths collide under separator replacement. Hash the complete
+        # relative path so every input has a stable, injective practical name.
+        base=$(~/chess-compete/scripts/nnue-shard-name.sh "$relative")
+        case "$name" in
+            *.txt)
+                echo "  Correcting legacy inverted result labels in $base..."
+                python3 ~/chess-compete/scripts/relabel_nnue_results.py "$raw_file" || exit 1
+                prepared="$raw_file"
+                ;;
+            *.zst)
+                prepared=~/raw-data/${base}.prepared.txt
+                provenance=$(dirname "$raw_file")/selfplay-format-v1.env
+                echo "  Validating and deduplicating white-relative self-play shard $base..."
+                zstd -qdc "$raw_file" \
+                    | python3 ~/chess-compete/scripts/prepare_selfplay_nnue_data.py \
+                        - "$prepared" --seen-db ~/selfplay-seen.sqlite \
+                        --provenance "$provenance" \
+                    || exit 1
+                ;;
+        esac
+        if [ -s "$prepared" ]; then
+            echo "  Converting $base..."
+            $UTILS convert --from text --input "$prepared" --output ~/data/${base}.data || exit 1
+        else
+            echo "  Skipping $base: every position was already present in an earlier shard"
+        fi
+        rm -f "$prepared" "$raw_file"
     done
+    # The dedup index is needed only during conversion. Free it before the
+    # shuffle creates a transient second copy of each binary shard.
+    rm -f ~/selfplay-seen.sqlite ~/selfplay-seen.sqlite-wal ~/selfplay-seen.sqlite-shm
 
     echo "Converted files:"
     ls -lh ~/data/*.data
@@ -262,11 +337,7 @@ su - ubuntu -c '
 '
 
 echo "=== $(date) All done ==="
-echo "=== Keeping instance alive briefly for log inspection. ==="
-# Shut down 20 minutes after the work finishes (or fails) rather than idling to
-# the --hours cap. A cloud-init syntax error once left two GPU instances doing
-# nothing for six hours because the only stop condition was the timer."
-shutdown -h +20
+shutdown -h now
 USERDATA
 )
 
@@ -274,12 +345,13 @@ USERDATA
 USER_DATA="${USER_DATA//__S3_BUCKET__/$S3_BUCKET}"
 USER_DATA="${USER_DATA//__BRANCH__/$BRANCH}"
 USER_DATA="${USER_DATA//__DATA_FRACTION__/$DATA_FRACTION}"
-USER_DATA="${USER_DATA//__S3_DATA_PATH__/${S3_DATA_PATH:-s3://${S3_BUCKET}/nnue-data-sf/}}"
+USER_DATA="${USER_DATA//__S3_DATA_PATH__/$EFFECTIVE_S3_DATA_PATH}"
 USER_DATA="${USER_DATA//__NET_ID__/$NET_ID}"
 USER_DATA="${USER_DATA//__HIDDEN_SIZE__/$HIDDEN_SIZE}"
 USER_DATA="${USER_DATA//__SUPERBATCHES__/$SUPERBATCHES}"
 USER_DATA="${USER_DATA//__SHUTDOWN_MINUTES__/$SHUTDOWN_MINUTES}"
 USER_DATA="${USER_DATA//__MAX_HOURS__/$MAX_HOURS}"
+USER_DATA="${USER_DATA//__LOG_NAME__/$LOG_NAME}"
 
 # ---------- Launch instance ----------
 REGION_ARGS=(--region "$REGION")

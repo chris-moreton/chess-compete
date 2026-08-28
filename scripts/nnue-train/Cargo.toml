@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bullet_lib = { git = "https://github.com/jw1912/bullet.git", features = ["cuda"] }
+bullet_lib = { git = "https://github.com/jw1912/bullet.git", rev = "c1a3433ba0ab4ce177a42240249fa8e1ecdbe45d", features = ["cuda"] }
